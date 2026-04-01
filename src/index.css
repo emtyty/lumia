@@ -1,0 +1,248 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #b6a0ff;
+  --color-secondary: #00e3fd;
+  --color-tertiary: #ff6c95;
+  --color-background: #050810;
+  --color-surface: #0f172a;
+  --color-surface-glass: rgba(15, 25, 48, 0.6);
+  --color-on-surface: #f1f5f9;
+  --color-on-surface-variant: #94a3b8;
+  --color-outline: rgba(182, 160, 255, 0.2);
+
+  --font-headline: "Manrope", sans-serif;
+  --font-body: "Inter", sans-serif;
+
+  --radius-DEFAULT: 0.5rem;
+  --radius-lg: 1rem;
+  --radius-xl: 1.5rem;
+  --radius-2xl: 2.5rem;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  font-family: var(--font-body);
+  background: radial-gradient(circle at top right, #1e1b4b, #050810 50%),
+              radial-gradient(circle at bottom left, #0f172a, #050810 50%);
+  background-attachment: fixed;
+  color: var(--color-on-surface);
+  margin: 0;
+  overflow: hidden;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+/* ── Glass utilities ── */
+.glass-refractive {
+  background: rgba(15, 25, 48, 0.4);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+}
+
+.liquid-glass {
+  background: rgba(15, 25, 48, 0.8);
+  backdrop-filter: blur(40px);
+  box-shadow: 0 40px 80px rgba(0, 227, 253, 0.04);
+}
+
+.card-organic {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(20px);
+  border-radius: 2rem;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.card-organic:hover {
+  background: rgba(255, 255, 255, 0.05);
+  transform: translateY(-4px);
+}
+
+.glass-card {
+  background: rgba(30, 41, 59, 0.4);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.glass-card:hover {
+  background: rgba(30, 41, 59, 0.6);
+  border-color: rgba(182, 160, 255, 0.3);
+  transform: translateY(-4px) scale(1.01);
+}
+
+/* ── Gradient utilities ── */
+.primary-gradient {
+  background: linear-gradient(135deg, #b6a0ff 0%, #00e3fd 100%);
+}
+
+.primary-gradient-text {
+  background: linear-gradient(135deg, #b6a0ff 0%, #00e3fd 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.active-nav-bg {
+  background: linear-gradient(135deg, rgba(182, 160, 255, 0.2) 0%, rgba(0, 227, 253, 0.2) 100%);
+  box-shadow: inset 0 0 12px rgba(182, 160, 255, 0.1);
+}
+
+.refractive-glow-lg {
+  box-shadow: 40px 0 80px rgba(182, 160, 255, 0.06);
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgba(182, 160, 255, 0.2);
+  border-radius: 10px;
+}
+
+/* ── Material Symbols ── */
+.material-symbols-outlined {
+  font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+  font-family: 'Material Symbols Outlined';
+  vertical-align: middle;
+  line-height: 1;
+}
+
+/* ── Custom title bar (VSCode-style) ── */
+.titlebar {
+  background: rgba(5, 8, 16, 0.98);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+html.light .titlebar {
+  background: rgba(246, 246, 251, 0.98);
+  border-bottom: 1px solid rgba(0, 80, 212, 0.08);
+}
+
+/* Title bar drag region (macOS) */
+.titlebar-drag {
+  -webkit-app-region: drag;
+}
+
+/* ── Animate pulse for live indicator ── */
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(0, 227, 253, 0.8); }
+  50% { box-shadow: 0 0 16px rgba(0, 227, 253, 1); }
+}
+.animate-pulse-glow {
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+/* ═══════════════════════════════════════════════════════
+   LIGHT MODE — "Ethereal Prism" (design/lightmode/DESIGN.md)
+   Activated by adding .light class to <html>
+   ═══════════════════════════════════════════════════════ */
+
+html.light {
+  --color-primary: #0050d4;
+  --color-secondary: #0097b2;
+  --color-tertiary: #883c93;
+  --color-background: #f6f6fb;
+  --color-surface: #f0f0f6;
+  --color-surface-glass: rgba(246, 246, 251, 0.7);
+  --color-on-surface: #2d2f33;
+  --color-on-surface-variant: #5a5b60;
+  --color-outline: rgba(0, 80, 212, 0.15);
+}
+
+html.light body {
+  background: #f6f6fb;
+  color: #2d2f33;
+}
+
+html.light .glass-refractive {
+  background: rgba(255, 255, 255, 0.65);
+  backdrop-filter: blur(40px) saturate(180%);
+  border: 1px solid rgba(0, 80, 212, 0.08);
+  box-shadow: 0 8px 32px rgba(45, 47, 51, 0.06),
+              inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+html.light .liquid-glass {
+  background: rgba(246, 246, 251, 0.88);
+  backdrop-filter: blur(40px) saturate(180%);
+  box-shadow: 0 2px 24px rgba(0, 80, 212, 0.06);
+}
+
+html.light .glass-card {
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(24px) saturate(180%);
+  border: 1px solid rgba(0, 80, 212, 0.07);
+  box-shadow: 0 4px 20px rgba(45, 47, 51, 0.05);
+}
+
+html.light .glass-card:hover {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(0, 80, 212, 0.18);
+  transform: translateY(-4px) scale(1.01);
+}
+
+html.light .card-organic {
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(0, 80, 212, 0.06);
+}
+
+html.light .card-organic:hover {
+  background: rgba(255, 255, 255, 0.9);
+}
+
+html.light .active-nav-bg {
+  background: linear-gradient(135deg, rgba(0, 80, 212, 0.1) 0%, rgba(123, 156, 255, 0.1) 100%);
+  box-shadow: inset 0 0 12px rgba(0, 80, 212, 0.06);
+}
+
+html.light .refractive-glow-lg {
+  box-shadow: 40px 0 80px rgba(0, 80, 212, 0.04);
+}
+
+html.light .primary-gradient {
+  background: linear-gradient(135deg, #0050d4 0%, #7b9cff 100%);
+}
+
+html.light .primary-gradient-text {
+  background: linear-gradient(135deg, #0050d4 0%, #7b9cff 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+html.light ::-webkit-scrollbar-thumb {
+  background: rgba(0, 80, 212, 0.18);
+}
+
+/* ── Text color remapping ── */
+html.light .text-white { color: #2d2f33 !important; }
+html.light .text-slate-100 { color: #3a3c40 !important; }
+html.light .text-slate-200 { color: #44464a !important; }
+html.light .text-slate-300 { color: #4d4f55 !important; }
+html.light .text-slate-400 { color: #5a5b60 !important; }
+html.light .text-slate-500 { color: #737578 !important; }
+html.light .text-slate-600 { color: #888b90 !important; }
+html.light .text-slate-700 { color: #9a9da3 !important; }
+/* Preserve dark text on gradient buttons */
+html.light .text-slate-900 { color: #ffffff !important; }
+
+/* ── Background remapping ── */
+html.light .bg-black { background-color: #f0f0f6 !important; }
+html.light .bg-slate-950 { background-color: #f6f6fb !important; }
+html.light .bg-slate-900 { background-color: #f0f0f6 !important; }
+html.light .bg-white\/5 { background-color: rgba(0, 80, 212, 0.04) !important; }
+html.light .bg-white\/10 { background-color: rgba(0, 80, 212, 0.07) !important; }
+html.light .bg-white\/20 { background-color: rgba(0, 80, 212, 0.1) !important; }
+html.light .bg-black\/60,
+html.light .bg-black\/70,
+html.light .bg-black\/80 { background-color: rgba(45, 47, 51, 0.55) !important; }
+
+/* ── Border remapping ── */
+html.light .border-white\/5 { border-color: rgba(0, 80, 212, 0.06) !important; }
+html.light .border-white\/10 { border-color: rgba(0, 80, 212, 0.1) !important; }
+html.light .border-white\/20 { border-color: rgba(0, 80, 212, 0.15) !important; }

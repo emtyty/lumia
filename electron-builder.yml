@@ -1,0 +1,35 @@
+appId: com.shareanywhere.app
+productName: ShareAnywhere
+copyright: Copyright © 2026 ShareAnywhere
+
+directories:
+  buildResources: resources
+  output: dist
+
+files:
+  - out/**/*
+
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+  icon: resources/icon.icns
+  category: public.app-category.graphics-design
+  darkModeSupport: true
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+dmg:
+  window:
+    width: 540
+    height: 380

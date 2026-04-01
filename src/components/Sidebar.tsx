@@ -1,0 +1,108 @@
+import { NavLink } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+
+const NAV_ITEMS = [
+  { to: '/dashboard', icon: 'space_dashboard', label: 'Dashboard' },
+  { to: '/editor',    icon: 'auto_fix_high',   label: 'Editor' },
+  { to: '/history',   icon: 'history',          label: 'History' },
+  { to: '/workflow',  icon: 'rocket_launch',    label: 'Destinations' },
+  { to: '/settings',  icon: 'settings',         label: 'Settings' },
+]
+
+export function Sidebar() {
+  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+
+  useEffect(() => {
+    window.electronAPI?.getSettings().then(s => {
+      applyTheme(s.theme ?? 'dark')
+      setTheme(s.theme ?? 'dark')
+    })
+  }, [])
+
+  const applyTheme = (t: 'dark' | 'light') => {
+    if (t === 'light') {
+      document.documentElement.classList.add('light')
+    } else {
+      document.documentElement.classList.remove('light')
+    }
+  }
+
+  const toggleTheme = async () => {
+    const next = theme === 'dark' ? 'light' : 'dark'
+    applyTheme(next)
+    setTheme(next)
+    await window.electronAPI?.setSetting('theme', next)
+    window.electronAPI?.setTitleBarTheme(next)
+  }
+
+  const handleCapture = async () => {
+    await window.electronAPI?.captureScreenshot('region')
+  }
+
+  return (
+    <aside
+      className="fixed left-0 top-10 h-[calc(100vh-2.5rem)] w-64 flex flex-col p-6 pt-5 gap-6 z-50 glass-refractive refractive-glow-lg"
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+    >
+
+      {/* Nav links */}
+      <nav className="flex-1 space-y-1">
+        {NAV_ITEMS.map(({ to, icon, label }) => (
+          <NavLink
+            key={to}
+            to={to}
+            className={({ isActive }) =>
+              `flex items-center gap-4 px-4 py-3 rounded-xl text-sm transition-all duration-300 font-medium ` +
+              (isActive
+                ? 'active-nav-bg text-primary'
+                : 'text-slate-400 hover:text-slate-100 hover:scale-[1.02]')
+            }
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+          >
+            <span className="material-symbols-outlined text-[20px]">{icon}</span>
+            {label}
+          </NavLink>
+        ))}
+
+      </nav>
+
+      {/* New Capture CTA */}
+      <div className="mt-auto space-y-4">
+        <button
+          onClick={handleCapture}
+          className="w-full primary-gradient text-slate-900 font-extrabold py-4 rounded-2xl flex items-center justify-center gap-2 hover:scale-[1.02] active:scale-95 transition-all duration-300 text-sm uppercase tracking-wider shadow-lg"
+          style={{ fontFamily: 'Manrope, sans-serif' }}
+        >
+          <span className="material-symbols-outlined text-[20px]">add_a_photo</span>
+          New Capture
+        </button>
+
+        {/* User row + theme toggle */}
+        <div className="flex items-center gap-3 p-2">
+          <div className="relative">
+            <div className="w-9 h-9 rounded-full primary-gradient flex items-center justify-center text-slate-900 font-bold text-sm">
+              LM
+            </div>
+            <div
+              className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-secondary rounded-full border-2"
+              style={{ borderColor: '#0f172a', boxShadow: '0 0 8px rgba(0,227,253,0.6)' }}
+            />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold text-white">Lumia</p>
+            <p className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Ready</p>
+          </div>
+          <button
+            onClick={toggleTheme}
+            className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all flex-shrink-0"
+            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            <span className="material-symbols-outlined text-[18px]">
+              {theme === 'dark' ? 'light_mode' : 'dark_mode'}
+            </span>
+          </button>
+        </div>
+      </div>
+    </aside>
+  )
+}

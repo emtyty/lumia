@@ -1,0 +1,36 @@
+{
+  "name": "shareanywhere",
+  "version": "1.0.0",
+  "description": "Cross-platform screen capture, annotation & sharing tool",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.1.4",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "electron-vite": "^2.3.0",
+    "konva": "^9.3.0",
+    "react": "^18.3.0",
+    "react-dom": "^18.3.0",
+    "react-konva": "^18.2.10",
+    "react-router-dom": "^6.26.0",
+    "tailwindcss": "^4.1.4",
+    "typescript": "^5.5.0",
+    "use-image": "^1.1.1"
+  }
+}
