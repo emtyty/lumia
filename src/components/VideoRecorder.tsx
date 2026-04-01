@@ -27,11 +27,19 @@ export default function VideoRecorder({ onClose }: Props) {
   useEffect(() => {
     window.electronAPI?.getRecordingSources().then(s => {
       setSources(s)
-      // Auto-select full screen
       const screen = s.find(x => x.name.includes('Screen') || x.name.includes('Entire'))
       setSelectedSource(screen ?? s[0] ?? null)
     })
-  }, [])
+
+    // Ctrl+Shift+S global hotkey → stop recording if active
+    window.electronAPI?.onRecorderStop(() => {
+      if (mediaRecorderRef.current?.state === 'recording') {
+        stopRecording()
+      }
+    })
+
+    return () => { window.electronAPI?.removeAllListeners('recorder:stop') }
+  }, []) // eslint-disable-line
 
   const clearTimer = () => {
     if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null }

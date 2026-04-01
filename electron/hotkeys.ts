@@ -103,6 +103,21 @@ export function setupHotkeys() {
       )
       if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
     },
+    ScreenRecorder: () => {
+      const win = getMainWindow()
+      win?.show()
+      win?.focus()
+      win?.webContents.send('recorder:open')
+    },
+    ScreenRecorderGIF: () => {
+      const win = getMainWindow()
+      win?.show()
+      win?.focus()
+      win?.webContents.send('recorder:open-gif')
+    },
+    StopScreenRecording: () => {
+      getMainWindow()?.webContents.send('recorder:stop')
+    },
     OpenMainWindow: () => {
       const win = getMainWindow()
       win?.show()

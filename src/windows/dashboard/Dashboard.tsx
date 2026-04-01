@@ -29,7 +29,15 @@ export default function Dashboard() {
       navigate('/editor', { state: { dataUrl, source } })
     })
 
-    return () => { window.electronAPI?.removeAllListeners('capture:ready') }
+    // Global hotkeys → open recorder modal
+    window.electronAPI?.onRecorderOpen(() => setShowRecorder(true))
+    window.electronAPI?.onRecorderOpenGif(() => setShowRecorder(true))   // GIF not yet separate; reuse video recorder
+
+    return () => {
+      window.electronAPI?.removeAllListeners('capture:ready')
+      window.electronAPI?.removeAllListeners('recorder:open')
+      window.electronAPI?.removeAllListeners('recorder:open-gif')
+    }
   }, [navigate])
 
   const handleCapture = async (mode: CaptureMode) => {

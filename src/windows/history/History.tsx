@@ -83,7 +83,7 @@ export default function History() {
                   ? setPreviewItem(item)
                   : navigate('/editor', { state: { dataUrl: item.dataUrl, source: 'history' } })
                 }
-                onAnnotate={() => navigate('/video-annotate', { state: { filePath: item.filePath, name: item.name } })}
+                onAnnotate={() => navigate('/video-annotator', { state: { filePath: item.filePath, name: item.name } })}
                 onDelete={() => handleDelete(item.id)}
                 onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
               />
@@ -96,7 +96,7 @@ export default function History() {
         <VideoPreviewModal
           item={previewItem}
           onClose={() => setPreviewItem(null)}
-          onAnnotate={() => { setPreviewItem(null); navigate('/video-annotate', { state: { filePath: previewItem.filePath, name: previewItem.name } }) }}
+          onAnnotate={() => { setPreviewItem(null); navigate('/video-annotator', { state: { filePath: previewItem.filePath, name: previewItem.name } }) }}
         />
       )}
     </div>

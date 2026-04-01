@@ -43,6 +43,9 @@ declare global {
       onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => void
       onNavigate: (cb: (route: string, state?: Record<string, unknown>) => void) => void
       onRegionSelected: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => void
+      onRecorderOpen: (cb: () => void) => void
+      onRecorderOpenGif: (cb: () => void) => void
+      onRecorderStop: (cb: () => void) => void
       removeAllListeners: (channel: string) => void
 
       confirmRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>

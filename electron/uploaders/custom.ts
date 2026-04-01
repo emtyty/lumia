@@ -6,6 +6,10 @@ export async function uploadToCustom(
   headers: Record<string, string> = {},
   fieldName = 'file'
 ): Promise<UploadResult> {
+  if (!/^https?:\/\//i.test(url)) {
+    return { destination: url, success: false, error: 'Invalid upload URL — only http/https allowed' }
+  }
+
   const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
   const buffer = Buffer.from(base64, 'base64')
   const blob = new Blob([buffer], { type: 'image/png' })
@@ -33,7 +37,7 @@ export async function uploadToCustom(
       responseUrl = (json.url ?? json.link ?? json.data) as string | undefined
     } else {
       const text = await response.text()
-      if (text.startsWith('http')) responseUrl = text.trim()
+      if (/^https?:\/\//i.test(text.trim())) responseUrl = text.trim()
     }
   } catch { /* ignore */ }
 

@@ -66,7 +66,7 @@ function createMainWindow(): BrowserWindow {
 
   if (isDev) {
     win.loadURL('http://localhost:5173/#/dashboard')
-    win.webContents.openDevTools({ mode: 'detach' })
+    // win.webContents.openDevTools({ mode: 'detach' })
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
@@ -161,7 +161,13 @@ app.whenReady().then(async () => {
   const historyStore = new HistoryStore()
   ipcMain.handle('history:get', () => historyStore.getAll())
   ipcMain.handle('history:delete', (_e, id: string) => historyStore.delete(id))
-  ipcMain.handle('history:openFile', (_e, filePath: string) => shell.openPath(filePath))
+  ipcMain.handle('history:openFile', (_e, filePath: string) => {
+    const { resolve, normalize } = require('path')
+    const { homedir } = require('os')
+    const normalized = resolve(normalize(filePath))
+    if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+    return shell.openPath(normalized)
+  })
   ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
 
   // IPC: Settings
@@ -171,16 +177,28 @@ app.whenReady().then(async () => {
   // IPC: Save file from dataURL (used by ShareDialog save button)
   ipcMain.handle('capture:saveFile', async (_e, dataUrl: string, filePath: string) => {
     const { writeFile, mkdir } = await import('fs/promises')
-    const { dirname } = await import('path')
-    await mkdir(dirname(filePath), { recursive: true })
+    const { dirname, resolve, normalize } = await import('path')
+    const { homedir } = await import('os')
+    const normalized = resolve(normalize(filePath))
+    if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+    await mkdir(dirname(normalized), { recursive: true })
     const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
-    await writeFile(filePath, Buffer.from(base64, 'base64'))
-    return filePath
+    await writeFile(normalized, Buffer.from(base64, 'base64'))
+    return normalized
   })
 
   // IPC: Shell
-  ipcMain.handle('shell:openExternal', (_e, url: string) => shell.openExternal(url))
-  ipcMain.handle('shell:openPath', (_e, path: string) => shell.openPath(path))
+  ipcMain.handle('shell:openExternal', (_e, url: string) => {
+    if (!/^https?:\/\//i.test(url)) throw new Error('Invalid URL scheme — only http/https allowed')
+    return shell.openExternal(url)
+  })
+  ipcMain.handle('shell:openPath', (_e, filePath: string) => {
+    const { resolve, normalize } = require('path')
+    const { homedir } = require('os')
+    const normalized = resolve(normalize(filePath))
+    if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+    return shell.openPath(normalized)
+  })
 
   // IPC: App menu (hamburger in custom title bar)
   ipcMain.handle('menu:show', () => {
@@ -192,10 +210,6 @@ app.whenReady().then(async () => {
       { label: 'Workflow',             click: () => mainWindow?.webContents.send('navigate', '/workflow') },
       { label: 'Settings',             click: () => mainWindow?.webContents.send('navigate', '/settings') },
       { type: 'separator' },
-      ...(isDev ? [
-        { label: 'Toggle DevTools', click: () => mainWindow?.webContents.toggleDevTools() },
-        { type: 'separator' as const }
-      ] : []),
       { label: 'Quit Lumia',           click: () => app.quit() }
     ])
     menu.popup({ window: mainWindow! })
@@ -256,7 +270,11 @@ app.whenReady().then(async () => {
   // IPC: Read local file as buffer (for video blob URL playback in renderer)
   ipcMain.handle('file:read', async (_e, filePath: string) => {
     const { readFile } = await import('fs/promises')
-    return readFile(filePath)
+    const { resolve, normalize } = await import('path')
+    const { homedir } = await import('os')
+    const normalized = resolve(normalize(filePath))
+    if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+    return readFile(normalized)
   })
 
   // IPC: Recording state — hide main window before recording starts

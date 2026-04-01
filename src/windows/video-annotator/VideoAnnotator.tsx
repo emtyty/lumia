@@ -312,24 +312,39 @@ export default function VideoAnnotator() {
     setShowShare(true)
   }
 
-  // ── WebM export with baked-in annotations ────────────────────────────────────
+  // ── WebM export — freeze-frame approach ─────────────────────────────────────
+  // Rather than baking annotations into every frame (which looks wrong for
+  // moving content), we produce:
+  //   [normal video … annotatedTime-PAD]
+  //   [freeze frame + annotations  ×  FREEZE_DURATION seconds]
+  //   [normal video  annotatedTime+PAD … end]
+  //
+  // This ties the annotation to the exact moment it was drawn, like a
+  // tutorial highlight, instead of smearing it across unrelated frames.
+  const FREEZE_PAD      = 1    // seconds of normal video on each side
+  const FREEZE_DURATION = 2    // seconds to hold the annotated freeze frame
+
   const handleExportVideo = useCallback(async () => {
-    const video  = videoRef.current
-    const annot  = canvasRef.current
-    if (!video || video.readyState < 2) return
+    const video = videoRef.current
+    const annot = canvasRef.current
+    if (!video || video.readyState < 2 || ops.length === 0) return
+
+    const annotatedTime = video.currentTime          // the paused frame user drew on
+    const freezeStart   = Math.max(0, annotatedTime - FREEZE_PAD)
+    const resumeTime    = Math.min(duration > 0 ? duration : Infinity, annotatedTime + FREEZE_PAD)
+    // Total expected output duration for progress tracking
+    const totalSecs     = (annotatedTime - freezeStart) + FREEZE_DURATION + (duration > 0 ? duration - resumeTime : 0)
 
     setExporting(true)
     setExportProgress(0)
     setExportSaved('')
 
-    // Offscreen composite canvas at natural resolution
     const w = video.videoWidth
     const h = video.videoHeight
     const comp = document.createElement('canvas')
     comp.width = w; comp.height = h
-    const ctx = comp.getContext('2d')!
+    const ctx  = comp.getContext('2d')!
 
-    // Capture the composite canvas as a video stream
     const stream = (comp as HTMLCanvasElement & { captureStream(fps?: number): MediaStream }).captureStream(30)
     const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
       ? 'video/webm;codecs=vp8' : 'video/webm'
@@ -338,30 +353,82 @@ export default function VideoAnnotator() {
     const chunks: Blob[] = []
     recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data) }
 
-    // rAF loop: composite video frame + annotation overlay every frame
+    type Phase = 'before' | 'freeze' | 'after'
+    let phase: Phase = 'before'
+    let progressIntervalId: ReturnType<typeof setInterval> | null = null
+    let exportStartWallMs = 0
+
+    const cleanup = () => {
+      if (exportRafRef.current) { cancelAnimationFrame(exportRafRef.current); exportRafRef.current = null }
+      if (progressIntervalId)   { clearInterval(progressIntervalId); progressIntervalId = null }
+      video.removeEventListener('timeupdate', onTimeUpdate)
+      video.removeEventListener('ended',      onEnded)
+    }
+
+    const finishExport = () => {
+      cleanup()
+      if (recorder.state !== 'inactive') recorder.stop()
+    }
+
+    // rAF draw loop — only draws video; annotations added during freeze phase
     const drawLoop = () => {
       ctx.drawImage(video, 0, 0, w, h)
-      if (annot && annot.width > 0) ctx.drawImage(annot, 0, 0, w, h)
+      if (phase === 'freeze' && annot && annot.width > 0) {
+        ctx.drawImage(annot, 0, 0, w, h)
+      }
       exportRafRef.current = requestAnimationFrame(drawLoop)
     }
 
-    const stopExport = () => {
-      if (exportRafRef.current) { cancelAnimationFrame(exportRafRef.current); exportRafRef.current = null }
-      if (recorder.state !== 'inactive') recorder.stop()
-      video.removeEventListener('ended',  stopExport)
-      video.removeEventListener('pause',  onPause)
+    const enterFreeze = () => {
+      phase = 'freeze'
+      video.pause()
+      video.currentTime = annotatedTime   // pin to exact annotated frame
+      exportStartWallMs = performance.now()
+
+      // Track freeze progress via wall clock
+      progressIntervalId = setInterval(() => {
+        const elapsed = (performance.now() - exportStartWallMs) / 1000
+        const beforeSecs = annotatedTime - freezeStart
+        setExportProgress(Math.min((beforeSecs + elapsed) / totalSecs, 0.99))
+        if (elapsed >= FREEZE_DURATION) {
+          clearInterval(progressIntervalId!); progressIntervalId = null
+          enterAfter()
+        }
+      }, 50)
     }
 
-    // If user pauses during export, treat as cancel
-    const onPause = () => {
-      stopExport()
-      setExporting(false)
+    const enterAfter = () => {
+      phase = 'after'
+      if (!isFinite(resumeTime) || resumeTime >= (duration > 0 ? duration : Infinity) - 0.05) {
+        // Nothing left to play after the freeze
+        finishExport()
+        return
+      }
+      video.currentTime = resumeTime
+      const onSeeked = () => {
+        video.removeEventListener('seeked', onSeeked)
+        video.play().catch(finishExport)
+      }
+      video.addEventListener('seeked', onSeeked)
     }
+
+    const onTimeUpdate = () => {
+      const t = video.currentTime
+      if (phase === 'before') {
+        const beforeSecs = annotatedTime - freezeStart
+        setExportProgress(Math.min((t - freezeStart) / totalSecs, beforeSecs / totalSecs))
+        if (t >= annotatedTime - 0.05) enterFreeze()
+      } else if (phase === 'after') {
+        const beforeSecs  = annotatedTime - freezeStart
+        const afterElapsed = t - resumeTime
+        setExportProgress(Math.min((beforeSecs + FREEZE_DURATION + afterElapsed) / totalSecs, 0.99))
+      }
+    }
+
+    const onEnded = () => finishExport()
 
     recorder.onstop = async () => {
-      video.removeEventListener('ended', stopExport)
-      video.removeEventListener('pause', onPause)
-
+      cleanup()
       const blob = new Blob(chunks, { type: 'video/webm' })
       const buffer = await blob.arrayBuffer()
       const ts = new Date().toISOString().replace(/[:.]/g, '-')
@@ -373,16 +440,16 @@ export default function VideoAnnotator() {
       setExporting(false)
     }
 
-    video.addEventListener('ended', stopExport, { once: true })
-    video.addEventListener('pause', onPause)
+    video.addEventListener('timeupdate', onTimeUpdate)
+    video.addEventListener('ended', onEnded, { once: true })
 
-    // Seek to beginning, start recording, start playback
-    video.currentTime = 0
-    await new Promise<void>(res => { video.addEventListener('seeked', () => res(), { once: true }) })
+    // Seek to freezeStart and begin
+    video.currentTime = freezeStart
+    await new Promise<void>(res => video.addEventListener('seeked', () => res(), { once: true }))
     recorder.start(500)
     exportRafRef.current = requestAnimationFrame(drawLoop)
-    video.play().catch(() => stopExport())
-  }, [])
+    video.play().catch(finishExport)
+  }, [ops, duration])
 
   const handleCancelExport = () => {
     if (exportRafRef.current) { cancelAnimationFrame(exportRafRef.current); exportRafRef.current = null }
@@ -449,8 +516,9 @@ export default function VideoAnnotator() {
           </button>
           <button
             onClick={handleExportVideo}
-            disabled={!videoReady || exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-tertiary/10 hover:bg-tertiary/20 border border-tertiary/30 rounded-xl text-xs font-bold text-tertiary transition-all disabled:opacity-40"
+            disabled={!videoReady || exporting || ops.length === 0}
+            title={ops.length === 0 ? 'Draw something first' : `Freeze frame at ${fmt(currentTime)} · 1s before + 2s hold + 1s after`}
+            className="flex items-center gap-2 px-4 py-2 bg-tertiary/10 hover:bg-tertiary/20 border border-tertiary/30 rounded-xl text-xs font-bold text-tertiary transition-all disabled:opacity-40 disabled:cursor-not-allowed"
             style={{ fontFamily: 'Manrope, sans-serif' }}
           >
             <span className="material-symbols-outlined text-sm">movie</span>
@@ -581,9 +649,9 @@ export default function VideoAnnotator() {
           {ops.length > 0 && <p className="text-[11px] text-slate-500 text-center">{ops.length} annotation{ops.length !== 1 ? 's' : ''}</p>}
 
           <div className="mt-auto space-y-2 text-[11px] text-slate-600 border-t border-white/5 pt-4">
-            <p><span className="text-slate-400 font-semibold">Extract Frame</span> — current frame as PNG in annotation editor.</p>
-            <p><span className="text-slate-400 font-semibold">Export Frame</span> — current frame + drawings as a PNG for sharing.</p>
-            <p><span className="text-slate-400 font-semibold">Export Video</span> — new .webm with drawings baked into every frame (plays in real-time).</p>
+            <p><span className="text-slate-400 font-semibold">Extract Frame</span> — save current frame as PNG in the editor.</p>
+            <p><span className="text-slate-400 font-semibold">Export Frame</span> — current frame + drawings as a PNG.</p>
+            <p><span className="text-slate-400 font-semibold">Export Video</span> — video plays normally, freezes on this frame for 2s with your drawings, then resumes. Draw first.</p>
           </div>
         </aside>
       </div>

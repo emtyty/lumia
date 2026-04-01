@@ -32,7 +32,8 @@ export function getSettings(): AppSettings {
     customUploadUrl: store.get('customUploadUrl'),
     customUploadHeaders: store.get('customUploadHeaders'),
     customUploadFieldName: store.get('customUploadFieldName'),
-    theme: store.get('theme')
+    theme: store.get('theme'),
+    activeWorkflowId: store.get('activeWorkflowId')
   }
 }
 

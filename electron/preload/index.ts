@@ -57,6 +57,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRegionSelected: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => {
     ipcRenderer.on('region:selected', (_e, rect) => cb(rect))
   },
+  onRecorderOpen: (cb: () => void) => { ipcRenderer.on('recorder:open', cb) },
+  onRecorderOpenGif: (cb: () => void) => { ipcRenderer.on('recorder:open-gif', cb) },
+  onRecorderStop: (cb: () => void) => { ipcRenderer.on('recorder:stop', cb) },
 
   removeAllListeners: (channel: string) => ipcRenderer.removeAllListeners(channel),
 
