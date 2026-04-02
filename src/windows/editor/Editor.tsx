@@ -30,6 +30,13 @@ export default function Editor() {
   const [shareAction, setShareAction] = useState<'workflow' | 'direct'>('direct')
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
 
+  // Update image whenever location.state changes — handles repeated hotkey captures
+  // while the Editor is already mounted (navigate() to same route doesn't remount)
+  useEffect(() => {
+    const state = location.state as { dataUrl?: string } | null
+    if (state?.dataUrl) setImageDataUrl(state.dataUrl)
+  }, [location.state])
+
   useEffect(() => {
     window.electronAPI?.onCaptureReady(({ dataUrl }) => setImageDataUrl(dataUrl))
     window.electronAPI?.getTemplates().then(t => {
@@ -100,6 +107,7 @@ export default function Editor() {
         {/* Canvas area */}
         <div className="flex-1 overflow-hidden flex items-center justify-center canvas-vignette" style={{ background: 'radial-gradient(circle, #0f172a 0%, #020617 100%)' }}>
           <AnnotationCanvas
+            key={imageDataUrl}
             imageDataUrl={imageDataUrl}
             tool={tool}
             color={color}
