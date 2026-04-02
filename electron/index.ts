@@ -7,6 +7,7 @@ import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
 import { getSettings, setSetting, type AppSettings } from './settings'
+import { autoUpdater } from 'electron-updater'
 
 // Force legacy DXGI/GDI capturer instead of WGC on Windows.
 // appendSwitch with duplicate keys can be ignored; appendArgument always appends.
@@ -141,6 +142,22 @@ app.whenReady().then(async () => {
   setupHotkeys()
   setupTray()
 
+  // Auto-update
+  if (!isDev) {
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    autoUpdater.checkForUpdates()
+  }
+
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update:downloaded', info.version)
+  })
+  ipcMain.handle('update:install', () => {
+    autoUpdater.quitAndInstall()
+  })
+
+  ipcMain.handle('app:version', () => app.getVersion())
+
   // IPC: Navigation
   ipcMain.handle('navigate', (_e, route: string) => {
     navigateTo(route)
@@ -210,7 +227,16 @@ app.whenReady().then(async () => {
       { label: 'Workflow',             click: () => mainWindow?.webContents.send('navigate', '/workflow') },
       { label: 'Settings',             click: () => mainWindow?.webContents.send('navigate', '/settings') },
       { type: 'separator' },
-      { label: 'Quit Lumia',           click: () => app.quit() }
+      { label: 'About Lumia',           click: () => mainWindow?.webContents.send('app:about') },
+      { label: 'Quit Lumia',           click: () => app.quit() },
+      ...(isDev ? [
+        { type: 'separator' as const },
+        { label: 'Developer', submenu: [
+          { label: 'Toggle DevTools', accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
+          { label: 'Reload',          accelerator: 'CmdOrCtrl+R', click: () => mainWindow?.webContents.reload() },
+          { label: 'Force Reload',    accelerator: 'CmdOrCtrl+Shift+R', click: () => mainWindow?.webContents.reloadIgnoringCache() },
+        ]}
+      ] : [])
     ])
     menu.popup({ window: mainWindow! })
   })

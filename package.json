@@ -1,17 +1,25 @@
 {
-  "name": "shareanywhere",
+  "name": "lumia",
   "version": "1.0.0",
-  "description": "Cross-platform screen capture, annotation & sharing tool",
+  "author": "emtyty",
+  "description": "A cross-platform screen capture, annotation, and sharing tool for Windows and macOS",
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "pack:mac": "node scripts/unlock-keychain.js && npm run build && electron-builder --mac",
+    "pack:win": "npm run build && electron-builder --win",
+    "dist": "node scripts/unlock-keychain.js && npm run build && electron-builder",
+    "dist:skip-unlock": "npm run build && electron-builder",
+    "release": "export GH_TOKEN=$(gh auth token) && node scripts/unlock-keychain.js && npm run build && electron-builder --publish always",
+    "release:skip-unlock": "export GH_TOKEN=$(gh auth token) && npm run build && electron-builder --publish always",
+    "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
     "electron-store": "^8.2.0",
+    "electron-updater": "^6.6.2",
     "uuid": "^10.0.0"
   },
   "devDependencies": {
@@ -21,6 +29,7 @@
     "@types/react-dom": "^18.3.0",
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.3.0",
+    "dotenv": "^17.4.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "electron-vite": "^2.3.0",

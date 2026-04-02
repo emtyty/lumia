@@ -1,3 +1,5 @@
+import logoSrc from '@/assets/logo.png'
+
 export function TitleBar() {
   const isMac = window.electronAPI?.platform === 'darwin'
 
@@ -10,7 +12,7 @@ export function TitleBar() {
       {isMac && <div className="w-[72px] flex-shrink-0" />}
 
       <img
-        src="/logo.png"
+        src={logoSrc}
         alt="Lumia"
         className="h-5 object-contain flex-shrink-0"
         style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}

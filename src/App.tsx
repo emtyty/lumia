@@ -9,6 +9,7 @@ import Workflow from './windows/workflow/Workflow'
 import Settings from './windows/settings/Settings'
 import VideoAnnotator from './windows/video-annotator/VideoAnnotator'
 import Overlay from './windows/overlay/Overlay'
+import { AboutDialog } from './components/AboutDialog'
 
 const OVERLAY_ROUTE = '/overlay'
 
@@ -50,6 +51,7 @@ export default function App() {
         </Routes>
       </main>
       </div>
+      <AboutDialog />
     </div>
   )
 }

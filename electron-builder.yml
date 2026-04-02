@@ -1,6 +1,6 @@
-appId: com.shareanywhere.app
-productName: ShareAnywhere
-copyright: Copyright © 2026 ShareAnywhere
+appId: com.lumia.app
+productName: Lumia
+copyright: Copyright © 2026 Lumia
 
 directories:
   buildResources: resources
@@ -13,15 +13,23 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  icon: resources/icon.ico
+  icon: resources/icons/windows/icon.ico
+
+afterSign: scripts/notarize.js
 
 mac:
   target:
     - target: dmg
-      arch: [x64, arm64]
-  icon: resources/icon.icns
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  icon: resources/icons/mac/icon.icns
   category: public.app-category.graphics-design
   darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
 
 nsis:
   oneClick: false
@@ -33,3 +41,8 @@ dmg:
   window:
     width: 540
     height: 380
+
+publish:
+  provider: github
+  owner: haht-dev
+  repo: lumia-releases

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import VideoRecorder from '../../components/VideoRecorder'
+import { UpdateNotification } from '../../components/UpdateNotification'
 
 type CaptureMode = 'region' | 'window' | 'fullscreen'
 
@@ -68,7 +69,8 @@ export default function Dashboard() {
             placeholder="Search captures..."
           />
         </div>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4">
+          <UpdateNotification />
           <span className="material-symbols-outlined text-secondary cursor-pointer hover:scale-110 transition-transform">cloud_done</span>
           <span className="material-symbols-outlined text-slate-400 cursor-pointer hover:text-white transition-colors">notifications</span>
         </div>

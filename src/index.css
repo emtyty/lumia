@@ -128,6 +128,15 @@ html.light .titlebar {
   -webkit-app-region: drag;
 }
 
+/* ── Slide up for update notification ── */
+@keyframes slide-up {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-slide-up {
+  animation: slide-up 0.3s ease-out;
+}
+
 /* ── Animate pulse for live indicator ── */
 @keyframes pulse-glow {
   0%, 100% { box-shadow: 0 0 8px rgba(0, 227, 253, 0.8); }
