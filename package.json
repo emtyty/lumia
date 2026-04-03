@@ -11,10 +11,8 @@
     "pack": "npm run build && electron-builder --dir",
     "pack:mac": "node scripts/unlock-keychain.js && npm run build && electron-builder --mac",
     "pack:win": "npm run build && electron-builder --win",
-    "dist": "node scripts/unlock-keychain.js && npm run build && electron-builder",
-    "dist:skip-unlock": "npm run build && electron-builder",
-    "release": "export GH_TOKEN=$(gh auth token) && node scripts/unlock-keychain.js && npm run build && electron-builder --publish always",
-    "release:skip-unlock": "export GH_TOKEN=$(gh auth token) && npm run build && electron-builder --publish always",
+    "release:mac": "export GH_TOKEN=$(gh auth token) && node scripts/unlock-keychain.js && npm run build && electron-builder --mac --publish always",
+    "release:win": "export GH_TOKEN=$(gh auth token) && npm run build && electron-builder --win --publish always",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
