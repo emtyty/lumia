@@ -86,6 +86,7 @@ export default function History() {
                 onAnnotate={() => navigate('/video-annotator', { state: { filePath: item.filePath, name: item.name } })}
                 onDelete={() => handleDelete(item.id)}
                 onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
+                onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
               />
             ))}
           </div>
@@ -150,13 +151,14 @@ function VideoPreviewModal({ item, onClose, onAnnotate }: { item: HistoryItem; o
 }
 
 function HistoryCard({
-  item, onOpen, onAnnotate, onDelete, onOpenFile
+  item, onOpen, onAnnotate, onDelete, onOpenFile, onCopy
 }: {
   item: HistoryItem
   onOpen: () => void
   onAnnotate: () => void
   onDelete: () => void
   onOpenFile: () => void
+  onCopy: () => void
 }) {
   const date = new Date(item.timestamp).toLocaleString('en-US', {
     month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
@@ -202,6 +204,15 @@ function HistoryCard({
                 title="Show in folder"
               >
                 <span className="material-symbols-outlined text-sm">folder_open</span>
+              </button>
+            )}
+            {item.type === 'screenshot' && (
+              <button
+                onClick={e => { e.stopPropagation(); onCopy() }}
+                className="p-1.5 glass-refractive rounded-xl hover:bg-primary hover:text-slate-950 transition-all text-white"
+                title="Copy to clipboard"
+              >
+                <span className="material-symbols-outlined text-sm">content_copy</span>
               </button>
             )}
             <button

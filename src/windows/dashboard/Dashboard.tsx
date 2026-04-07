@@ -4,12 +4,13 @@ import type { HistoryItem } from '../../types'
 import VideoRecorder from '../../components/VideoRecorder'
 import { UpdateNotification } from '../../components/UpdateNotification'
 
-type CaptureMode = 'region' | 'window' | 'fullscreen'
+type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
 
 const CAPTURE_BUTTONS: { mode: CaptureMode; icon: string; label: string; shortcut: string }[] = [
   { mode: 'region',     icon: 'crop_free',       label: 'Region',     shortcut: 'Ctrl+Shift+4' },
   { mode: 'window',     icon: 'layers',           label: 'Window',     shortcut: 'Ctrl+Shift+2' },
-  { mode: 'fullscreen', icon: 'desktop_windows',  label: 'Fullscreen', shortcut: 'Ctrl+Shift+3' },
+  { mode: 'fullscreen',      icon: 'desktop_windows',  label: 'Fullscreen',      shortcut: 'Ctrl+Shift+3' },
+  { mode: 'active-monitor',  icon: 'monitor',          label: 'Active Screen',   shortcut: 'Ctrl+Shift+1' },
 ]
 
 export default function Dashboard() {

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AnnotationCanvas, { Tool } from '../../components/AnnotationCanvas/Canvas'
 import ShareDialog from '../../components/ShareDialog'
-import type { WorkflowTemplate } from '../../types'
+import type { WorkflowTemplate, HistoryItem } from '../../types'
 
 const TOOLS: { id: Tool; icon: string; label: string }[] = [
   { id: 'select',  icon: 'arrow_selector_tool', label: 'Select' },
@@ -29,6 +29,9 @@ export default function Editor() {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
   const [shareAction, setShareAction] = useState<'workflow' | 'direct'>('direct')
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
+  const [copyToast, setCopyToast] = useState(false)
+  const [clipboardHistory, setClipboardHistory] = useState<{ id: string; dataUrl: string; name: string; timestamp: number }[]>([])
+  const [showClipHistory, setShowClipHistory] = useState(true)
 
   // Update image whenever location.state changes — handles repeated hotkey captures
   // while the Editor is already mounted (navigate() to same route doesn't remount)
@@ -46,8 +49,26 @@ export default function Editor() {
     return () => { window.electronAPI?.removeAllListeners('capture:ready') }
   }, [])
 
-  const handleExport = useCallback((dataUrl: string) => {
+  // Load clipboard history (recent screenshots from history store)
+  useEffect(() => {
+    window.electronAPI?.getHistory().then((items: HistoryItem[]) => {
+      setClipboardHistory(
+        items
+          .filter(i => i.type === 'screenshot' && i.dataUrl)
+          .slice(0, 20)
+          .map(i => ({ id: i.id, dataUrl: i.dataUrl!, name: i.name, timestamp: i.timestamp }))
+      )
+    })
+  }, [])
+
+  const handleExport = useCallback(async (dataUrl: string) => {
     setExportedDataUrl(dataUrl)
+    // Auto-copy to clipboard on every export
+    try {
+      await window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
+      setCopyToast(true)
+      setTimeout(() => setCopyToast(false), 2000)
+    } catch { /* silent */ }
     setShowShareDialog(true)
   }, [])
 
@@ -75,6 +96,13 @@ export default function Editor() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden pt-0">
+      {/* Auto-copy toast */}
+      {copyToast && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-5 py-3 bg-secondary/20 backdrop-blur-xl border border-secondary/30 rounded-2xl shadow-lg">
+          <span className="material-symbols-outlined text-secondary text-sm">check_circle</span>
+          <span className="text-sm font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Copied to clipboard</span>
+        </div>
+      )}
       {/* Top bar */}
       <header className="h-14 liquid-glass flex items-center justify-between px-6 border-b border-white/5 flex-shrink-0">
         <div className="flex items-center gap-3">
@@ -165,6 +193,44 @@ export default function Editor() {
               onChange={e => setStrokeWidth(Number(e.target.value))}
               className="w-full accent-primary"
             />
+          </div>
+
+          {/* Clipboard History */}
+          <div>
+            <button
+              onClick={() => setShowClipHistory(prev => !prev)}
+              className="flex items-center justify-between w-full mb-3 group"
+            >
+              <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                Clipboard History
+              </p>
+              <span className={`material-symbols-outlined text-slate-500 text-sm transition-transform ${showClipHistory ? "rotate-180" : ""}`}>
+                expand_more
+              </span>
+            </button>
+            {showClipHistory && (
+              <div className="space-y-2 max-h-48 overflow-y-auto hide-scrollbar">
+                {clipboardHistory.length === 0 ? (
+                  <p className="text-xs text-slate-600 text-center py-3">No recent captures</p>
+                ) : (
+                  clipboardHistory.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => setImageDataUrl(item.dataUrl)}
+                      className="w-full flex items-center gap-3 p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-all"
+                    >
+                      <img src={item.dataUrl} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" />
+                      <div className="flex-1 min-w-0 text-left">
+                        <p className="text-xs text-slate-300 truncate">{item.name}</p>
+                        <p className="text-[10px] text-slate-600">
+                          {new Date(item.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      </div>
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
           </div>
 
           {/* Actions */}

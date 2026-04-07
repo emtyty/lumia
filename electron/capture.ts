@@ -1,7 +1,7 @@
-import { desktopCapturer, ipcMain, screen, Notification } from 'electron'
-import { getMainWindow, createOverlayWindow, getOverlayWindow } from './index'
+import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard } from 'electron'
+import { getMainWindow, createOverlayWindow, getOverlayWindow, getHistoryStore } from './index'
 
-export type CaptureMode = 'fullscreen' | 'region' | 'window'
+export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
 
 const HIDE_DELAY_MS = 200 // wait for window to fully disappear before capturing
 
@@ -28,6 +28,7 @@ export function setupCapture() {
       case 'fullscreen': return captureFullscreen()
       case 'region':     return captureRegion()
       case 'window':     return captureWindow()
+      case 'active-monitor': return captureActiveMonitor()
     }
   })
 
@@ -113,16 +114,64 @@ async function captureRect(rect: { x: number; y: number; width: number; height: 
   return dataUrl
 }
 
+
+async function captureActiveMonitor(): Promise<string> {
+  await hideMainWindow()
+
+  // Detect which display contains the mouse cursor
+  const cursorPoint = screen.getCursorScreenPoint()
+  const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
+  const { width, height } = activeDisplay.size
+  const scaleFactor = activeDisplay.scaleFactor
+  const { x, y } = activeDisplay.bounds
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
+  })
+
+  // Match the source to the active display by comparing bounds
+  // desktopCapturer returns sources ordered by display, pick the matching one
+  let source = sources[0]
+  if (sources.length > 1) {
+    const allDisplays = screen.getAllDisplays()
+    const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
+    if (idx >= 0 && idx < sources.length) source = sources[idx]
+  }
+
+  const dataUrl = source.thumbnail.toDataURL()
+  await sendCaptureToEditor(dataUrl, 'active-monitor')
+  return dataUrl
+}
 export async function sendCaptureToEditor(dataUrl: string, source: string) {
   const mainWin = getMainWindow()
   if (!mainWin || mainWin.isDestroyed()) return
 
-  // Pass dataUrl as Router state so Editor reads it from location.state on mount.
-  // Sending capture:ready as a separate event causes a race — the listener in
-  // Editor's useEffect is not registered yet when the event fires.
+  // Auto-copy capture to clipboard immediately
+  try {
+    const img = nativeImage.createFromDataURL(dataUrl)
+    clipboard.writeImage(img)
+  } catch { /* silent */ }
+
+  // Add capture to history immediately (before annotation)
+  try {
+    const historyStore = getHistoryStore()
+    if (historyStore) {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      historyStore.add({
+        id: require('crypto').randomUUID(),
+        timestamp: Date.now(),
+        name: `capture-${ts}`,
+        dataUrl,
+        type: 'screenshot',
+        uploads: []
+      })
+    }
+  } catch { /* silent */ }
+
   mainWin.webContents.send('navigate', '/editor', { dataUrl, source })
   showMainWindow()
 
-  const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : 'Fullscreen'
-  new Notification({ title: 'ShareAnywhere', body: `${label} captured — opening editor` }).show()
+  const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : source === 'active-monitor' ? 'Active Monitor' : 'Fullscreen'
+  new Notification({ title: 'ShareAnywhere', body: `${label} captured — copied to clipboard` }).show()
 }

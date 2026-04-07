@@ -17,6 +17,7 @@ export default function VideoRecorder({ onClose }: Props) {
   const [elapsed, setElapsed] = useState(0)
   const [savedPath, setSavedPath] = useState('')
   const [error, setError] = useState('')
+  const [entireScreen, setEntireScreen] = useState(false)
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
@@ -31,6 +32,18 @@ export default function VideoRecorder({ onClose }: Props) {
       setSelectedSource(screen ?? s[0] ?? null)
     })
 
+    // ESC to close the recorder dialog
+    const onEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        if (mediaRecorderRef.current?.state === 'recording') {
+          stopRecording()
+        } else {
+          onClose()
+        }
+      }
+    }
+    window.addEventListener('keydown', onEsc)
+
     // Ctrl+Shift+S global hotkey → stop recording if active
     window.electronAPI?.onRecorderStop(() => {
       if (mediaRecorderRef.current?.state === 'recording') {
@@ -38,7 +51,7 @@ export default function VideoRecorder({ onClose }: Props) {
       }
     })
 
-    return () => { window.electronAPI?.removeAllListeners('recorder:stop') }
+    return () => { window.removeEventListener('keydown', onEsc); window.electronAPI?.removeAllListeners('recorder:stop') }
   }, []) // eslint-disable-line
 
   const clearTimer = () => {
@@ -66,6 +79,9 @@ export default function VideoRecorder({ onClose }: Props) {
       // Hide the app window before capturing
       await window.electronAPI?.hideForRecording()
 
+      // For entire screen mode, use native resolution; otherwise cap at 1080p
+      const maxW = entireScreen ? 3840 : 1920
+      const maxH = entireScreen ? 2160 : 1080
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: {
@@ -74,9 +90,9 @@ export default function VideoRecorder({ onClose }: Props) {
             chromeMediaSource: 'desktop',
             chromeMediaSourceId: selectedSource.id,
             minWidth: 1280,
-            maxWidth: 1920,
+            maxWidth: maxW,
             minHeight: 720,
-            maxHeight: 1080,
+            maxHeight: maxH,
             maxFrameRate: 30   // cap at 30fps — reduces WGC frame-drop errors
           }
         }
@@ -260,11 +276,40 @@ export default function VideoRecorder({ onClose }: Props) {
                   <div className="aspect-video bg-slate-900 rounded-xl overflow-hidden">
                     <img src={src.thumbnail} className="w-full h-full object-cover opacity-80" />
                   </div>
-                  <span className="text-xs font-semibold text-slate-300 truncate" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                  <span
+                    className="text-xs font-semibold text-slate-300 line-clamp-2"
+                    style={{ fontFamily: 'Manrope, sans-serif', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}
+                    title={src.name}
+                  >
                     {src.name}
                   </span>
                 </button>
               ))}
+            </div>
+
+            
+            {/* Entire Screen toggle */}
+            <div className="flex items-center justify-between p-4 rounded-2xl bg-white/5 border border-white/10">
+              <div className="flex items-center gap-3">
+                <span className="material-symbols-outlined text-slate-400 text-[20px]">desktop_windows</span>
+                <div>
+                  <span className="text-sm font-semibold text-slate-200" style={{ fontFamily: 'Manrope, sans-serif' }}>Entire Screen</span>
+                  <p className="text-[10px] text-slate-500">Native resolution (up to 4K)</p>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setEntireScreen(prev => !prev)
+                  // Auto-select first screen source when enabling entire screen
+                  if (!entireScreen) {
+                    const screenSrc = sources.find(x => x.name.includes('Screen') || x.name.includes('Entire'))
+                    if (screenSrc) setSelectedSource(screenSrc)
+                  }
+                }}
+                className={`w-10 h-5 rounded-full relative transition-all duration-300 ${entireScreen ? 'bg-primary' : 'bg-slate-700'}`}
+              >
+                <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-all duration-300 ${entireScreen ? 'right-0.5' : 'left-0.5'}`} />
+              </button>
             </div>
 
             {error && (

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import type { WorkflowResult } from '../types'
 
 interface Props {
@@ -11,6 +11,12 @@ type Status = 'idle' | 'loading' | 'done' | 'error'
 
 export default function ShareDialog({ imageDataUrl, templateId, onClose }: Props) {
   const [status, setStatus] = useState<Status>('idle')
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
   const [result, setResult] = useState<WorkflowResult | null>(null)
   const [errorMsg, setErrorMsg] = useState('')
 

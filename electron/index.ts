@@ -24,9 +24,11 @@ if (process.platform === 'win32') {
 const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
+let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
 let overlayWindow: BrowserWindow | null = null
 
 export function getMainWindow() { return mainWindow }
+export function getHistoryStore() { return historyStoreInstance }
 export function getOverlayWindow() { return overlayWindow }
 
 const ICON_PATH = join(__dirname, '../../resources/icon.png')
@@ -176,6 +178,7 @@ app.whenReady().then(async () => {
 
   // IPC: History
   const historyStore = new HistoryStore()
+  historyStoreInstance = historyStore
   ipcMain.handle('history:get', () => historyStore.getAll())
   ipcMain.handle('history:delete', (_e, id: string) => historyStore.delete(id))
   ipcMain.handle('history:openFile', (_e, filePath: string) => {

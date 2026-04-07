@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 
-export type CaptureMode = 'fullscreen' | 'region' | 'window'
+export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
 export type RecordMode = 'fullscreen' | 'window' | 'region'
 
 contextBridge.exposeInMainWorld('electronAPI', {

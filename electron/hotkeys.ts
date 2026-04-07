@@ -12,6 +12,7 @@ const defaultHotkeys: HotkeyConfig = {
   RectangleRegion:   'Ctrl+Shift+4',
   PrintScreen:       'Ctrl+Shift+3',
   ActiveWindow:      'Ctrl+Shift+2',
+  ActiveMonitor:     'Ctrl+Shift+1',
   ScreenRecorder:    'Ctrl+Shift+R',
   ScreenRecorderGIF: 'Ctrl+Shift+G',
   StopScreenRecording: 'Ctrl+Shift+S',
@@ -102,6 +103,28 @@ export function setupHotkeys() {
         !s.name.includes('ShareAnywhere') && !s.thumbnail.isEmpty()
       )
       if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
+    },
+    ActiveMonitor: async () => {
+      await hideMain()
+      const { desktopCapturer, screen } = await import('electron')
+      const cursorPoint = screen.getCursorScreenPoint()
+      const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
+      const { width, height } = activeDisplay.size
+      const sf = activeDisplay.scaleFactor
+
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: width * sf, height: height * sf }
+      })
+
+      let source = sources[0]
+      if (sources.length > 1) {
+        const allDisplays = screen.getAllDisplays()
+        const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
+        if (idx >= 0 && idx < sources.length) source = sources[idx]
+      }
+
+      if (source) sendCaptureToEditor(source.thumbnail.toDataURL(), 'active-monitor')
     },
     ScreenRecorder: () => {
       const win = getMainWindow()
