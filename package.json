@@ -11,7 +11,7 @@
     "pack": "npm run build && electron-builder --dir",
     "pack:mac": "node scripts/unlock-keychain.js && npm run build && electron-builder --mac",
     "pack:win": "npm run build && electron-builder --win",
-    "release:mac": "export GH_TOKEN=$(gh auth token) && node scripts/unlock-keychain.js && npm run build && electron-builder --mac --publish always",
+    "release:mac": "export GH_TOKEN=$(gh auth token) && node scripts/unlock-keychain.js && npm run build && electron-builder --mac --publish always -c.afterSign=scripts/notarize.js",
     "release:win": "export GH_TOKEN=$(gh auth token) && npm run build && electron-builder --win --publish always",
     "postinstall": "electron-builder install-app-deps"
   },

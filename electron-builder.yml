@@ -22,14 +22,13 @@ win:
       arch: [x64]
   icon: resources/icons/win/icon.ico
 
-afterSign: scripts/notarize.js
-
 mac:
   target:
     - target: dmg
-      arch: [arm64,x64]
+      arch: [universal]
     - target: zip
-      arch: [arm64,x64]
+      arch: [universal]
+  artifactName: "${productName}-${version}-mac.${ext}"
   icon: resources/icons/mac/icon.icns
   category: public.app-category.graphics-design
   darkModeSupport: true
@@ -45,6 +44,7 @@ nsis:
   createStartMenuShortcut: true
 
 dmg:
+  artifactName: "${productName}.${ext}"
   window:
     width: 540
     height: 380
