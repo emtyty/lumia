@@ -17,11 +17,16 @@ function hideMain(): Promise<void> {
 }
 
 export function setupTray() {
-  const iconPath = join(__dirname, '../../resources/icon.png')
+  const trayIconPath = join(__dirname, '../../resources/icons/png/32x32.png')
+  const fallbackIconPath = join(__dirname, '../../resources/tray-icon.png')
   let icon: Electron.NativeImage
 
   try {
-    icon = nativeImage.createFromPath(iconPath)
+    icon = nativeImage.createFromPath(trayIconPath)
+    if (icon.isEmpty()) {
+      icon = nativeImage.createFromPath(fallbackIconPath)
+      if (!icon.isEmpty()) icon = icon.resize({ width: 32, height: 32 })
+    }
     if (icon.isEmpty()) throw new Error('empty')
   } catch {
     icon = nativeImage.createEmpty()

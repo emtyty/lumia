@@ -209,15 +209,15 @@ export default function Editor() {
               </span>
             </button>
             {showClipHistory && (
-              <div className="space-y-2 max-h-48 overflow-y-auto hide-scrollbar">
+              <div className="space-y-2 max-h-80 overflow-y-auto hide-scrollbar">
                 {clipboardHistory.length === 0 ? (
                   <p className="text-xs text-slate-600 text-center py-3">No recent captures</p>
                 ) : (
                   clipboardHistory.map(item => (
-                    <button
+                    <div
                       key={item.id}
+                      className="w-full flex items-center gap-3 p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-all group/clip cursor-pointer"
                       onClick={() => setImageDataUrl(item.dataUrl)}
-                      className="w-full flex items-center gap-3 p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-all"
                     >
                       <img src={item.dataUrl} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" />
                       <div className="flex-1 min-w-0 text-left">
@@ -226,7 +226,19 @@ export default function Editor() {
                           {new Date(item.timestamp).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
                         </p>
                       </div>
-                    </button>
+                      <button
+                        onClick={e => {
+                          e.stopPropagation()
+                          window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)
+                          setCopyToast(true)
+                          setTimeout(() => setCopyToast(false), 2000)
+                        }}
+                        className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
+                        title="Copy to clipboard"
+                      >
+                        <span className="material-symbols-outlined text-sm">content_copy</span>
+                      </button>
+                    </div>
                   ))
                 )}
               </div>

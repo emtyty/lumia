@@ -31,7 +31,11 @@ export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
 export function getOverlayWindow() { return overlayWindow }
 
-const ICON_PATH = join(__dirname, '../../resources/icon.png')
+const ICON_PATH = process.platform === 'win32'
+  ? join(__dirname, '../../resources/icons/win/icon.ico')
+  : process.platform === 'darwin'
+    ? join(__dirname, '../../resources/icons/mac/icon.icns')
+    : join(__dirname, '../../resources/icon.png')
 
 function createMainWindow(): BrowserWindow {
   const isMac = process.platform === 'darwin'
