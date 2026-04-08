@@ -38,6 +38,10 @@ declare global {
       readLocalFile: (filePath: string) => Promise<ArrayBuffer>
 
       showAppMenu: () => Promise<void>
+      quitApp: () => Promise<void>
+      toggleDevTools: () => Promise<void>
+      reloadWindow: () => Promise<void>
+      forceReloadWindow: () => Promise<void>
       setTitleBarTheme: (theme: 'dark' | 'light') => Promise<void>
       navigate: (route: string) => void
       onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => void

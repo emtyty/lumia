@@ -41,6 +41,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // App menu (hamburger in title bar)
   showAppMenu: () => ipcRenderer.invoke('menu:show'),
 
+  // App actions (for renderer custom menu)
+  quitApp: () => ipcRenderer.invoke('app:quit'),
+  toggleDevTools: () => ipcRenderer.invoke('devtools:toggle'),
+  reloadWindow: () => ipcRenderer.invoke('window:reload'),
+  forceReloadWindow: () => ipcRenderer.invoke('window:force-reload'),
+
   // Update native titlebar overlay colors on theme change (Windows)
   setTitleBarTheme: (theme: 'dark' | 'light') => ipcRenderer.invoke('titlebar:setTheme', theme),
 

@@ -248,6 +248,14 @@ app.whenReady().then(async () => {
     menu.popup({ window: mainWindow! })
   })
 
+  // IPC: App quit (for renderer menu)
+  ipcMain.handle('app:quit', () => app.quit())
+
+  // IPC: Dev tools (for renderer menu)
+  ipcMain.handle('devtools:toggle', () => mainWindow?.webContents.toggleDevTools())
+  ipcMain.handle('window:reload', () => mainWindow?.webContents.reload())
+  ipcMain.handle('window:force-reload', () => mainWindow?.webContents.reloadIgnoringCache())
+
   // IPC: Dialog
   ipcMain.handle('dialog:save', async (_e, opts) => {
     const result = await dialog.showSaveDialog(mainWindow!, opts)

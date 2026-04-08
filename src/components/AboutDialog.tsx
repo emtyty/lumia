@@ -8,7 +8,12 @@ export function AboutDialog() {
   useEffect(() => {
     window.electronAPI?.getAppVersion().then((v: string) => setVersion(v))
     window.electronAPI?.onAbout(() => setOpen(true))
-    return () => { window.electronAPI?.removeAllListeners('app:about') }
+    const handleShowAbout = () => setOpen(true)
+    window.addEventListener('app:show-about', handleShowAbout)
+    return () => {
+      window.electronAPI?.removeAllListeners('app:about')
+      window.removeEventListener('app:show-about', handleShowAbout)
+    }
   }, [])
 
   if (!open) return null
