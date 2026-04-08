@@ -74,6 +74,7 @@ function createMainWindow(): BrowserWindow {
   if (isDev) {
     win.loadURL('http://localhost:5173/#/dashboard')
     // win.webContents.openDevTools({ mode: 'detach' })
+  
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
@@ -134,8 +135,22 @@ function navigateTo(route: string) {
   }
 }
 
-// Remove default application menu globally
-Menu.setApplicationMenu(null)
+// Set application menu — hidden on Windows (frameless), but provides keyboard accelerators
+if (isDev) {
+  const devMenu = Menu.buildFromTemplate([
+    {
+      label: 'Dev',
+      submenu: [
+        { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => BrowserWindow.getFocusedWindow()?.webContents.reload() },
+        { label: 'Force Reload', accelerator: 'CmdOrCtrl+Shift+R', click: () => BrowserWindow.getFocusedWindow()?.webContents.reloadIgnoringCache() },
+        { label: 'Toggle DevTools', accelerator: process.platform === 'darwin' ? 'Alt+CmdOrCtrl+I' : 'Ctrl+Shift+I', click: () => BrowserWindow.getFocusedWindow()?.webContents.toggleDevTools() },
+      ],
+    },
+  ])
+  Menu.setApplicationMenu(devMenu)
+} else {
+  Menu.setApplicationMenu(null)
+}
 
 if (process.platform === 'win32') {
   app.setAppUserModelId('Lumia')
@@ -222,30 +237,6 @@ app.whenReady().then(async () => {
     const normalized = resolve(normalize(filePath))
     if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
     return shell.openPath(normalized)
-  })
-
-  // IPC: App menu (hamburger in custom title bar)
-  ipcMain.handle('menu:show', () => {
-    const menu = Menu.buildFromTemplate([
-      { label: 'Capture Region',       accelerator: 'Ctrl+Shift+4', click: () => mainWindow?.webContents.send('navigate', '/overlay') },
-      { label: 'Capture Fullscreen',   accelerator: 'Ctrl+Shift+3', click: () => mainWindow?.webContents.send('navigate', '/dashboard') },
-      { type: 'separator' },
-      { label: 'History',              click: () => mainWindow?.webContents.send('navigate', '/history') },
-      { label: 'Workflow',             click: () => mainWindow?.webContents.send('navigate', '/workflow') },
-      { label: 'Settings',             click: () => mainWindow?.webContents.send('navigate', '/settings') },
-      { type: 'separator' },
-      { label: 'About Lumia',           click: () => mainWindow?.webContents.send('app:about') },
-      { label: 'Quit Lumia',           click: () => app.quit() },
-      ...(isDev ? [
-        { type: 'separator' as const },
-        { label: 'Developer', submenu: [
-          { label: 'Toggle DevTools', accelerator: 'F12', click: () => mainWindow?.webContents.toggleDevTools() },
-          { label: 'Reload',          accelerator: 'CmdOrCtrl+R', click: () => mainWindow?.webContents.reload() },
-          { label: 'Force Reload',    accelerator: 'CmdOrCtrl+Shift+R', click: () => mainWindow?.webContents.reloadIgnoringCache() },
-        ]}
-      ] : [])
-    ])
-    menu.popup({ window: mainWindow! })
   })
 
   // IPC: App quit (for renderer menu)

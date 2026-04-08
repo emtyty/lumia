@@ -38,9 +38,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Read local file as ArrayBuffer (for video blob URL playback)
   readLocalFile: (filePath: string) => ipcRenderer.invoke('file:read', filePath),
 
-  // App menu (hamburger in title bar)
-  showAppMenu: () => ipcRenderer.invoke('menu:show'),
-
   // App actions (for renderer custom menu)
   quitApp: () => ipcRenderer.invoke('app:quit'),
   toggleDevTools: () => ipcRenderer.invoke('devtools:toggle'),

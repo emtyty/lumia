@@ -10,6 +10,7 @@ import Settings from './windows/settings/Settings'
 import VideoAnnotator from './windows/video-annotator/VideoAnnotator'
 import Overlay from './windows/overlay/Overlay'
 import { AboutDialog } from './components/AboutDialog'
+import { ReleaseNotesDialog } from './components/ReleaseNotesDialog'
 
 const OVERLAY_ROUTE = '/overlay'
 
@@ -52,6 +53,7 @@ export default function App() {
       </main>
       </div>
       <AboutDialog />
+      <ReleaseNotesDialog />
     </div>
   )
 }

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AnnotationCanvas, { Tool } from '../../components/AnnotationCanvas/Canvas'
 import ShareDialog from '../../components/ShareDialog'
+import { WorkflowSelector } from '../../components/WorkflowSelector'
 import type { WorkflowTemplate, HistoryItem } from '../../types'
 
 const TOOLS: { id: Tool; icon: string; label: string }[] = [
@@ -112,15 +113,11 @@ export default function Editor() {
           <h2 className="text-sm font-bold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Annotation Editor</h2>
         </div>
         <div className="flex items-center gap-3">
-          <select
-            value={selectedTemplateId}
-            onChange={e => setSelectedTemplateId(e.target.value)}
-            className="bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-xl focus:outline-none focus:border-primary/40"
-          >
-            {templates.map(t => (
-              <option key={t.id} value={t.id} className="bg-slate-900">{t.icon} {t.name}</option>
-            ))}
-          </select>
+          <WorkflowSelector
+            templates={templates}
+            selectedId={selectedTemplateId}
+            onSelect={setSelectedTemplateId}
+          />
           <button
             onClick={() => { triggerExport(); setShareAction('workflow') }}
             className="primary-gradient text-slate-900 font-bold text-xs px-5 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform"

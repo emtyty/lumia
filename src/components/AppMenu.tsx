@@ -14,6 +14,7 @@ function shortcut(key: string): string {
   if (isMac) {
     return key
       .replace('CmdOrCtrl+', '⌘')
+      .replace('Alt+', '⌥')
       .replace('Ctrl+', '⌃')
       .replace('Shift+', '⇧')
   }
@@ -81,7 +82,8 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
   if (import.meta.env.DEV) {
     items.push(
       { type: 'separator' },
-      { type: 'item', label: 'Toggle DevTools', icon: 'code', shortcut: 'F12', action: () => window.electronAPI?.toggleDevTools() },
+      { type: 'item', label: 'Release Notes', icon: 'new_releases', action: () => window.dispatchEvent(new Event('app:show-release-notes')) },
+      { type: 'item', label: 'Toggle DevTools', icon: 'code', shortcut: shortcut(isMac ? 'Alt+CmdOrCtrl+I' : 'Ctrl+Shift+I'), action: () => window.electronAPI?.toggleDevTools() },
       { type: 'item', label: 'Reload', icon: 'refresh', shortcut: shortcut('CmdOrCtrl+R'), action: () => window.electronAPI?.reloadWindow() },
       { type: 'item', label: 'Force Reload', icon: 'sync', shortcut: shortcut('CmdOrCtrl+Shift+R'), action: () => window.electronAPI?.forceReloadWindow() },
     )
@@ -120,7 +122,7 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
               </span>
               <span className="flex-1 text-left">{item.label}</span>
               {item.shortcut && (
-                <span className="text-xs text-[var(--color-on-surface-variant)] font-mono ml-4">
+                <span className="text-xs text-[var(--color-on-surface-variant)] ml-4" style={{ fontFamily: '-apple-system, "Segoe UI", system-ui, sans-serif' }}>
                   {item.shortcut}
                 </span>
               )}

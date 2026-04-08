@@ -37,7 +37,6 @@ declare global {
       saveFile: (dataUrl: string, filePath: string) => Promise<string>
       readLocalFile: (filePath: string) => Promise<ArrayBuffer>
 
-      showAppMenu: () => Promise<void>
       quitApp: () => Promise<void>
       toggleDevTools: () => Promise<void>
       reloadWindow: () => Promise<void>

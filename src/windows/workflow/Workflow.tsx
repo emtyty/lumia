@@ -172,7 +172,7 @@ export default function Workflow() {
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
-                  <span className="text-xl flex-shrink-0">{t.icon}</span>
+                  <span className="material-symbols-outlined text-xl flex-shrink-0">{t.icon}</span>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <p className="text-sm font-semibold text-white truncate" style={{ fontFamily: 'Manrope, sans-serif' }}>{t.name}</p>
@@ -212,13 +212,9 @@ export default function Workflow() {
           <div className="flex-1 overflow-y-auto space-y-6">
             {/* Template header */}
             <div className="glass-refractive rounded-3xl p-6 flex items-center gap-4">
-              <input
-                value={selected.icon}
-                onChange={e => setSelected({ ...selected, icon: e.target.value })}
-                className="w-12 h-12 text-2xl bg-white/5 rounded-2xl text-center border border-white/10 focus:outline-none focus:border-primary/40"
-                maxLength={2}
-                disabled={selected.builtIn}
-              />
+              <div className="w-12 h-12 bg-white/5 rounded-2xl border border-white/10 flex items-center justify-center">
+                <span className="material-symbols-outlined text-2xl text-[var(--color-on-surface-variant)]">{selected.icon}</span>
+              </div>
               <input
                 value={selected.name}
                 onChange={e => setSelected({ ...selected, name: e.target.value })}

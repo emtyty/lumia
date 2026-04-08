@@ -2,6 +2,7 @@ import { Tray, Menu, nativeImage, app } from 'electron'
 import { join } from 'path'
 import { getMainWindow, createOverlayWindow } from './index'
 import { sendCaptureToEditor } from './capture'
+import fs from 'fs'
 
 let tray: Tray | null = null
 
@@ -17,17 +18,29 @@ function hideMain(): Promise<void> {
 }
 
 export function setupTray() {
-  const trayIconPath = join(__dirname, '../../resources/icons/png/32x32.png')
-  const fallbackIconPath = join(__dirname, '../../resources/tray-icon.png')
+  const isMac = process.platform === 'darwin'
+  const trayIconPath = app.isPackaged
+    ? join(process.resourcesPath, `tray/${isMac ? 'mac' : 'win'}/tray-icon.png`)
+    : join(__dirname, `../../resources/tray/${isMac ? 'mac' : 'win'}/tray-icon.png`)
+  console.log(`Tray icon path: ${trayIconPath}`)
   let icon: Electron.NativeImage
+
 
   try {
     icon = nativeImage.createFromPath(trayIconPath)
     if (icon.isEmpty()) {
-      icon = nativeImage.createFromPath(fallbackIconPath)
-      if (!icon.isEmpty()) icon = icon.resize({ width: 32, height: 32 })
+      console.error('Could not load tray icon.')
+      icon = nativeImage.createEmpty()
+      return
     }
-    if (icon.isEmpty()) throw new Error('empty')
+    if (isMac) {
+      // macOS menu bar icons should be 22x22 points (44x44 px @2x Retina)
+      // Resize to 22x22 so Electron treats it as 22pt, not 44pt
+      icon = icon.resize({ width: 22, height: 22 })
+      icon.setTemplateImage(true)
+    } else {
+      icon = icon.resize({ width: 32, height: 32 })
+    }
   } catch {
     icon = nativeImage.createEmpty()
   }

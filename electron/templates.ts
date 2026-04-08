@@ -10,7 +10,7 @@ const BUILT_IN: WorkflowTemplate[] = [
   {
     id: 'builtin-clipboard',
     name: 'Quick Clipboard',
-    icon: '📋',
+    icon: 'content_paste',
     builtIn: true,
     afterCapture: [{ type: 'clipboard' }],
     destinations: [],
@@ -19,7 +19,7 @@ const BUILT_IN: WorkflowTemplate[] = [
   {
     id: 'builtin-save',
     name: 'Save to Disk',
-    icon: '💾',
+    icon: 'save',
     builtIn: true,
     afterCapture: [
       { type: 'annotate' },
@@ -31,7 +31,7 @@ const BUILT_IN: WorkflowTemplate[] = [
   {
     id: 'builtin-imgur',
     name: 'Upload & Copy Link',
-    icon: '🔗',
+    icon: 'link',
     builtIn: true,
     afterCapture: [{ type: 'annotate' }],
     destinations: [{ type: 'imgur', clientId: '' }],
@@ -43,7 +43,7 @@ const BUILT_IN: WorkflowTemplate[] = [
   {
     id: 'builtin-fullshare',
     name: 'Full Share',
-    icon: '🚀',
+    icon: 'rocket_launch',
     builtIn: true,
     afterCapture: [
       { type: 'annotate' },

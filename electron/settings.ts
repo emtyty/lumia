@@ -10,6 +10,7 @@ export interface AppSettings {
   customUploadFieldName: string
   theme: 'dark' | 'light'
   activeWorkflowId: string
+  lastSeenReleaseVersion: string
 }
 
 const store = new Store<AppSettings>({
@@ -21,7 +22,8 @@ const store = new Store<AppSettings>({
     customUploadHeaders: {},
     customUploadFieldName: 'file',
     theme: 'dark',
-    activeWorkflowId: ''
+    activeWorkflowId: '',
+    lastSeenReleaseVersion: ''
   }
 })
 
@@ -33,7 +35,8 @@ export function getSettings(): AppSettings {
     customUploadHeaders: store.get('customUploadHeaders'),
     customUploadFieldName: store.get('customUploadFieldName'),
     theme: store.get('theme'),
-    activeWorkflowId: store.get('activeWorkflowId')
+    activeWorkflowId: store.get('activeWorkflowId'),
+    lastSeenReleaseVersion: store.get('lastSeenReleaseVersion')
   }
 }
 
