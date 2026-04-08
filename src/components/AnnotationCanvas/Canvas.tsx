@@ -39,6 +39,9 @@ export default function AnnotationCanvas({ imageDataUrl, tool, color, strokeWidt
   const [isDrawing, setIsDrawing] = useState(false)
   const [currentObj, setCurrentObj] = useState<DrawObject | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [textInput, setTextInput] = useState<{ x: number; y: number; screenX: number; screenY: number } | null>(null)
+  const textInputRef = useRef<HTMLInputElement>(null)
+  const [textValue, setTextValue] = useState('')
   const trRef = useRef<Konva.Transformer>(null)
   const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
 
@@ -53,6 +56,14 @@ export default function AnnotationCanvas({ imageDataUrl, tool, color, strokeWidt
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
+
+  // Focus text input after render — delayed to prevent Konva mouseUp from stealing focus
+  useEffect(() => {
+    if (textInput && textInputRef.current) {
+      const timer = setTimeout(() => textInputRef.current?.focus(), 50)
+      return () => clearTimeout(timer)
+    }
+  }, [textInput])
 
   const naturalW = bgImage?.width  ?? 800
   const naturalH = bgImage?.height ?? 600
@@ -94,10 +105,10 @@ export default function AnnotationCanvas({ imageDataUrl, tool, color, strokeWidt
     } else if (tool === 'arrow') {
       setCurrentObj({ ...base, points: [pos.x, pos.y, pos.x, pos.y] })
     } else if (tool === 'text') {
-      const text = prompt('Enter text:')
-      if (text) {
-        setObjects(prev => [...prev, { ...base, x: pos.x, y: pos.y, text }])
-      }
+      setTextInput({ x: pos.x, y: pos.y, screenX: raw.x, screenY: raw.y })
+      setTextValue('')
+      setIsDrawing(false)
+      return
     }
   }, [tool, color, strokeWidth, scale])
 
@@ -156,13 +167,13 @@ export default function AnnotationCanvas({ imageDataUrl, tool, color, strokeWidt
       return <Arrow key={key} id={obj.id} points={obj.points ?? []} stroke={obj.color} strokeWidth={obj.strokeWidth} fill={obj.color} draggable={tool === 'select'} onClick={() => !isPreview && setSelectedId(obj.id)} />
     }
     if (obj.type === 'text') {
-      return <Text key={key} id={obj.id} x={obj.x} y={obj.y} text={obj.text ?? ''} fontSize={obj.strokeWidth * 6 + 12} fill={obj.color} draggable={tool === 'select'} onClick={() => !isPreview && setSelectedId(obj.id)} />
+      return <Text key={key} id={obj.id} x={obj.x} y={obj.y} text={obj.text ?? ''} fontSize={obj.strokeWidth * 6 + 12} fill={obj.color} draggable={!isPreview} onClick={() => !isPreview && setSelectedId(obj.id)} onDragEnd={e => { if (!isPreview) { const node = e.target; setObjects(prev => prev.map(o => o.id === obj.id ? { ...o, x: node.x() / 1, y: node.y() / 1 } : o)) } }} />
     }
     return null
   }
 
   return (
-    <div ref={containerRef} className="w-full h-full flex items-center justify-center">
+    <div ref={containerRef} className="w-full h-full flex items-center justify-center relative">
       <Stage
         ref={stageRef}
         width={stageWidth}
@@ -181,6 +192,62 @@ export default function AnnotationCanvas({ imageDataUrl, tool, color, strokeWidt
           <Transformer ref={trRef} />
         </Layer>
       </Stage>
+      {textInput && (
+        <div
+          className="absolute z-10"
+          style={{ left: textInput.screenX, top: textInput.screenY }}
+          onMouseDown={e => e.stopPropagation()}
+        >
+          <input
+            ref={textInputRef}
+            value={textValue}
+            onChange={e => setTextValue(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && textValue.trim()) {
+                setObjects(prev => [...prev, {
+                  id: uid(),
+                  type: 'text' as Tool,
+                  x: textInput.x,
+                  y: textInput.y,
+                  text: textValue,
+                  color,
+                  strokeWidth
+                }])
+                setTextInput(null)
+                setTextValue('')
+              } else if (e.key === 'Escape') {
+                setTextInput(null)
+                setTextValue('')
+              }
+            }}
+            onBlur={() => {
+              // Delay to avoid Konva mouseUp immediately triggering blur
+              setTimeout(() => {
+                setTextInput(prev => {
+                  if (!prev) return null
+                  const val = textInputRef.current?.value || ''
+                  if (val.trim()) {
+                    setObjects(old => [...old, {
+                      id: uid(),
+                      type: 'text' as Tool,
+                      x: prev.x,
+                      y: prev.y,
+                      text: val,
+                      color,
+                      strokeWidth
+                    }])
+                  }
+                  return null
+                })
+                setTextValue('')
+              }, 150)
+            }}
+            className="bg-slate-900/90 border border-primary/50 text-white text-sm px-3 py-2 rounded-xl outline-none min-w-[160px] backdrop-blur-sm shadow-lg"
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+            placeholder="Type text, Enter to confirm..."
+          />
+        </div>
+      )}
     </div>
   )
 }

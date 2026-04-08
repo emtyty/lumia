@@ -20,7 +20,7 @@ export default function Editor() {
   const location = useLocation()
   const navigate = useNavigate()
   const [imageDataUrl, setImageDataUrl] = useState<string>((location.state as { dataUrl?: string })?.dataUrl ?? '')
-  const [tool, setTool] = useState<Tool>('select')
+  const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState('#b6a0ff')
   const [strokeWidth, setStrokeWidth] = useState(3)
   const [exportTrigger, setExportTrigger] = useState(0)
@@ -95,7 +95,7 @@ export default function Editor() {
   }
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden pt-0">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Auto-copy toast */}
       {copyToast && (
         <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-5 py-3 bg-secondary/20 backdrop-blur-xl border border-secondary/30 rounded-2xl shadow-lg">
@@ -146,7 +146,8 @@ export default function Editor() {
         </div>
 
         {/* Right panel */}
-        <aside className="w-64 glass-refractive border-l border-white/5 flex flex-col p-4 gap-6 overflow-y-auto">
+        <aside className="w-64 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
+        <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 hide-scrollbar">
           {/* Tool palette */}
           <div>
             <p className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3" style={{ fontFamily: 'Manrope, sans-serif' }}>Tools</p>
@@ -176,7 +177,7 @@ export default function Editor() {
                 <button
                   key={c}
                   onClick={() => setColor(c)}
-                  className={`w-full aspect-square rounded-xl transition-all hover:scale-110 ${color === c ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-900 scale-110' : ''}`}
+                  className={`w-8 h-8 rounded-full transition-all hover:scale-110 ${color === c ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-900 scale-110' : ''}`}
                   style={{ background: c }}
                 />
               ))}
@@ -209,7 +210,7 @@ export default function Editor() {
               </span>
             </button>
             {showClipHistory && (
-              <div className="space-y-2 max-h-80 overflow-y-auto hide-scrollbar">
+              <div className="space-y-2">
                 {clipboardHistory.length === 0 ? (
                   <p className="text-xs text-slate-600 text-center py-3">No recent captures</p>
                 ) : (
@@ -245,11 +246,13 @@ export default function Editor() {
             )}
           </div>
 
+          </div>
+
           {/* Actions */}
-          <div className="mt-auto space-y-2">
+          <div className="p-4 pb-5 space-y-2 border-t border-white/5 flex-shrink-0">
             <button
               onClick={() => { triggerExport(); setShareAction('direct') }}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-semibold text-white transition-all"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-semibold text-white transition-all"
               style={{ fontFamily: 'Manrope, sans-serif' }}
             >
               <span className="material-symbols-outlined text-sm">content_copy</span>
@@ -257,7 +260,7 @@ export default function Editor() {
             </button>
             <button
               onClick={() => { triggerExport(); setShareAction('direct') }}
-              className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-semibold text-white transition-all"
+              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-semibold text-white transition-all"
               style={{ fontFamily: 'Manrope, sans-serif' }}
             >
               <span className="material-symbols-outlined text-sm">save</span>
@@ -265,7 +268,7 @@ export default function Editor() {
             </button>
             <button
               onClick={() => { triggerExport(); setShareAction('workflow') }}
-              className="w-full primary-gradient text-slate-900 font-bold px-4 py-3 rounded-xl flex items-center justify-center gap-2 text-sm hover:scale-[1.02] transition-transform"
+              className="w-full primary-gradient text-slate-900 font-bold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm hover:scale-[1.02] transition-transform"
               style={{ fontFamily: 'Manrope, sans-serif' }}
             >
               <span className="material-symbols-outlined text-sm">rocket_launch</span>
