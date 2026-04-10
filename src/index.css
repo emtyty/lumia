@@ -58,7 +58,6 @@ body {
 
 .card-organic:hover {
   background: rgba(255, 255, 255, 0.05);
-  transform: translateY(-4px);
 }
 
 .glass-card {
@@ -72,7 +71,6 @@ body {
 .glass-card:hover {
   background: rgba(30, 41, 59, 0.6);
   border-color: rgba(182, 160, 255, 0.3);
-  transform: translateY(-4px) scale(1.01);
 }
 
 /* ── Gradient utilities ── */
@@ -192,7 +190,6 @@ html.light .glass-card {
 html.light .glass-card:hover {
   background: rgba(255, 255, 255, 0.95);
   border-color: rgba(0, 80, 212, 0.18);
-  transform: translateY(-4px) scale(1.01);
 }
 
 html.light .card-organic {
@@ -201,7 +198,7 @@ html.light .card-organic {
 }
 
 html.light .card-organic:hover {
-  background: rgba(255, 255, 255, 0.9);
+  background: rgba(255, 255, 255, 0.92);
 }
 
 html.light .active-nav-bg {

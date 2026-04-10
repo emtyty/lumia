@@ -8,6 +8,14 @@ interface ReleaseNote {
 
 const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.0.2',
+    highlights: [
+      { icon: 'undo', title: 'Undo & Redo', description: 'Full undo/redo support in the annotation editor with cross-platform hotkeys (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z, Ctrl+Y)' },
+      { icon: 'history', title: 'History Panel', description: 'New History section in the editor sidebar with Undo, Redo, and Clear buttons' },
+      { icon: 'memory', title: 'Bounded History', description: 'Up to 100 annotation states are tracked — no memory bloat on long editing sessions' },
+    ],
+  },
+  {
     version: '1.0.1',
     highlights: [
       { icon: 'palette', title: 'New App Icons', description: 'Fresh platform-native icons for macOS and Windows' },
