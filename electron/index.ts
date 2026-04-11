@@ -118,11 +118,13 @@ export function createOverlayWindow(): BrowserWindow {
   })
 
   win.setIgnoreMouseEvents(false)
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // 'pop-up-menu' is above all application windows but below macOS system UI
+  // (Stage Manager, Dock, menubar). Using 'screen-saver' (the old value) sits
+  // above ALL system UI, which forces macOS to hide Stage Manager while the
+  // overlay is visible and then snap it back in when the overlay closes —
+  // that "snap back" is the sidebar-appearing bug users see on macOS.
+  win.setAlwaysOnTop(true, 'pop-up-menu')
   win.setVisibleOnAllWorkspaces(true)
-  // Do NOT call win.maximize() — on macOS it triggers Zoom behavior which
-  // causes Stage Manager / Dock sidebar to flash. Explicit bounds from
-  // display.bounds (set in the constructor above) are sufficient.
 
   if (isDev) {
     win.loadURL('http://localhost:5173/#/overlay')
