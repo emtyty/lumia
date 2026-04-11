@@ -26,10 +26,12 @@ const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
 let overlayWindow: BrowserWindow | null = null
+let overlayDisplayId: number | null = null
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
 export function getOverlayWindow() { return overlayWindow }
+export function getOverlayDisplayId() { return overlayDisplayId }
 
 const ICON_PATH = process.platform === 'win32'
   ? join(__dirname, '../../resources/icons/win/icon.ico')
@@ -89,7 +91,12 @@ export function createOverlayWindow(): BrowserWindow {
     overlayWindow = null
   }
 
-  const { width, height, x, y } = screen.getPrimaryDisplay().bounds
+  // Use the display containing the cursor — not always the primary display
+  const cursorPoint = screen.getCursorScreenPoint()
+  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
+  const { width, height, x, y } = targetDisplay.bounds
+  overlayDisplayId = targetDisplay.id
+
   const win = new BrowserWindow({
     x,
     y,

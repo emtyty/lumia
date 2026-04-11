@@ -84,13 +84,17 @@ export function setupHotkeys() {
     PrintScreen: async () => {
       await hideMain()
       const { desktopCapturer, screen } = await import('electron')
-      const d = screen.getPrimaryDisplay()
+      const cursorPoint = screen.getCursorScreenPoint()
+      const allDisplays = screen.getAllDisplays()
+      const d = screen.getDisplayNearestPoint(cursorPoint)
       const sf = d.scaleFactor
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
       })
-      sendCaptureToEditor(sources[0].thumbnail.toDataURL(), 'fullscreen')
+      const idx = allDisplays.findIndex(disp => disp.id === d.id)
+      const source = (idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
+      sendCaptureToEditor(source.thumbnail.toDataURL(), 'fullscreen')
     },
     ActiveWindow: async () => {
       await hideMain()
@@ -108,6 +112,7 @@ export function setupHotkeys() {
       await hideMain()
       const { desktopCapturer, screen } = await import('electron')
       const cursorPoint = screen.getCursorScreenPoint()
+      const allDisplays = screen.getAllDisplays()
       const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
       const { width, height } = activeDisplay.size
       const sf = activeDisplay.scaleFactor
@@ -117,13 +122,8 @@ export function setupHotkeys() {
         thumbnailSize: { width: width * sf, height: height * sf }
       })
 
-      let source = sources[0]
-      if (sources.length > 1) {
-        const allDisplays = screen.getAllDisplays()
-        const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
-        if (idx >= 0 && idx < sources.length) source = sources[idx]
-      }
-
+      const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
+      const source = (sources.length > 1 && idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
       if (source) sendCaptureToEditor(source.thumbnail.toDataURL(), 'active-monitor')
     },
     ScreenRecorder: () => {
