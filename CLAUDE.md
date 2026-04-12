@@ -17,6 +17,10 @@ Lumia is a cross-platform Electron desktop app for screen capture, annotation, a
 | `pnpm pack:mac` | Build + package for macOS |
 | `pnpm pack:win` | Build + package for Windows |
 | `pnpm dist` | Build + package for distribution (exe/dmg) |
+| `pnpm release:mac` | Build, sign, notarize, and publish macOS build to GitHub Releases |
+| `pnpm release:win` | Build and publish Windows build to GitHub Releases |
+
+Release commands require `gh auth` (for `GH_TOKEN`) and macOS signing requires keychain access (`scripts/unlock-keychain.js`, `scripts/notarize.js`). Releases are published to `haht-dev/lumia-releases` on GitHub.
 
 No test framework, linter, or formatter is configured.
 
@@ -29,6 +33,11 @@ No test framework, linter, or formatter is configured.
 - **Renderer**: `src/` — React SPA with hash routing (`/#/dashboard`, `/#/editor`, etc.)
 
 Context isolation is on, nodeIntegration is off. All renderer↔main communication goes through the preload bridge.
+
+**Adding new IPC**: When exposing a new main→renderer API, update three places in order:
+1. `electron/index.ts` — add `ipcMain.handle('channel-name', ...)` handler
+2. `electron/preload/index.ts` — add the method to the `contextBridge` whitelist
+3. `src/electron.d.ts` — add the TypeScript signature to the `Window.electronAPI` interface
 
 ### Main Process Modules (`electron/`)
 
@@ -78,3 +87,4 @@ Custom CSS design tokens in `src/index.css`. Key classes: `.glass-refractive`, `
 - **Windows**: Uses legacy DXGI capturer (GDI fallback) to avoid Windows 11 WGC issues. Frameless window with native overlay controls.
 - **macOS**: Hidden inset title bar with traffic lights at x:18, y:20. arm64 only. Graphics/design category.
 - **Capture timing**: 200ms delay after hiding main window to ensure clean screen capture.
+- **Auto-update**: `electron-updater` checks `haht-dev/lumia-releases` for new versions. macOS builds are universal (arm64 + x64).

@@ -1,212 +1,244 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import AnnotationCanvas, {
   type CanvasHandle,
   Tool,
-} from '../../components/AnnotationCanvas/Canvas';
-import ShareDialog from '../../components/ShareDialog';
-import { WorkflowSelector } from '../../components/WorkflowSelector';
-import type { WorkflowTemplate, HistoryItem } from '../../types';
+} from '../../components/AnnotationCanvas/Canvas'
+import ShareDialog from '../../components/ShareDialog'
+import { WorkflowSelector } from '../../components/WorkflowSelector'
+import type { WorkflowTemplate, HistoryItem } from '../../types'
 
-const TOOLS: { id: Tool; icon: string; label: string }[] = [
-  { id: 'select', icon: 'arrow_selector_tool', label: 'Select' },
-  { id: 'pen', icon: 'draw', label: 'Pen' },
-  { id: 'rect', icon: 'rectangle', label: 'Rectangle' },
-  { id: 'ellipse', icon: 'circle', label: 'Ellipse' },
-  { id: 'arrow', icon: 'arrow_forward', label: 'Arrow' },
-  { id: 'text', icon: 'text_fields', label: 'Text' },
-  { id: 'blur', icon: 'blur_on', label: 'Blur' },
-];
+const TOOLS: { id: Tool; icon: string; label: string; key?: string }[] = [
+  { id: 'select',  icon: 'arrow_selector_tool', label: 'Select',    key: 'V' },
+  { id: 'pen',     icon: 'draw',                label: 'Pen',       key: 'P' },
+  { id: 'rect',    icon: 'rectangle',           label: 'Rectangle', key: 'R' },
+  { id: 'ellipse', icon: 'circle',              label: 'Ellipse',   key: 'E' },
+  { id: 'arrow',   icon: 'arrow_forward',       label: 'Arrow',     key: 'A' },
+  { id: 'text',    icon: 'text_fields',         label: 'Text',      key: 'T' },
+  { id: 'blur',    icon: 'blur_on',             label: 'Blur',      key: 'B' },
+]
 
 const COLORS = [
-  '#b6a0ff',
-  '#00e3fd',
-  '#ff6c95',
-  '#ffffff',
-  '#fbbf24',
-  '#34d399',
-  '#f87171',
-  '#000000',
-];
+  '#b6a0ff', '#00e3fd', '#ff6c95', '#ffffff',
+  '#fbbf24', '#34d399', '#f87171', '#000000',
+]
+
+function relativeTime(ts: number): string {
+  const diff = Date.now() - ts
+  const mins = Math.floor(diff / 60000)
+  const hrs = Math.floor(diff / 3600000)
+  const days = Math.floor(diff / 86400000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  if (hrs < 24) return `${hrs}h ago`
+  if (days < 7) return `${days}d ago`
+  return new Date(ts).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
 export default function Editor() {
-  const location = useLocation();
-  const navigate = useNavigate();
+  const location = useLocation()
+  const navigate = useNavigate()
   const [imageDataUrl, setImageDataUrl] = useState<string>(
     (location.state as { dataUrl?: string })?.dataUrl ?? '',
-  );
-  const [tool, setTool] = useState<Tool>('pen');
-  const [color, setColor] = useState('#b6a0ff');
-  const [strokeWidth, setStrokeWidth] = useState(3);
-  const [exportTrigger, setExportTrigger] = useState(0);
-  const [exportedDataUrl, setExportedDataUrl] = useState<string>('');
-  const [showShareDialog, setShowShareDialog] = useState(false);
-  const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
-  const [shareAction, setShareAction] = useState<
-    'workflow' | 'direct'
-  >('direct');
-  const [selectedTemplateId, setSelectedTemplateId] =
-    useState<string>('');
-  const [copyToast, setCopyToast] = useState(false);
-  const canvasRef = useRef<CanvasHandle>(null);
-  const [canUndo, setCanUndo] = useState(false);
-  const [canRedo, setCanRedo] = useState(false);
+  )
+  const [tool, setTool] = useState<Tool>('pen')
+  const [color, setColor] = useState('#b6a0ff')
+  const [strokeWidth, setStrokeWidth] = useState(3)
+  const [exportTrigger, setExportTrigger] = useState(0)
+  const [exportedDataUrl, setExportedDataUrl] = useState<string>('')
+  const [showShareDialog, setShowShareDialog] = useState(false)
+  const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
+  const [shareAction, setShareAction] = useState<'workflow' | 'direct'>('direct')
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
+  const [copyToast, setCopyToast] = useState(false)
+  const canvasRef = useRef<CanvasHandle>(null)
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
   const [clipboardHistory, setClipboardHistory] = useState<
     { id: string; dataUrl: string; name: string; timestamp: number }[]
-  >([]);
-  const [showClipHistory, setShowClipHistory] = useState(true);
-
-  // Update image whenever location.state changes — handles repeated hotkey captures
-  // while the Editor is already mounted (navigate() to same route doesn't remount)
-  useEffect(() => {
-    const state = location.state as { dataUrl?: string } | null;
-    if (state?.dataUrl) setImageDataUrl(state.dataUrl);
-  }, [location.state]);
+  >([])
+  const [showClipPanel, setShowClipPanel] = useState(false)
 
   useEffect(() => {
-    window.electronAPI?.onCaptureReady(({ dataUrl }) =>
-      setImageDataUrl(dataUrl),
-    );
+    const state = location.state as { dataUrl?: string } | null
+    if (state?.dataUrl) {
+      setImageDataUrl(state.dataUrl)
+      setExportTrigger(0)
+    }
+  }, [location.state])
+
+  useEffect(() => {
+    window.electronAPI?.onCaptureReady(({ dataUrl }) => { setExportTrigger(0); setImageDataUrl(dataUrl) })
     window.electronAPI?.getTemplates().then((t) => {
-      setTemplates(t);
-      if (t.length > 0) setSelectedTemplateId(t[0].id);
-    });
-    return () => {
-      window.electronAPI?.removeAllListeners('capture:ready');
-    };
-  }, []);
+      setTemplates(t)
+      if (t.length > 0) setSelectedTemplateId(t[0].id)
+    })
+    return () => { window.electronAPI?.removeAllListeners('capture:ready') }
+  }, [])
 
-  // Load clipboard history (recent screenshots from history store)
   useEffect(() => {
     window.electronAPI?.getHistory().then((items: HistoryItem[]) => {
       setClipboardHistory(
         items
           .filter((i) => i.type === 'screenshot' && i.dataUrl)
           .slice(0, 20)
-          .map((i) => ({
-            id: i.id,
-            dataUrl: i.dataUrl!,
-            name: i.name,
-            timestamp: i.timestamp,
-          })),
-      );
-    });
-  }, []);
+          .map((i) => ({ id: i.id, dataUrl: i.dataUrl!, name: i.name, timestamp: i.timestamp })),
+      )
+    })
+  }, [])
+
+  // Keyboard shortcuts for tools
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      const t = TOOLS.find(t => t.key?.toLowerCase() === e.key.toLowerCase())
+      if (t) setTool(t.id)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const handleExport = useCallback(async (dataUrl: string) => {
-    setExportedDataUrl(dataUrl);
-    // Auto-copy to clipboard on every export
+    setExportedDataUrl(dataUrl)
     try {
-      await window.electronAPI?.runWorkflow(
-        'builtin-clipboard',
-        dataUrl,
-      );
-      setCopyToast(true);
-      setTimeout(() => setCopyToast(false), 2000);
-    } catch {
-      /* silent */
-    }
-    setShowShareDialog(true);
-  }, []);
+      await window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
+      setCopyToast(true)
+      setTimeout(() => setCopyToast(false), 2000)
+    } catch { /* silent */ }
+    setShowShareDialog(true)
+  }, [])
 
-  const triggerExport = () => setExportTrigger((n) => n + 1);
+  const triggerExport = () => setExportTrigger((n) => n + 1)
 
   const handleHistoryChange = useCallback((u: boolean, r: boolean) => {
-    setCanUndo(u);
-    setCanRedo(r);
-  }, []);
+    setCanUndo(u)
+    setCanRedo(r)
+  }, [])
 
-  const handleCopyToClipboard = async () => {
-    triggerExport();
-    // share dialog handles the actual copy after export
-  };
-
+  /* ── Empty state ── */
   if (!imageDataUrl) {
     return (
-      <div className="h-screen flex flex-col items-center justify-center text-slate-600 gap-6 pt-16">
-        <span className="material-symbols-outlined text-6xl">
-          add_a_photo
-        </span>
-        <p
-          className="text-lg font-semibold"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          No capture loaded
-        </p>
-        <button
-          onClick={() => navigate('/dashboard')}
-          className="primary-gradient text-slate-900 font-bold px-8 py-3 rounded-2xl hover:scale-105 transition-transform"
-        >
-          Go to Dashboard
-        </button>
+      <div className="h-full flex flex-col items-center justify-center gap-5">
+        <div className="p-6 rounded-2xl bg-white/[0.03] border border-white/5">
+          <span className="material-symbols-outlined text-5xl text-slate-600">add_a_photo</span>
+        </div>
+        <div className="text-center">
+          <p className="text-base font-bold text-white mb-1" style={{ fontFamily: 'Manrope, sans-serif' }}>
+            No capture loaded
+          </p>
+          <p className="text-xs text-slate-500">Take a screenshot or select one from history</p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            onClick={() => navigate('/dashboard')}
+            className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-semibold text-white transition-all"
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+          >
+            Dashboard
+          </button>
+          <button
+            onClick={() => window.electronAPI?.captureScreenshot('region')}
+            className="primary-gradient text-slate-900 font-bold px-5 py-2.5 rounded-xl text-sm hover:scale-[1.02] active:scale-95 transition-transform"
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+          >
+            New Capture
+          </button>
+        </div>
       </div>
-    );
+    )
   }
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      {/* Auto-copy toast */}
+      {/* ── Toast ── */}
       {copyToast && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[60] flex items-center gap-2 px-5 py-3 bg-secondary/20 backdrop-blur-xl border border-secondary/30 rounded-2xl shadow-lg">
-          <span className="material-symbols-outlined text-secondary text-sm">
-            check_circle
-          </span>
-          <span
-            className="text-sm font-semibold text-white"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
-          >
-            Copied to clipboard
-          </span>
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2.5 bg-secondary/20 backdrop-blur-xl border border-secondary/30 rounded-xl shadow-lg animate-slide-up">
+          <span className="material-symbols-outlined text-secondary text-sm">check_circle</span>
+          <span className="text-xs font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Copied to clipboard</span>
         </div>
       )}
-      {/* Top bar */}
-      <header className="h-14 liquid-glass flex items-center justify-between px-6 border-b border-white/5 flex-shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="text-slate-400 hover:text-white transition-colors"
-          >
-            <span className="material-symbols-outlined">
-              arrow_back
-            </span>
-          </button>
-          <h2
-            className="text-sm font-bold text-white"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
-          >
-            Annotation Editor
-          </h2>
+
+      {/* ── Header / Toolbar ── */}
+      <header className="h-12 liquid-glass flex items-center px-3 border-b border-white/5 flex-shrink-0 gap-2">
+        {/* Back */}
+        <button
+          onClick={() => navigate('/dashboard')}
+          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all flex-shrink-0"
+        >
+          <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+        </button>
+
+        <div className="w-px h-5 bg-white/10" />
+
+        {/* Tools — horizontal segmented group */}
+        <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-xl p-0.5 border border-white/5">
+          {TOOLS.map(({ id, icon, label, key }) => (
+            <button
+              key={id}
+              title={`${label}${key ? ` (${key})` : ''}`}
+              onClick={() => setTool(id)}
+              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
+                tool === id
+                  ? 'bg-primary/20 text-primary shadow-[0_0_10px_rgba(182,160,255,0.15)]'
+                  : 'text-slate-400 hover:text-white hover:bg-white/10'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[17px]">{icon}</span>
+            </button>
+          ))}
         </div>
-        <div className="flex items-center gap-3">
-          <WorkflowSelector
-            templates={templates}
-            selectedId={selectedTemplateId}
-            onSelect={setSelectedTemplateId}
-          />
-          <button
-            onClick={() => {
-              triggerExport();
-              setShareAction('workflow');
-            }}
-            className="primary-gradient text-slate-900 font-bold text-xs px-5 py-2 rounded-xl flex items-center gap-2 hover:scale-105 transition-transform"
-          >
-            <span className="material-symbols-outlined text-sm">
-              rocket_launch
-            </span>
-            Share
-          </button>
+
+        <div className="w-px h-5 bg-white/10" />
+
+        {/* Undo / Redo / Clear */}
+        <div className="flex items-center gap-0.5">
+          <HeaderBtn icon="undo" label="Undo" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
+          <HeaderBtn icon="redo" label="Redo" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
+          <HeaderBtn icon="delete_sweep" label="Clear all" onClick={() => canvasRef.current?.clear()} variant="danger" />
         </div>
+
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Right: history toggle + workflow + share */}
+        <button
+          onClick={() => setShowClipPanel(p => !p)}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
+            showClipPanel
+              ? 'bg-primary/20 text-primary'
+              : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+          }`}
+          title="Recent captures"
+        >
+          <span className="material-symbols-outlined text-[16px]">photo_library</span>
+        </button>
+
+        <div className="w-px h-5 bg-white/10" />
+
+        <WorkflowSelector
+          templates={templates}
+          selectedId={selectedTemplateId}
+          onSelect={setSelectedTemplateId}
+        />
+        <button
+          onClick={() => { triggerExport(); setShareAction('workflow') }}
+          className="primary-gradient text-slate-900 font-bold text-[11px] px-4 py-1.5 rounded-lg flex items-center gap-1.5 hover:scale-[1.02] active:scale-95 transition-transform flex-shrink-0"
+          style={{ fontFamily: 'Manrope, sans-serif' }}
+        >
+          <span className="material-symbols-outlined text-sm">share</span>
+          Share
+        </button>
       </header>
 
+      {/* ── Main area ── */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Canvas area */}
+
+        {/* Canvas container */}
         <div
-          className="flex-1 overflow-hidden flex items-center justify-center canvas-vignette"
-          style={{
-            background:
-              'radial-gradient(circle, #0f172a 0%, #020617 100%)',
-          }}
+          className="flex-1 relative overflow-hidden flex items-center justify-center"
+          style={{ background: 'radial-gradient(circle, #0f172a 0%, #020617 100%)' }}
         >
+          {/* Canvas */}
           <AnnotationCanvas
             ref={canvasRef}
             key={imageDataUrl}
@@ -218,253 +250,136 @@ export default function Editor() {
             exportTrigger={exportTrigger}
             onHistoryChange={handleHistoryChange}
           />
+
+          {/* Floating color + stroke bar — bottom */}
+          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2.5 px-4 py-2.5 glass-refractive rounded-2xl shadow-2xl">
+            {COLORS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setColor(c)}
+                className={`w-6 h-6 rounded-full transition-all hover:scale-125 flex-shrink-0 ${
+                  color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : ''
+                }`}
+                style={{ background: c }}
+              />
+            ))}
+
+            <div className="w-px h-5 bg-white/10 mx-0.5" />
+
+            <div
+              className="w-5 h-5 rounded-full border-2 flex-shrink-0"
+              style={{ borderColor: color, transform: `scale(${0.5 + (strokeWidth / 20) * 0.5})` }}
+            />
+            <input
+              type="range"
+              min={1}
+              max={20}
+              value={strokeWidth}
+              onChange={(e) => setStrokeWidth(Number(e.target.value))}
+              className="w-20 accent-primary"
+            />
+            <span className="text-[10px] text-slate-400 font-mono w-5 text-right flex-shrink-0">
+              {strokeWidth}
+            </span>
+          </div>
         </div>
 
-        {/* Right panel */}
-        <aside className="w-64 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
-          <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4 hide-scrollbar">
-            {/* Tool palette */}
-            <div>
-              <p
-                className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3"
+        {/* ── Clipboard history panel (toggleable) ── */}
+        {showClipPanel && (
+          <aside className="w-56 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-shrink-0">
+              <span
+                className="text-[10px] font-bold uppercase tracking-widest text-slate-500"
                 style={{ fontFamily: 'Manrope, sans-serif' }}
               >
-                Tools
-              </p>
-              <div className="grid grid-cols-4 gap-2">
-                {TOOLS.map(({ id, icon, label }) => (
-                  <button
-                    key={id}
-                    title={label}
-                    onClick={() => setTool(id)}
-                    className={`p-2.5 rounded-xl flex items-center justify-center transition-all ${
-                      tool === id
-                        ? 'bg-primary/20 text-primary border border-primary/30'
-                        : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
-                    }`}
-                  >
-                    <span className="material-symbols-outlined text-[18px]">
-                      {icon}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* History — undo / redo / clear */}
-            <div>
-              <p
-                className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                History
-              </p>
-              <div className="flex gap-2">
-                <button
-                  title="Undo (Cmd/Ctrl+Z)"
-                  onClick={() => canvasRef.current?.undo()}
-                  disabled={!canUndo}
-                  className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-xl bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-xs font-semibold"
-                  style={{ fontFamily: 'Manrope, sans-serif' }}
-                >
-                  <span className="material-symbols-outlined text-[16px]">undo</span>
-                  Undo
-                </button>
-                <button
-                  title="Redo (Cmd/Ctrl+Shift+Z)"
-                  onClick={() => canvasRef.current?.redo()}
-                  disabled={!canRedo}
-                  className="flex-1 flex items-center justify-center gap-1.5 p-2 rounded-xl bg-white/5 text-slate-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-all text-xs font-semibold"
-                  style={{ fontFamily: 'Manrope, sans-serif' }}
-                >
-                  <span className="material-symbols-outlined text-[16px]">redo</span>
-                  Redo
-                </button>
-                <button
-                  title="Clear all annotations"
-                  onClick={() => canvasRef.current?.clear()}
-                  className="p-2 rounded-xl bg-white/5 text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-all"
-                >
-                  <span className="material-symbols-outlined text-[16px]">delete_sweep</span>
-                </button>
-              </div>
-            </div>
-
-            {/* Color palette */}
-            <div>
-              <p
-                className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                Color
-              </p>
-              <div className="grid grid-cols-4 gap-2">
-                {COLORS.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setColor(c)}
-                    className={`w-8 h-8 rounded-full transition-all hover:scale-110 ${color === c ? 'ring-2 ring-white ring-offset-1 ring-offset-slate-900 scale-110' : ''}`}
-                    style={{ background: c }}
-                  />
-                ))}
-              </div>
-            </div>
-
-            {/* Stroke width */}
-            <div>
-              <p
-                className="text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-3"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                Stroke — {strokeWidth}px
-              </p>
-              <input
-                type="range"
-                min={1}
-                max={20}
-                value={strokeWidth}
-                onChange={(e) =>
-                  setStrokeWidth(Number(e.target.value))
-                }
-                className="w-full accent-primary"
-              />
-            </div>
-
-            {/* Clipboard History */}
-            <div>
+                Recent Captures
+              </span>
               <button
-                onClick={() => setShowClipHistory((prev) => !prev)}
-                className="flex items-center justify-between w-full mb-3 group"
+                onClick={() => setShowClipPanel(false)}
+                className="text-slate-500 hover:text-white transition-colors"
               >
-                <p
-                  className="text-[10px] uppercase tracking-widest text-slate-500 font-bold"
-                  style={{ fontFamily: 'Manrope, sans-serif' }}
-                >
-                  Clipboard History
-                </p>
-                <span
-                  className={`material-symbols-outlined text-slate-500 text-sm transition-transform ${showClipHistory ? 'rotate-180' : ''}`}
-                >
-                  expand_more
-                </span>
+                <span className="material-symbols-outlined text-sm">close</span>
               </button>
-              {showClipHistory && (
-                <div className="space-y-2">
-                  {clipboardHistory.length === 0 ? (
-                    <p className="text-xs text-slate-600 text-center py-3">
-                      No recent captures
-                    </p>
-                  ) : (
-                    clipboardHistory.map((item) => (
-                      <div
-                        key={item.id}
-                        className="w-full flex items-center gap-3 p-2 rounded-xl bg-white/5 hover:bg-white/10 transition-all group/clip cursor-pointer"
-                        onClick={() => setImageDataUrl(item.dataUrl)}
-                      >
-                        <img
-                          src={item.dataUrl}
-                          className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10"
-                        />
-                        <div className="flex-1 min-w-0 text-left">
-                          <p className="text-xs text-slate-300 truncate">
-                            {item.name}
-                          </p>
-                          <p className="text-[10px] text-slate-600">
-                            {new Date(item.timestamp).toLocaleString(
-                              'en-US',
-                              {
-                                month: 'short',
-                                day: 'numeric',
-                                hour: '2-digit',
-                                minute: '2-digit',
-                              },
-                            )}
-                          </p>
-                        </div>
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            window.electronAPI?.runWorkflow(
-                              'builtin-clipboard',
-                              item.dataUrl,
-                            );
-                            setCopyToast(true);
-                            setTimeout(
-                              () => setCopyToast(false),
-                              2000,
-                            );
-                          }}
-                          className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
-                          title="Copy to clipboard"
-                        >
-                          <span className="material-symbols-outlined text-sm">
-                            content_copy
-                          </span>
-                        </button>
-                      </div>
-                    ))
-                  )}
-                </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+              {clipboardHistory.length === 0 ? (
+                <p className="text-xs text-slate-600 text-center py-6">No recent captures</p>
+              ) : (
+                clipboardHistory.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`group/clip flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all ${
+                      item.dataUrl === imageDataUrl
+                        ? 'bg-primary/10 border border-primary/20'
+                        : 'bg-white/[0.03] hover:bg-white/[0.07] border border-transparent'
+                    }`}
+                    onClick={() => { setExportTrigger(0); setImageDataUrl(item.dataUrl) }}
+                  >
+                    <img
+                      src={item.dataUrl}
+                      className="w-9 h-9 rounded-lg object-cover flex-shrink-0 border border-white/10"
+                      draggable={false}
+                    />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-[11px] text-slate-300 truncate font-medium">{item.name}</p>
+                      <p className="text-[9px] text-slate-600">{relativeTime(item.timestamp)}</p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)
+                        setCopyToast(true)
+                        setTimeout(() => setCopyToast(false), 2000)
+                      }}
+                      className="opacity-0 group-hover/clip:opacity-100 p-1 rounded-md bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
+                      title="Copy to clipboard"
+                    >
+                      <span className="material-symbols-outlined text-xs">content_copy</span>
+                    </button>
+                  </div>
+                ))
               )}
             </div>
-          </div>
-
-          {/* Actions */}
-          <div className="p-4 pb-5 space-y-2 border-t border-white/5 flex-shrink-0">
-            <button
-              onClick={() => {
-                triggerExport();
-                setShareAction('direct');
-              }}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-semibold text-white transition-all"
-              style={{ fontFamily: 'Manrope, sans-serif' }}
-            >
-              <span className="material-symbols-outlined text-sm">
-                content_copy
-              </span>
-              Copy to Clipboard
-            </button>
-            <button
-              onClick={() => {
-                triggerExport();
-                setShareAction('direct');
-              }}
-              className="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-sm font-semibold text-white transition-all"
-              style={{ fontFamily: 'Manrope, sans-serif' }}
-            >
-              <span className="material-symbols-outlined text-sm">
-                save
-              </span>
-              Save Capture
-            </button>
-            <button
-              onClick={() => {
-                triggerExport();
-                setShareAction('workflow');
-              }}
-              className="w-full primary-gradient text-slate-900 font-bold px-4 py-2.5 rounded-xl flex items-center justify-center gap-2 text-sm hover:scale-[1.02] transition-transform"
-              style={{ fontFamily: 'Manrope, sans-serif' }}
-            >
-              <span className="material-symbols-outlined text-sm">
-                rocket_launch
-              </span>
-              Upload
-            </button>
-          </div>
-        </aside>
+          </aside>
+        )}
       </div>
 
+      {/* ── Share dialog ── */}
       {showShareDialog && exportedDataUrl && (
         <ShareDialog
           imageDataUrl={exportedDataUrl}
-          templateId={
-            shareAction === 'workflow'
-              ? selectedTemplateId
-              : undefined
-          }
+          templateId={shareAction === 'workflow' ? selectedTemplateId : undefined}
           onClose={() => setShowShareDialog(false)}
         />
       )}
     </div>
-  );
+  )
+}
+
+/* ── Header icon button ── */
+
+function HeaderBtn({
+  icon, label, disabled, onClick, variant,
+}: {
+  icon: string
+  label: string
+  disabled?: boolean
+  onClick: () => void
+  variant?: 'danger'
+}) {
+  return (
+    <button
+      title={label}
+      disabled={disabled}
+      onClick={onClick}
+      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:opacity-25 disabled:cursor-not-allowed ${
+        variant === 'danger'
+          ? 'text-slate-400 hover:text-red-400 hover:bg-red-400/10'
+          : 'text-slate-400 hover:text-white hover:bg-white/10'
+      }`}
+    >
+      <span className="material-symbols-outlined text-[16px]">{icon}</span>
+    </button>
+  )
 }

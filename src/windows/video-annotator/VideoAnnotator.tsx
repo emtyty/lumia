@@ -463,7 +463,7 @@ export default function VideoAnnotator() {
 
   if (!filePath) {
     return (
-      <div className="h-screen flex items-center justify-center text-slate-600 flex-col gap-6 pt-16">
+      <div className="h-full flex items-center justify-center text-slate-600 flex-col gap-6">
         <span className="material-symbols-outlined text-5xl">videocam_off</span>
         <div className="text-center">
           <p className="text-sm font-medium text-slate-400 mb-1" style={{ fontFamily: 'Manrope, sans-serif' }}>No video file path provided</p>
