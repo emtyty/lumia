@@ -2,6 +2,40 @@ import type { UploadResult } from '../types'
 
 const GOOGLE_DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
 
+/** Returns true if the string looks like a real Drive file ID (not a folder name) */
+function looksLikeDriveId(s: string): boolean {
+  return /^[a-zA-Z0-9_-]{20,}$/.test(s)
+}
+
+/** Find folder by name, returns its ID or null */
+async function findFolderByName(name: string, accessToken: string): Promise<string | null> {
+  const q = encodeURIComponent(`name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id,name)`, {
+    headers: { Authorization: `Bearer ${accessToken}` }
+  })
+  if (!res.ok) return null
+  const json = await res.json() as { files: { id: string }[] }
+  return json.files[0]?.id ?? null
+}
+
+/** Create a folder and return its ID */
+async function createFolder(name: string, accessToken: string): Promise<string> {
+  const res = await fetch('https://www.googleapis.com/drive/v3/files', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ name, mimeType: 'application/vnd.google-apps.folder' })
+  })
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Failed to create folder: ${text}`)
+  }
+  const json = await res.json() as { id: string }
+  return json.id
+}
+
 export async function uploadToGoogleDrive(
   imageData: string,
   accessToken: string,
@@ -11,9 +45,18 @@ export async function uploadToGoogleDrive(
     return { destination: 'google-drive', success: false, error: 'No access token — please connect Google Drive in Settings' }
   }
 
-  const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
-  const buffer = Buffer.from(base64, 'base64')
+  // If folderId looks like a folder name (not a Drive ID), resolve it
+  let resolvedFolderId = folderId
+  if (folderId && !looksLikeDriveId(folderId)) {
+    try {
+      const found = await findFolderByName(folderId, accessToken)
+      resolvedFolderId = found ?? await createFolder(folderId, accessToken)
+    } catch (err) {
+      return { destination: 'google-drive', success: false, error: `Folder error: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
 
+  const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
   const ts = new Date().toISOString().replace(/[:.]/g, '-')
   const filename = `capture-${ts}.png`
 
@@ -22,8 +65,8 @@ export async function uploadToGoogleDrive(
     name: filename,
     mimeType: 'image/png'
   }
-  if (folderId) {
-    metadata.parents = [folderId]
+  if (resolvedFolderId) {
+    metadata.parents = [resolvedFolderId]
   }
 
   const boundary = '----LumiaDriveBoundary'

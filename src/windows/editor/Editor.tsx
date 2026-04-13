@@ -69,9 +69,15 @@ export default function Editor() {
 
   useEffect(() => {
     window.electronAPI?.onCaptureReady(({ dataUrl }) => { setExportTrigger(0); setImageDataUrl(dataUrl) })
-    window.electronAPI?.getTemplates().then((t) => {
+    Promise.all([
+      window.electronAPI?.getTemplates(),
+      window.electronAPI?.getSettings(),
+    ]).then(([t, s]) => {
+      if (!t) return
       setTemplates(t)
-      if (t.length > 0) setSelectedTemplateId(t[0].id)
+      const activeId = s?.activeWorkflowId
+      const defaultId = (activeId && t.find(x => x.id === activeId)) ? activeId : t[0]?.id
+      if (defaultId) setSelectedTemplateId(defaultId)
     })
     return () => { window.electronAPI?.removeAllListeners('capture:ready') }
   }, [])
@@ -98,13 +104,8 @@ export default function Editor() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const handleExport = useCallback(async (dataUrl: string) => {
+  const handleExport = useCallback((dataUrl: string) => {
     setExportedDataUrl(dataUrl)
-    try {
-      await window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
-      setCopyToast(true)
-      setTimeout(() => setCopyToast(false), 2000)
-    } catch { /* silent */ }
     setShowShareDialog(true)
   }, [])
 
@@ -288,21 +289,23 @@ export default function Editor() {
           <span className="material-symbols-outlined text-[16px]">photo_library</span>
         </button>
 
-        {/* Workflow + Share — unified group */}
-        <div className="flex items-center h-8 rounded-xl overflow-hidden border border-white/10 flex-shrink-0">
-          <WorkflowSelector
-            templates={templates}
-            selectedId={selectedTemplateId}
-            onSelect={setSelectedTemplateId}
-          />
-          <button
-            onClick={() => { triggerExport(); setShareAction('workflow') }}
-            className="primary-gradient h-full text-slate-900 w-9 flex items-center justify-center hover:brightness-110 active:scale-[0.97] transition-all flex-shrink-0"
-            title="Share"
-          >
-            <span className="material-symbols-outlined text-[17px]">share</span>
-          </button>
-        </div>
+        {/* Workflow selector */}
+        <WorkflowSelector
+          templates={templates}
+          selectedId={selectedTemplateId}
+          onSelect={setSelectedTemplateId}
+        />
+
+        {/* Run button */}
+        <button
+          onClick={() => { triggerExport(); setShareAction('workflow') }}
+          className="flex items-center gap-1.5 h-8 px-3.5 primary-gradient rounded-xl text-slate-900 font-bold text-[12px] hover:brightness-110 active:scale-95 transition-all shadow-[0_0_14px_rgba(182,160,255,0.25)] flex-shrink-0"
+          title="Run workflow"
+          style={{ fontFamily: 'Manrope, sans-serif' }}
+        >
+          <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>play_arrow</span>
+          Run
+        </button>
       </header>
 
       {/* ── Main area: canvas + clip panel ── */}

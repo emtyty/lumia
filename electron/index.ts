@@ -280,15 +280,146 @@ app.whenReady().then(async () => {
         const code = url.searchParams.get('code')
         const error = url.searchParams.get('error')
 
-        res.writeHead(200, { 'Content-Type': 'text/html' })
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         if (error || !code) {
-          res.end('<html><body><h2>Authorization failed.</h2><p>You may close this tab.</p></body></html>')
+          res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumia — Authorization Failed</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d0f;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #fff;
+  }
+  .card {
+    text-align: center;
+    padding: 48px 56px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    backdrop-filter: blur(24px);
+    max-width: 420px;
+    width: 90vw;
+  }
+  .icon {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.3);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 24px;
+    font-size: 28px;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 10px; letter-spacing: -0.3px; }
+  p { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✕</div>
+    <h1>Authorization failed</h1>
+    <p>Something went wrong. You may close this tab and try again from Lumia.</p>
+  </div>
+</body>
+</html>`)
           server.close()
           resolve({ success: false, error: error ?? 'No code returned' })
           return
         }
 
-        res.end('<html><body><h2>Connected!</h2><p>You may close this tab and return to Lumia.</p></body></html>')
+        res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumia — Connected</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d0f;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #fff;
+  }
+  .card {
+    text-align: center;
+    padding: 48px 56px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    backdrop-filter: blur(24px);
+    max-width: 420px;
+    width: 90vw;
+    animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .icon {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(74,222,128,0.12);
+    border: 1px solid rgba(74,222,128,0.3);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 24px;
+    font-size: 28px;
+    animation: pop 0.5s 0.2s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.6); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  h1 {
+    font-size: 22px; font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.3px;
+  }
+  p { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 20px;
+    padding: 6px 14px;
+    background: rgba(74,222,128,0.08);
+    border: 1px solid rgba(74,222,128,0.2);
+    border-radius: 999px;
+    font-size: 12px;
+    color: rgba(74,222,128,0.9);
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #4ade80;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✓</div>
+    <h1>Connected!</h1>
+    <p>Google Drive has been linked to your Lumia account.<br>You may close this tab.</p>
+    <div class="badge"><span class="dot"></span> Lumia is ready</div>
+  </div>
+</body>
+</html>`)
         server.close()
 
         try {

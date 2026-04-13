@@ -17,6 +17,7 @@ export type UploadDestination =
   | { type: 'imgur'; clientId: string }
   | { type: 'custom'; url: string; headers: Record<string, string>; fieldName?: string }
   | { type: 'google-drive'; folderId?: string }
+  | { type: 'r2'; bucket?: string }
 
 export type AfterUploadStep =
   | { type: 'copyUrl'; which: 'first' | 'all' }

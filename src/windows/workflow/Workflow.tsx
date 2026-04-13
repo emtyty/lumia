@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { WorkflowTemplate, UploadDestination, AfterCaptureStep, AfterUploadStep } from '../../types'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -8,6 +8,7 @@ const STEP_META: Record<string, { icon: string; label: string; color: string }> 
   clipboard: { icon: 'content_copy',  label: 'Copy to Clipboard',  color: 'primary' },
   imgur:          { icon: 'cloud_upload',   label: 'Imgur',              color: 'secondary' },
   'google-drive': { icon: 'add_to_drive',  label: 'Google Drive',       color: 'secondary' },
+  r2:             { icon: 'cloud',         label: 'Cloudflare R2',      color: 'secondary' },
   custom:         { icon: 'api',           label: 'Custom Endpoint',    color: 'secondary' },
   copyUrl:   { icon: 'link',          label: 'Copy URL',           color: 'tertiary' },
   notify:    { icon: 'notifications', label: 'Notification',       color: 'tertiary' },
@@ -24,14 +25,17 @@ const PHASE_CONFIG = [
 export default function Workflow() {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
   const [selected, setSelected] = useState<WorkflowTemplate | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [showNewForm, setShowNewForm] = useState(false)
+  const [savedToast, setSavedToast] = useState(false)
   const [activeId, setActiveId] = useState('')
+  const originalRef = useRef<WorkflowTemplate | null>(null)
 
   useEffect(() => {
     window.electronAPI?.getTemplates().then(setTemplates)
     window.electronAPI?.getSettings().then(s => setActiveId(s.activeWorkflowId ?? ''))
   }, [])
+
+  const isDirty = selected && !selected.builtIn &&
+    JSON.stringify(selected) !== JSON.stringify(originalRef.current)
 
   const handleSetActive = async (id: string) => {
     setActiveId(id)
@@ -39,13 +43,13 @@ export default function Workflow() {
   }
 
   const handleSelect = (t: WorkflowTemplate) => {
-    setSelected({ ...t })
-    setShowNewForm(false)
+    const copy = { ...t }
+    setSelected(copy)
+    originalRef.current = copy
   }
 
   const handleSave = async () => {
     if (!selected) return
-    setSaving(true)
     const saved = await window.electronAPI?.saveTemplate(selected)
     if (saved) {
       setTemplates(prev => {
@@ -54,14 +58,16 @@ export default function Workflow() {
         return [...prev, saved]
       })
       setSelected(saved)
+      originalRef.current = { ...saved }
+      setSavedToast(true)
+      setTimeout(() => setSavedToast(false), 2000)
     }
-    setSaving(false)
   }
 
   const handleDelete = async (id: string) => {
     await window.electronAPI?.deleteTemplate(id)
     setTemplates(prev => prev.filter(t => t.id !== id))
-    if (selected?.id === id) setSelected(null)
+    if (selected?.id === id) { setSelected(null); originalRef.current = null }
   }
 
   const handleNewTemplate = () => {
@@ -74,7 +80,7 @@ export default function Workflow() {
       afterUpload: [{ type: 'notify' }]
     }
     setSelected(blank)
-    setShowNewForm(true)
+    originalRef.current = null // new — always dirty
   }
 
   const addDestination = (type: UploadDestination['type']) => {
@@ -82,6 +88,7 @@ export default function Workflow() {
     let dest: UploadDestination
     if (type === 'imgur') dest = { type: 'imgur', clientId: '' }
     else if (type === 'google-drive') dest = { type: 'google-drive' }
+    else if (type === 'r2') dest = { type: 'r2' }
     else dest = { type: 'custom', url: '', headers: {} }
     setSelected({ ...selected, destinations: [...selected.destinations, dest] })
   }
@@ -123,7 +130,6 @@ export default function Workflow() {
     setSelected({ ...selected, afterUpload: [...selected.afterUpload, step] })
   }
 
-  /* ── helpers for phase rendering ── */
   const getPhaseSteps = (phase: typeof PHASE_CONFIG[number]) => {
     if (!selected) return []
     if (phase.key === 'afterCapture') return selected.afterCapture.map((s, i) => ({ ...s, _idx: i }))
@@ -140,24 +146,28 @@ export default function Workflow() {
     return map[accent]?.[part] ?? ''
   }
 
+  const activeTemplate = templates.find(t => t.id === activeId)
+
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
       <header className="h-14 liquid-glass flex items-center justify-between px-6 flex-shrink-0 border-b border-white/5">
         <div>
-          <h2 className="text-sm font-bold text-white leading-tight" style={{ fontFamily: 'Manrope, sans-serif' }}>Destinations & Automation</h2>
+          <h2 className="text-sm font-bold text-white leading-tight" style={{ fontFamily: 'Manrope, sans-serif' }}>Workflow</h2>
           <p className="text-[11px] text-slate-500 leading-tight">Define where your captures go and what happens next</p>
         </div>
-        <div className="flex items-center gap-3">
-          {activeId && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-secondary/10 border border-secondary/20 rounded-lg">
-              <span className="material-symbols-outlined text-secondary text-xs">star</span>
+        {activeTemplate && (
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-slate-500 font-medium">Active:</span>
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg"
+              style={{ background: 'rgba(0,227,253,0.08)', border: '1px solid rgba(0,227,253,0.15)' }}>
+              <span className="material-symbols-outlined text-secondary" style={{ fontSize: 13 }}>{activeTemplate.icon}</span>
               <span className="text-[11px] font-semibold text-secondary" style={{ fontFamily: 'Manrope, sans-serif' }}>
-                {templates.find(t => t.id === activeId)?.name ?? 'Default'}
+                {activeTemplate.name}
               </span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </header>
 
       <div className="flex flex-1 overflow-hidden">
@@ -194,13 +204,11 @@ export default function Workflow() {
                     <span className="material-symbols-outlined text-base">{t.icon}</span>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <p className="text-xs font-semibold text-white truncate" style={{ fontFamily: 'Manrope, sans-serif' }}>{t.name}</p>
+                    <p className="text-xs font-semibold text-white truncate" style={{ fontFamily: 'Manrope, sans-serif' }}>{t.name}</p>
+                    <p className="text-[10px] text-slate-500 mt-0.5 whitespace-nowrap">
                       {isActive && (
-                        <span className="flex-shrink-0 w-1.5 h-1.5 rounded-full bg-secondary" title="Active workflow" />
+                        <span className="font-bold uppercase text-secondary mr-1" style={{ letterSpacing: '0.06em', fontSize: 9 }}>Active ·</span>
                       )}
-                    </div>
-                    <p className="text-[10px] text-slate-500 mt-0.5">
                       {t.destinations.length} dest · {t.afterCapture.length + t.afterUpload.length} steps
                     </p>
                   </div>
@@ -238,10 +246,12 @@ export default function Workflow() {
         {selected ? (
           <div className="flex-1 overflow-y-auto p-5 space-y-4">
             {/* Template name + actions */}
-            <div className="flex items-center gap-4">
-              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 ${
-                activeId === selected.id ? 'bg-secondary/15 text-secondary' : 'bg-white/5 text-slate-400'
-              } border border-white/10`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 border ${
+                activeId === selected.id
+                  ? 'bg-secondary/10 border-secondary/25 text-secondary'
+                  : 'bg-white/5 border-white/10 text-slate-400'
+              }`}>
                 <span className="material-symbols-outlined text-lg">{selected.icon}</span>
               </div>
               <input
@@ -252,27 +262,44 @@ export default function Workflow() {
                 disabled={selected.builtIn}
               />
               <div className="flex items-center gap-2 flex-shrink-0">
+                {/* Set Active button */}
                 <button
                   onClick={() => handleSetActive(selected.id)}
                   className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
                     activeId === selected.id
-                      ? 'bg-secondary/15 text-secondary border border-secondary/25'
-                      : 'bg-white/5 text-slate-500 hover:text-secondary hover:bg-secondary/10 border border-white/10'
+                      ? 'text-secondary border border-secondary/25'
+                      : 'text-slate-500 hover:text-secondary hover:bg-secondary/10 border border-white/10'
                   }`}
-                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                  style={{
+                    fontFamily: 'Manrope, sans-serif',
+                    background: activeId === selected.id ? 'rgba(0,227,253,0.08)' : undefined
+                  }}
                 >
-                  <span className="material-symbols-outlined text-xs">{activeId === selected.id ? 'star' : 'star_outline'}</span>
+                  <span className="material-symbols-outlined text-xs">
+                    {activeId === selected.id ? 'star' : 'star_outline'}
+                  </span>
                   {activeId === selected.id ? 'Active' : 'Set Active'}
                 </button>
-                {!selected.builtIn && (
+
+                {/* Save button — only show when dirty */}
+                {!selected.builtIn && (isDirty || savedToast) && (
                   <button
                     onClick={handleSave}
-                    disabled={saving}
-                    className="primary-gradient text-slate-900 font-bold px-4 py-1.5 rounded-lg text-[11px] flex items-center gap-1.5 hover:scale-[1.02] transition-transform disabled:opacity-50"
-                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                    disabled={savedToast}
+                    className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-[11px] font-bold transition-all ${
+                      savedToast
+                        ? 'text-secondary border border-secondary/25'
+                        : 'primary-gradient text-slate-900 hover:scale-[1.02] active:scale-95'
+                    }`}
+                    style={{
+                      fontFamily: 'Manrope, sans-serif',
+                      background: savedToast ? 'rgba(0,227,253,0.08)' : undefined
+                    }}
                   >
-                    <span className="material-symbols-outlined text-xs">save</span>
-                    {saving ? 'Saving…' : 'Save'}
+                    <span className="material-symbols-outlined text-xs">
+                      {savedToast ? 'check_circle' : 'save'}
+                    </span>
+                    {savedToast ? 'Saved' : 'Save'}
                   </button>
                 )}
               </div>
@@ -285,7 +312,7 @@ export default function Workflow() {
               return (
                 <div key={phase.key} className="glass-refractive rounded-2xl overflow-hidden">
                   {/* Phase header */}
-                  <div className={`flex items-center gap-3 px-4 py-3 border-b border-white/5`}>
+                  <div className="flex items-center gap-3 px-4 py-3 border-b border-white/5">
                     <div className={`w-6 h-6 rounded-md ${accentClass(phase.accent, 'bg')} flex items-center justify-center`}>
                       <span className={`material-symbols-outlined text-xs ${accentClass(phase.accent, 'text')}`}>{phase.icon}</span>
                     </div>
@@ -317,6 +344,7 @@ export default function Workflow() {
                             <span className="text-xs font-medium text-slate-300 flex-1" style={{ fontFamily: 'Manrope, sans-serif' }}>
                               {field === 'destinations' && step.type === 'imgur' ? 'Upload to Imgur' :
                                field === 'destinations' && step.type === 'google-drive' ? 'Upload to Google Drive' :
+                               field === 'destinations' && step.type === 'r2' ? `Upload to R2${(step as { bucket?: string }).bucket ? ` (${(step as { bucket?: string }).bucket})` : ''}` :
                                field === 'destinations' && step.type === 'custom' ? `Upload to ${(step as { url?: string }).url || 'Custom'}` :
                                meta.label}
                             </span>
@@ -358,7 +386,17 @@ export default function Workflow() {
                               <input
                                 value={(step as { folderId?: string }).folderId ?? ''}
                                 onChange={e => updateDestination(i, { folderId: e.target.value } as Partial<UploadDestination>)}
-                                placeholder="Folder ID (optional — uses root or Settings default)"
+                                placeholder="Folder name or ID (optional)"
+                                className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-1.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
+                              />
+                            </div>
+                          )}
+                          {field === 'destinations' && step.type === 'r2' && !selected.builtIn && (
+                            <div className="ml-9 mt-1.5 mb-1">
+                              <input
+                                value={(step as { bucket?: string }).bucket ?? ''}
+                                onChange={e => updateDestination(i, { bucket: e.target.value } as Partial<UploadDestination>)}
+                                placeholder="Bucket name (leave blank to use default from Settings)"
                                 className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-1.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
                               />
                             </div>
@@ -377,7 +415,7 @@ export default function Workflow() {
                       )
                     })}
 
-                    {/* Add step buttons — inline per phase */}
+                    {/* Add step buttons */}
                     {!selected.builtIn && (
                       <div className="flex flex-wrap gap-1.5 pt-1.5">
                         {field === 'afterCapture' && (
@@ -391,6 +429,7 @@ export default function Workflow() {
                           <>
                             <AddChip label="Imgur" icon="cloud_upload" accent={phase.accent} onClick={() => addDestination('imgur')} />
                             <AddChip label="Google Drive" icon="add_to_drive" accent={phase.accent} onClick={() => addDestination('google-drive')} />
+                            <AddChip label="Cloudflare R2" icon="cloud" accent={phase.accent} onClick={() => addDestination('r2')} />
                             <AddChip label="Custom URL" icon="api" accent={phase.accent} onClick={() => addDestination('custom')} />
                           </>
                         )}
@@ -410,7 +449,6 @@ export default function Workflow() {
             })}
           </div>
         ) : (
-          /* ── Empty state ── */
           <div className="flex-1 flex items-center justify-center">
             <div className="flex flex-col items-center gap-3 max-w-[240px] text-center">
               <div className="w-14 h-14 rounded-2xl bg-white/[0.03] border border-white/5 flex items-center justify-center">
@@ -434,7 +472,6 @@ export default function Workflow() {
   )
 }
 
-/* ── Add-step chip ── */
 function AddChip({ label, icon, accent, onClick }: { label: string; icon: string; accent: string; onClick: () => void }) {
   const colorMap: Record<string, string> = {
     primary:   'hover:border-primary/30 hover:text-primary',
