@@ -8,19 +8,19 @@ import ShareDialog from '../../components/ShareDialog'
 import { WorkflowSelector } from '../../components/WorkflowSelector'
 import type { WorkflowTemplate, HistoryItem } from '../../types'
 
-const TOOLS: { id: Tool; icon: string; label: string; key?: string }[] = [
+const TOOLS: { id: Tool; icon: string; label: string; key: string }[] = [
   { id: 'select',  icon: 'arrow_selector_tool', label: 'Select',    key: 'V' },
   { id: 'pen',     icon: 'draw',                label: 'Pen',       key: 'P' },
   { id: 'rect',    icon: 'rectangle',           label: 'Rectangle', key: 'R' },
   { id: 'ellipse', icon: 'circle',              label: 'Ellipse',   key: 'E' },
-  { id: 'arrow',   icon: 'arrow_forward',       label: 'Arrow',     key: 'A' },
+  { id: 'arrow',   icon: 'north_east',          label: 'Arrow',     key: 'A' },
   { id: 'text',    icon: 'text_fields',         label: 'Text',      key: 'T' },
   { id: 'blur',    icon: 'blur_on',             label: 'Blur',      key: 'B' },
 ]
 
 const COLORS = [
-  '#b6a0ff', '#00e3fd', '#ff6c95', '#ffffff',
-  '#fbbf24', '#34d399', '#f87171', '#000000',
+  '#b6a0ff', '#00e3fd', '#ff6c95', '#fbbf24',
+  '#34d399', '#f87171', '#ffffff', '#000000',
 ]
 
 function relativeTime(ts: number): string {
@@ -118,17 +118,25 @@ export default function Editor() {
   /* ── Empty state ── */
   if (!imageDataUrl) {
     return (
-      <div className="h-full flex flex-col items-center justify-center gap-5">
-        <div className="p-6 rounded-2xl bg-white/[0.03] border border-white/5">
-          <span className="material-symbols-outlined text-5xl text-slate-600">add_a_photo</span>
+      <div className="h-full flex flex-col items-center justify-center gap-6">
+        {/* Decorative gradient orb */}
+        <div className="relative">
+          <div className="absolute -inset-8 rounded-full bg-primary/10 blur-3xl" />
+          <div className="relative p-7 rounded-3xl bg-white/[0.03] border border-white/[0.06] shadow-2xl">
+            <span className="material-symbols-outlined text-5xl text-slate-500" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
+              photo_camera
+            </span>
+          </div>
         </div>
-        <div className="text-center">
-          <p className="text-base font-bold text-white mb-1" style={{ fontFamily: 'Manrope, sans-serif' }}>
-            No capture loaded
+        <div className="text-center space-y-2">
+          <p className="text-lg font-bold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>
+            Ready to annotate
           </p>
-          <p className="text-xs text-slate-500">Take a screenshot or select one from history</p>
+          <p className="text-sm text-slate-500 max-w-[260px]">
+            Capture your screen or pick a recent screenshot to start editing
+          </p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex gap-3 mt-1">
           <button
             onClick={() => navigate('/dashboard')}
             className="px-5 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-sm font-semibold text-white transition-all"
@@ -138,9 +146,10 @@ export default function Editor() {
           </button>
           <button
             onClick={() => window.electronAPI?.captureScreenshot('region')}
-            className="primary-gradient text-slate-900 font-bold px-5 py-2.5 rounded-xl text-sm hover:scale-[1.02] active:scale-95 transition-transform"
+            className="primary-gradient text-slate-900 font-bold px-5 py-2.5 rounded-xl text-sm hover:scale-[1.02] active:scale-95 transition-transform flex items-center gap-2"
             style={{ fontFamily: 'Manrope, sans-serif' }}
           >
+            <span className="material-symbols-outlined text-base">screenshot_region</span>
             New Capture
           </button>
         </div>
@@ -158,49 +167,115 @@ export default function Editor() {
         </div>
       )}
 
-      {/* ── Header / Toolbar ── */}
-      <header className="h-12 liquid-glass flex items-center px-3 border-b border-white/5 flex-shrink-0 gap-2">
+      {/* ── Toolbar Header ── */}
+      <header className="h-11 liquid-glass flex items-center px-2.5 border-b border-white/5 flex-shrink-0 gap-1.5">
         {/* Back */}
         <button
           onClick={() => navigate('/dashboard')}
           className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all flex-shrink-0"
+          title="Back to Dashboard"
         >
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
         </button>
 
         <div className="w-px h-5 bg-white/10" />
 
-        {/* Tools — horizontal segmented group */}
+        {/* Tools */}
         <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-xl p-0.5 border border-white/5">
           {TOOLS.map(({ id, icon, label, key }) => (
             <button
               key={id}
-              title={`${label}${key ? ` (${key})` : ''}`}
+              title={`${label} (${key})`}
               onClick={() => setTool(id)}
-              className={`w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
+              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
                 tool === id
                   ? 'bg-primary/20 text-primary shadow-[0_0_10px_rgba(182,160,255,0.15)]'
                   : 'text-slate-400 hover:text-white hover:bg-white/10'
               }`}
             >
-              <span className="material-symbols-outlined text-[17px]">{icon}</span>
+              <span className="material-symbols-outlined text-[16px]">{icon}</span>
             </button>
           ))}
         </div>
 
         <div className="w-px h-5 bg-white/10" />
 
+        {/* Colors */}
+        <div className="flex items-center gap-1 px-1">
+          {COLORS.map((c) => (
+            <button
+              key={c}
+              onClick={() => setColor(c)}
+              className={`w-5 h-5 rounded-full transition-all hover:scale-110 flex-shrink-0 border-2 ${
+                color === c
+                  ? 'border-white scale-110 shadow-[0_0_6px_rgba(255,255,255,0.2)]'
+                  : 'border-transparent hover:border-white/30'
+              }`}
+              style={{ background: c }}
+            />
+          ))}
+          {/* Custom color */}
+          <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group">
+            <div
+              className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/40 transition-colors flex items-center justify-center"
+            >
+              <span className="material-symbols-outlined text-[11px] text-slate-500 group-hover:text-slate-300">colorize</span>
+            </div>
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+            />
+          </label>
+        </div>
+
+        <div className="w-px h-5 bg-white/10" />
+
+        {/* Stroke width */}
+        <div className="flex items-center gap-1.5 px-1">
+          <div
+            className="rounded-full flex-shrink-0"
+            style={{
+              background: color,
+              width: Math.max(4, Math.min(strokeWidth, 12)),
+              height: Math.max(4, Math.min(strokeWidth, 12)),
+            }}
+          />
+          <input
+            type="range"
+            min={1}
+            max={20}
+            value={strokeWidth}
+            onChange={(e) => setStrokeWidth(Number(e.target.value))}
+            className="w-16 accent-primary h-1"
+          />
+          <span className="text-[10px] text-slate-500 font-mono w-4 text-right flex-shrink-0 tabular-nums">
+            {strokeWidth}
+          </span>
+        </div>
+
+        <div className="w-px h-5 bg-white/10" />
+
         {/* Undo / Redo / Clear */}
         <div className="flex items-center gap-0.5">
-          <HeaderBtn icon="undo" label="Undo" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
-          <HeaderBtn icon="redo" label="Redo" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
+          <HeaderBtn icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
+          <HeaderBtn icon="redo" label="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
           <HeaderBtn icon="delete_sweep" label="Clear all" onClick={() => canvasRef.current?.clear()} variant="danger" />
         </div>
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right: history toggle + workflow + share */}
+        {/* Right side actions */}
+        <button
+          onClick={() => window.electronAPI?.captureScreenshot('region')}
+          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-secondary transition-all flex-shrink-0"
+          title="New capture"
+        >
+          <span className="material-symbols-outlined text-[16px]">screenshot_region</span>
+        </button>
+
         <button
           onClick={() => setShowClipPanel(p => !p)}
           className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
@@ -213,31 +288,42 @@ export default function Editor() {
           <span className="material-symbols-outlined text-[16px]">photo_library</span>
         </button>
 
-        <div className="w-px h-5 bg-white/10" />
-
-        <WorkflowSelector
-          templates={templates}
-          selectedId={selectedTemplateId}
-          onSelect={setSelectedTemplateId}
-        />
-        <button
-          onClick={() => { triggerExport(); setShareAction('workflow') }}
-          className="primary-gradient text-slate-900 font-bold text-[11px] px-4 py-1.5 rounded-lg flex items-center gap-1.5 hover:scale-[1.02] active:scale-95 transition-transform flex-shrink-0"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          <span className="material-symbols-outlined text-sm">share</span>
-          Share
-        </button>
+        {/* Workflow + Share — unified group */}
+        <div className="flex items-center h-8 rounded-xl overflow-hidden border border-white/10 flex-shrink-0">
+          <WorkflowSelector
+            templates={templates}
+            selectedId={selectedTemplateId}
+            onSelect={setSelectedTemplateId}
+          />
+          <button
+            onClick={() => { triggerExport(); setShareAction('workflow') }}
+            className="primary-gradient h-full text-slate-900 w-9 flex items-center justify-center hover:brightness-110 active:scale-[0.97] transition-all flex-shrink-0"
+            title="Share"
+          >
+            <span className="material-symbols-outlined text-[17px]">share</span>
+          </button>
+        </div>
       </header>
 
-      {/* ── Main area ── */}
+      {/* ── Main area: canvas + clip panel ── */}
       <div className="flex flex-1 overflow-hidden">
 
-        {/* Canvas container */}
+        {/* ── Canvas container ── */}
         <div
           className="flex-1 relative overflow-hidden flex items-center justify-center"
-          style={{ background: 'radial-gradient(circle, #0f172a 0%, #020617 100%)' }}
+          style={{
+            background: 'radial-gradient(circle at 30% 40%, rgba(15, 23, 42, 0.8) 0%, #020617 100%)',
+          }}
         >
+          {/* Subtle grid pattern */}
+          <div
+            className="absolute inset-0 opacity-[0.03] pointer-events-none"
+            style={{
+              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1px)`,
+              backgroundSize: '24px 24px',
+            }}
+          />
+
           {/* Canvas */}
           <AnnotationCanvas
             ref={canvasRef}
@@ -251,42 +337,11 @@ export default function Editor() {
             onHistoryChange={handleHistoryChange}
           />
 
-          {/* Floating color + stroke bar — bottom */}
-          <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2.5 px-4 py-2.5 glass-refractive rounded-2xl shadow-2xl">
-            {COLORS.map((c) => (
-              <button
-                key={c}
-                onClick={() => setColor(c)}
-                className={`w-6 h-6 rounded-full transition-all hover:scale-125 flex-shrink-0 ${
-                  color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-slate-900 scale-110' : ''
-                }`}
-                style={{ background: c }}
-              />
-            ))}
-
-            <div className="w-px h-5 bg-white/10 mx-0.5" />
-
-            <div
-              className="w-5 h-5 rounded-full border-2 flex-shrink-0"
-              style={{ borderColor: color, transform: `scale(${0.5 + (strokeWidth / 20) * 0.5})` }}
-            />
-            <input
-              type="range"
-              min={1}
-              max={20}
-              value={strokeWidth}
-              onChange={(e) => setStrokeWidth(Number(e.target.value))}
-              className="w-20 accent-primary"
-            />
-            <span className="text-[10px] text-slate-400 font-mono w-5 text-right flex-shrink-0">
-              {strokeWidth}
-            </span>
-          </div>
         </div>
 
-        {/* ── Clipboard history panel (toggleable) ── */}
+        {/* ── Clipboard history panel ── */}
         {showClipPanel && (
-          <aside className="w-56 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
+          <aside className="w-60 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-shrink-0">
               <span
                 className="text-[10px] font-bold uppercase tracking-widest text-slate-500"
@@ -302,9 +357,14 @@ export default function Editor() {
               </button>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-2.5 space-y-1.5">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {clipboardHistory.length === 0 ? (
-                <p className="text-xs text-slate-600 text-center py-6">No recent captures</p>
+                <div className="flex flex-col items-center py-10 gap-3">
+                  <span className="material-symbols-outlined text-2xl text-slate-700">collections</span>
+                  <p className="text-xs text-slate-600 text-center px-4">
+                    Your recent captures will appear here
+                  </p>
+                </div>
               ) : (
                 clipboardHistory.map((item) => (
                   <div
@@ -312,18 +372,18 @@ export default function Editor() {
                     className={`group/clip flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all ${
                       item.dataUrl === imageDataUrl
                         ? 'bg-primary/10 border border-primary/20'
-                        : 'bg-white/[0.03] hover:bg-white/[0.07] border border-transparent'
+                        : 'bg-white/[0.02] hover:bg-white/[0.06] border border-transparent'
                     }`}
                     onClick={() => { setExportTrigger(0); setImageDataUrl(item.dataUrl) }}
                   >
                     <img
                       src={item.dataUrl}
-                      className="w-9 h-9 rounded-lg object-cover flex-shrink-0 border border-white/10"
+                      className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10"
                       draggable={false}
                     />
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] text-slate-300 truncate font-medium">{item.name}</p>
-                      <p className="text-[9px] text-slate-600">{relativeTime(item.timestamp)}</p>
+                      <p className="text-[9px] text-slate-600 mt-0.5">{relativeTime(item.timestamp)}</p>
                     </div>
                     <button
                       onClick={(e) => {
@@ -332,7 +392,7 @@ export default function Editor() {
                         setCopyToast(true)
                         setTimeout(() => setCopyToast(false), 2000)
                       }}
-                      className="opacity-0 group-hover/clip:opacity-100 p-1 rounded-md bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
+                      className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
                       title="Copy to clipboard"
                     >
                       <span className="material-symbols-outlined text-xs">content_copy</span>

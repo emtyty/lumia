@@ -3,7 +3,6 @@ import { useEffect, useState } from 'react'
 
 const NAV_ITEMS = [
   { to: '/dashboard', icon: 'space_dashboard', label: 'Dashboard' },
-  { to: '/editor',    icon: 'auto_fix_high',   label: 'Editor' },
   { to: '/history',   icon: 'history',          label: 'History' },
   { to: '/workflow',  icon: 'rocket_launch',    label: 'Destinations' },
   { to: '/settings',  icon: 'settings',         label: 'Settings' },

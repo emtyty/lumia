@@ -31,6 +31,7 @@ declare global {
       openHistoryFile: (filePath: string) => Promise<void>
       addHistoryItem: (item: import('./types').HistoryItem) => Promise<void>
 
+      getHotkeys: () => Promise<Record<string, string>>
       getSettings: () => Promise<AppSettings>
       setSetting: (key: keyof AppSettings, value: unknown) => Promise<void>
 

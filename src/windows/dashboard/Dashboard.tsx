@@ -1,17 +1,58 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import VideoRecorder from '../../components/VideoRecorder'
 import { UpdateNotification } from '../../components/UpdateNotification'
 
 type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
+type FilterType = 'all' | 'screenshot' | 'recording'
 
-const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string; shortcut: string }[] = [
-  { mode: 'region',         icon: 'crop_free',       label: 'Region',        shortcut: 'Ctrl+Shift+4' },
-  { mode: 'window',         icon: 'layers',          label: 'Window',        shortcut: 'Ctrl+Shift+2' },
-  { mode: 'fullscreen',     icon: 'desktop_windows', label: 'Fullscreen',    shortcut: 'Ctrl+Shift+3' },
-  { mode: 'active-monitor', icon: 'monitor',         label: 'Active Screen', shortcut: 'Ctrl+Shift+1' },
+const isMac = navigator.platform.startsWith('Mac')
+
+// Map capture mode → hotkey action name (from electron/hotkeys.ts)
+const MODE_ACTION: Record<CaptureMode, string> = {
+  region: 'RectangleRegion',
+  window: 'ActiveWindow',
+  fullscreen: 'PrintScreen',
+  'active-monitor': 'ActiveMonitor',
+}
+
+const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
+  { mode: 'region',         icon: 'crop',            label: 'Region' },
+  { mode: 'window',         icon: 'web_asset',       label: 'Window' },
+  { mode: 'fullscreen',     icon: 'desktop_windows', label: 'Fullscreen' },
+  { mode: 'active-monitor', icon: 'monitor',         label: 'Active Screen' },
 ]
+
+/** Parse an Electron accelerator string like "Ctrl+Shift+4" into display keys */
+function parseShortcut(accel: string): string[] {
+  return accel.split('+').map(k => {
+    if (isMac) {
+      if (k === 'Ctrl' || k === 'CommandOrControl' || k === 'CmdOrCtrl') return '⌘'
+      if (k === 'Command' || k === 'Cmd') return '⌘'
+      if (k === 'Alt' || k === 'Option') return '⌥'
+    } else {
+      if (k === 'CommandOrControl' || k === 'CmdOrCtrl') return 'Ctrl'
+    }
+    return k
+  })
+}
+
+function KeyCombo({ keys }: { keys: string[] }) {
+  return (
+    <span className="inline-flex items-center gap-0.5 mt-1">
+      {keys.map((k, i) => (
+        <kbd
+          key={i}
+          className="min-w-[20px] h-5 inline-flex items-center justify-center text-[10px] text-slate-400 font-medium bg-white/[0.06] border border-white/[0.08] rounded px-1 leading-none"
+          style={{ fontFamily: 'Inter, sans-serif' }}
+        >
+          {k}
+        </kbd>
+      ))}
+    </span>
+  )
+}
 
 function getGreeting(): string {
   const h = new Date().getHours()
@@ -38,9 +79,14 @@ export default function Dashboard() {
   const [recentItems, setRecentItems] = useState<HistoryItem[]>([])
   const [showRecorder, setShowRecorder] = useState(false)
   const [search, setSearch] = useState('')
+  const [filter, setFilter] = useState<FilterType>('all')
+  const [searchFocused, setSearchFocused] = useState(false)
+  const searchRef = useRef<HTMLInputElement>(null)
+  const [hotkeys, setHotkeys] = useState<Record<string, string>>({})
 
   useEffect(() => {
     window.electronAPI?.getHistory().then(items => setRecentItems(items.slice(0, 12)))
+    window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
 
     window.electronAPI?.onCaptureReady(({ dataUrl, source }) => {
       navigate('/editor', { state: { dataUrl, source } })
@@ -56,6 +102,18 @@ export default function Dashboard() {
     }
   }, [navigate])
 
+  // ⌘K / Ctrl+K to focus search
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault()
+        searchRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
+
   const handleCapture = async (mode: CaptureMode) => {
     if (mode === 'region') {
       await window.electronAPI?.captureScreenshot('region')
@@ -68,9 +126,11 @@ export default function Dashboard() {
   const screenshots = recentItems.filter(i => i.type === 'screenshot')
   const recordings = recentItems.filter(i => i.type === 'recording')
 
-  const filtered = recentItems.filter(item =>
-    !search || item.name.toLowerCase().includes(search.toLowerCase())
-  )
+  const filtered = recentItems.filter(item => {
+    if (filter !== 'all' && item.type !== filter) return false
+    if (search && !item.name.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
 
   return (
     <div className="h-full overflow-y-auto p-8 pb-16 space-y-8">
@@ -94,92 +154,166 @@ export default function Dashboard() {
       </header>
 
       {/* ── Capture Actions ── */}
-      <section className="card-organic p-6">
-        <h2
-          className="text-[11px] font-bold tracking-[0.15em] uppercase text-slate-500 mb-4"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          Capture
-        </h2>
+      <section className="grid grid-cols-2 gap-6">
+        {/* Screenshot group */}
+        <div>
+          <div className="flex items-center gap-2 mb-2.5 px-0.5">
+            <span className="material-symbols-outlined text-primary text-[15px]">photo_camera</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: 'Manrope, sans-serif' }}>
+              Screenshot
+            </span>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {CAPTURE_MODES.map(({ mode, icon, label }) => {
+              const accel = hotkeys[MODE_ACTION[mode]]
+              const keys = accel ? parseShortcut(accel) : []
+              return (
+                <button
+                  key={mode}
+                  onClick={() => handleCapture(mode)}
+                  className="group flex items-center gap-3 px-3 py-3 rounded-xl
+                             bg-white/[0.03] border border-white/[0.05]
+                             hover:bg-primary/[0.08] hover:border-primary/20
+                             active:scale-[0.98] transition-all duration-200 cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0
+                                  group-hover:bg-primary/20 transition-colors duration-200">
+                    <span className="material-symbols-outlined text-primary text-lg">{icon}</span>
+                  </div>
+                  <div className="text-left min-w-0">
+                    <span
+                      className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      {label}
+                    </span>
+                    {keys.length > 0 && <KeyCombo keys={keys} />}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
 
-        <div className="flex items-center gap-3">
-          {CAPTURE_MODES.map(({ mode, icon, label, shortcut }) => (
+        {/* Video group */}
+        <div>
+          <div className="flex items-center gap-2 mb-2.5 px-0.5">
+            <span className="material-symbols-outlined text-tertiary text-[15px]">videocam</span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: 'Manrope, sans-serif' }}>
+              Video
+            </span>
+          </div>
+          <div className="grid grid-cols-1 gap-2">
             <button
-              key={mode}
-              onClick={() => handleCapture(mode)}
-              title={shortcut}
-              className="flex items-center gap-2.5 px-4 py-3 bg-white/5 rounded-xl
-                         hover:bg-white/10 transition-all border border-transparent
-                         hover:border-primary/20 group"
+              onClick={() => setShowRecorder(true)}
+              className="group flex items-center gap-3 px-3 py-3 rounded-xl
+                         bg-white/[0.03] border border-white/[0.05]
+                         hover:bg-tertiary/[0.08] hover:border-tertiary/20
+                         active:scale-[0.98] transition-all duration-200 cursor-pointer"
             >
-              <span className="material-symbols-outlined text-primary text-xl group-hover:scale-110 transition-transform">
-                {icon}
-              </span>
-              <div className="text-left">
+              <div className="w-9 h-9 rounded-lg bg-tertiary/10 flex items-center justify-center flex-shrink-0
+                              group-hover:bg-tertiary/20 transition-colors duration-200">
+                <span className="material-symbols-outlined text-tertiary text-lg">fiber_manual_record</span>
+              </div>
+              <div className="text-left min-w-0">
                 <span
-                  className="block text-[11px] font-semibold text-slate-300 group-hover:text-white"
+                  className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
-                  {label}
+                  Record Screen
                 </span>
-                <span className="block text-[9px] text-slate-600">{shortcut}</span>
+                {hotkeys.ScreenRecorder && <KeyCombo keys={parseShortcut(hotkeys.ScreenRecorder)} />}
               </div>
             </button>
-          ))}
-
-          <div className="w-px self-stretch bg-white/10 mx-1" />
-
-          <button
-            onClick={() => setShowRecorder(true)}
-            title="Ctrl+Shift+R"
-            className="flex items-center gap-2.5 px-4 py-3 bg-white/5 rounded-xl
-                       hover:bg-white/10 transition-all border border-transparent
-                       hover:border-tertiary/20 group"
-          >
-            <span className="material-symbols-outlined text-tertiary text-xl group-hover:scale-110 transition-transform">
-              videocam
-            </span>
-            <div className="text-left">
-              <span
-                className="block text-[11px] font-semibold text-slate-300 group-hover:text-white"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                Record
-              </span>
-              <span className="block text-[9px] text-slate-600">Ctrl+Shift+R</span>
-            </div>
-          </button>
+            <button
+              onClick={() => setShowRecorder(true)}
+              className="group flex items-center gap-3 px-3 py-3 rounded-xl
+                         bg-white/[0.03] border border-white/[0.05]
+                         hover:bg-tertiary/[0.08] hover:border-tertiary/20
+                         active:scale-[0.98] transition-all duration-200 cursor-pointer"
+            >
+              <div className="w-9 h-9 rounded-lg bg-tertiary/10 flex items-center justify-center flex-shrink-0
+                              group-hover:bg-tertiary/20 transition-colors duration-200">
+                <span className="material-symbols-outlined text-tertiary text-lg">gif_box</span>
+              </div>
+              <div className="text-left min-w-0">
+                <span
+                  className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
+                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                >
+                  Record GIF
+                </span>
+                {hotkeys.ScreenRecorderGIF && <KeyCombo keys={parseShortcut(hotkeys.ScreenRecorderGIF)} />}
+              </div>
+            </button>
+          </div>
         </div>
       </section>
 
       {/* ── Recent Captures ── */}
       <section>
         <div className="flex items-center justify-between mb-5">
-          <h2
-            className="text-lg font-bold text-white"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
-          >
-            Recent
-          </h2>
+          <div className="flex items-center gap-3">
+            <h2
+              className="text-lg font-bold text-white"
+              style={{ fontFamily: 'Manrope, sans-serif' }}
+            >
+              Recent
+            </h2>
+
+            {/* Filter tabs — same style as History */}
+            <div className="flex items-center gap-1.5">
+              {([
+                { key: 'all' as const, label: 'All' },
+                { key: 'screenshot' as const, label: 'Screenshots' },
+                { key: 'recording' as const, label: 'Recordings' },
+              ]).map(({ key, label }) => (
+                <button
+                  key={key}
+                  onClick={() => setFilter(key)}
+                  className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider transition-all ${
+                    filter === key
+                      ? 'primary-gradient text-slate-900'
+                      : 'bg-white/5 text-slate-500 hover:text-white border border-white/5'
+                  }`}
+                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <div className="flex items-center gap-3">
             {recentItems.length > 0 && (
-              <div className="flex items-center bg-white/5 border border-white/10 px-3 py-1.5 rounded-lg hover:border-primary/30 transition-all focus-within:border-primary/40">
-                <span className="material-symbols-outlined text-slate-500 text-sm">search</span>
+              <div
+                className={`flex items-center px-3 py-1.5 rounded-xl transition-all duration-300 ${
+                  searchFocused
+                    ? 'bg-white/[0.08] border border-primary/30 w-52 shadow-[0_0_20px_rgba(182,160,255,0.08)]'
+                    : 'bg-white/[0.03] border border-white/[0.06] w-40 hover:bg-white/[0.06] hover:border-white/10'
+                }`}
+              >
+                <span className={`material-symbols-outlined text-[16px] transition-colors ${searchFocused ? 'text-primary' : 'text-slate-500'}`}>search</span>
                 <input
-                  className="bg-transparent border-none outline-none text-xs w-40 placeholder-slate-600 text-white ml-2"
-                  placeholder="Filter captures..."
+                  ref={searchRef}
+                  className="bg-transparent border-none outline-none text-xs w-full placeholder-slate-600 text-white ml-2"
+                  placeholder="Search..."
                   value={search}
                   onChange={e => setSearch(e.target.value)}
+                  onFocus={() => setSearchFocused(true)}
+                  onBlur={() => setSearchFocused(false)}
                 />
-                {search && (
-                  <button onClick={() => setSearch('')} className="text-slate-500 hover:text-white transition-colors">
+                {search ? (
+                  <button onClick={() => setSearch('')} className="text-slate-500 hover:text-white transition-colors flex-shrink-0">
                     <span className="material-symbols-outlined text-sm">close</span>
                   </button>
+                ) : !searchFocused && (
+                  <kbd className="flex-shrink-0 text-[10px] text-slate-600 font-medium bg-white/[0.04] border border-white/[0.06] px-1.5 py-0.5 rounded-md">⌘K</kbd>
                 )}
               </div>
             )}
             <button
-              onClick={() => navigate('/history')}
+              onClick={() => navigate('/history', { state: { search, filter } })}
               className="text-xs text-slate-500 hover:text-primary transition-colors font-semibold"
               style={{ fontFamily: 'Manrope, sans-serif' }}
             >

@@ -48,11 +48,11 @@ export function WorkflowSelector({ templates, selectedId, onSelect }: WorkflowSe
       <button
         ref={triggerRef}
         onClick={() => setOpen(o => !o)}
-        className="flex items-center gap-2 bg-white/5 border border-white/10 text-white text-xs px-3 py-2 rounded-xl hover:bg-white/10 transition-colors cursor-pointer"
+        className="flex items-center gap-2 h-full bg-white/[0.04] hover:bg-white/[0.08] text-white text-xs pl-3 pr-2 transition-colors cursor-pointer"
       >
-        <span className="material-symbols-outlined text-sm text-secondary">rocket_launch</span>
-        <span>{selected?.name ?? 'Select workflow'}</span>
-        <span className="material-symbols-outlined text-sm text-slate-400">expand_more</span>
+        <span className="material-symbols-outlined text-[15px] text-secondary">rocket_launch</span>
+        <span className="font-medium" style={{ fontFamily: 'Manrope, sans-serif' }}>{selected?.name ?? 'Select workflow'}</span>
+        <span className="material-symbols-outlined text-[14px] text-slate-500">expand_more</span>
       </button>
 
       {open && createPortal(

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
-import { setupHotkeys, teardownHotkeys } from './hotkeys'
+import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
@@ -221,6 +221,7 @@ app.whenReady().then(async () => {
   ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
 
   // IPC: Settings
+  ipcMain.handle('hotkeys:get', () => getHotkeys())
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => setSetting(key, value as AppSettings[typeof key]))
 

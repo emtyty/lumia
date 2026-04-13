@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent as ReactMouseEvent } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import { useLocalVideoUrl } from '../../hooks/useLocalVideoUrl'
 import { DateGroupedGrid } from '../../components/DateGroupedGrid'
@@ -11,9 +11,11 @@ type ViewMode = 'grid' | 'list'
 
 export default function History() {
   const navigate = useNavigate()
+  const location = useLocation()
+  const navState = location.state as { search?: string; filter?: FilterType } | null
   const [items, setItems] = useState<HistoryItem[]>([])
-  const [search, setSearch] = useState('')
-  const [filter, setFilter] = useState<FilterType>('all')
+  const [search, setSearch] = useState(navState?.search ?? '')
+  const [filter, setFilter] = useState<FilterType>(navState?.filter ?? 'all')
   const [sortBy, setSortBy] = useState<SortKey>('newest')
   const [showSortMenu, setShowSortMenu] = useState(false)
   const [viewMode, setViewMode] = useState<ViewMode>(() =>
