@@ -107,6 +107,7 @@ export default function Editor() {
   const handleExport = useCallback((dataUrl: string) => {
     setExportedDataUrl(dataUrl)
     setShowShareDialog(true)
+    setExportTrigger(0)
   }, [])
 
   const triggerExport = () => setExportTrigger((n) => n + 1)
