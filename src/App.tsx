@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Routes, Route, useNavigate, Navigate } from 'react-router-dom'
+import { Routes, Route, useNavigate, Navigate, useLocation } from 'react-router-dom'
 import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
 import Dashboard from './windows/dashboard/Dashboard'
@@ -34,12 +34,15 @@ export default function App() {
     )
   }
 
+  const location = useLocation()
+  const isEditor = location.pathname === '/editor'
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <TitleBar />
       <div className="flex flex-1 overflow-hidden min-h-0">
-      <Sidebar />
-      <main className="flex-1 overflow-hidden ml-64">
+      {!isEditor && <Sidebar />}
+      <main className={`flex-1 overflow-hidden ${isEditor ? '' : 'ml-64'}`}>
         <Routes>
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />

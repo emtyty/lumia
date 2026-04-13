@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import type { WorkflowResult } from '../types'
+import type { WorkflowResult, WorkflowTemplate } from '../types'
 
 interface Props {
   imageDataUrl: string
@@ -11,56 +11,23 @@ type Status = 'idle' | 'loading' | 'done' | 'error'
 
 export default function ShareDialog({ imageDataUrl, templateId, onClose }: Props) {
   const [status, setStatus] = useState<Status>('idle')
+  const [result, setResult] = useState<WorkflowResult | null>(null)
+  const [errorMsg, setErrorMsg] = useState('')
+  const [template, setTemplate] = useState<WorkflowTemplate | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  const [result, setResult] = useState<WorkflowResult | null>(null)
-  const [errorMsg, setErrorMsg] = useState('')
 
-  const addToHistory = (savedPath?: string) =>
-    window.electronAPI?.addHistoryItem({
-      id: crypto.randomUUID(),
-      timestamp: Date.now(),
-      name: savedPath ? savedPath.split(/[\\/]/).pop() : `capture-${new Date().toLocaleString()}`,
-      dataUrl: imageDataUrl,
-      filePath: savedPath,
-      type: 'screenshot',
-      uploads: []
-    })
-
-  const handleCopyClipboard = async () => {
-    setStatus('loading')
-    try {
-      // runWorkflow saves to history internally — no need to addToHistory here
-      await window.electronAPI?.runWorkflow('builtin-clipboard', imageDataUrl)
-      setStatus('done')
-      setTimeout(onClose, 1200)
-    } catch (e) {
-      setErrorMsg(String(e))
-      setStatus('error')
+  useEffect(() => {
+    if (templateId) {
+      window.electronAPI?.getTemplates().then(ts => {
+        setTemplate(ts.find(t => t.id === templateId) ?? null)
+      })
     }
-  }
-
-  const handleSave = async () => {
-    setStatus('loading')
-    const res = await window.electronAPI?.showSaveDialog({
-      defaultPath: `capture-${Date.now()}.png`,
-      filters: [{ name: 'Images', extensions: ['png'] }]
-    })
-    if (!res || res.canceled || !res.filePath) { setStatus('idle'); return }
-    try {
-      await window.electronAPI?.saveFile(imageDataUrl, res.filePath)
-      addToHistory(res.filePath)
-      setStatus('done')
-      setTimeout(onClose, 1200)
-    } catch (e) {
-      setErrorMsg(String(e))
-      setStatus('error')
-    }
-  }
+  }, [templateId])
 
   const handleRunWorkflow = async () => {
     if (!templateId) return
@@ -75,115 +42,251 @@ export default function ShareDialog({ imageDataUrl, templateId, onClose }: Props
     }
   }
 
+  const handleCopy = async () => {
+    setStatus('loading')
+    try {
+      await window.electronAPI?.runWorkflow('builtin-clipboard', imageDataUrl)
+      setStatus('done')
+      setTimeout(onClose, 1000)
+    } catch (e) {
+      setErrorMsg(String(e))
+      setStatus('error')
+    }
+  }
+
+  const handleSave = async () => {
+    const res = await window.electronAPI?.showSaveDialog({
+      defaultPath: `capture-${Date.now()}.png`,
+      filters: [{ name: 'Images', extensions: ['png'] }]
+    })
+    if (!res || res.canceled || !res.filePath) return
+    setStatus('loading')
+    try {
+      await window.electronAPI?.saveFile(imageDataUrl, res.filePath)
+      window.electronAPI?.addHistoryItem({
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        name: res.filePath.split(/[\\/]/).pop() ?? 'capture',
+        dataUrl: imageDataUrl,
+        filePath: res.filePath,
+        type: 'screenshot',
+        uploads: []
+      })
+      setStatus('done')
+      setTimeout(onClose, 1000)
+    } catch (e) {
+      setErrorMsg(String(e))
+      setStatus('error')
+    }
+  }
+
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50" onClick={onClose}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(2,6,23,0.75)', backdropFilter: 'blur(8px)' }}
+      onClick={onClose}
+    >
       <div
-        className="glass-refractive rounded-3xl p-8 w-[480px] shadow-2xl"
+        className="relative w-[400px] rounded-3xl overflow-hidden shadow-2xl"
+        style={{
+          background: 'rgba(10, 15, 30, 0.92)',
+          border: '1px solid rgba(255,255,255,0.07)',
+          backdropFilter: 'blur(40px)',
+          boxShadow: '0 32px 80px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.06)',
+        }}
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-lg font-bold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Share Capture</h3>
-          <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
-            <span className="material-symbols-outlined">close</span>
+        {/* ── Image preview ── */}
+        <div className="relative bg-black/30" style={{ maxHeight: 280, overflow: 'hidden' }}>
+          <img
+            src={imageDataUrl}
+            className="w-full h-auto block"
+            style={{ maxHeight: 280, objectFit: 'contain' }}
+            draggable={false}
+          />
+          {/* gradient fade bottom */}
+          <div
+            className="absolute inset-x-0 bottom-0 h-12 pointer-events-none"
+            style={{ background: 'linear-gradient(to top, rgba(10,15,30,0.95), transparent)' }}
+          />
+          {/* close button */}
+          <button
+            onClick={onClose}
+            className="absolute top-3 right-3 w-7 h-7 rounded-full bg-black/40 hover:bg-black/70 flex items-center justify-center text-white/60 hover:text-white transition-all"
+          >
+            <span className="material-symbols-outlined text-[16px]">close</span>
           </button>
         </div>
 
-        {/* Preview */}
-        <div className="aspect-video bg-slate-900 rounded-2xl overflow-hidden mb-6 border border-white/10">
-          <img src={imageDataUrl} className="w-full h-full object-contain" />
-        </div>
+        {/* ── Content ── */}
+        <div className="px-5 pb-5 pt-3">
 
-        {status === 'idle' && (
-          <div className="space-y-3">
-            {templateId && (
+          {status === 'idle' && (
+            <div className="space-y-2.5">
+              {/* Workflow button */}
+              {templateId && template && (
+                <button
+                  onClick={handleRunWorkflow}
+                  className="w-full flex items-center gap-3 px-4 py-3.5 rounded-2xl transition-all hover:brightness-110 active:scale-[0.98]"
+                  style={{
+                    background: 'linear-gradient(135deg, #b6a0ff 0%, #00e3fd 100%)',
+                    fontFamily: 'Manrope, sans-serif',
+                  }}
+                >
+                  <div className="w-8 h-8 rounded-xl bg-black/20 flex items-center justify-center flex-shrink-0">
+                    <span className="material-symbols-outlined text-[18px] text-white">{template.icon}</span>
+                  </div>
+                  <div className="flex-1 text-left">
+                    <p className="text-xs font-black text-slate-900 leading-tight">{template.name}</p>
+                    <p className="text-[10px] text-slate-800/70 leading-tight mt-0.5">
+                      {[
+                        template.afterCapture.length > 0 && `${template.afterCapture.length} pre-step`,
+                        template.destinations.length > 0 && `${template.destinations.length} upload`,
+                        template.afterUpload.length > 0 && `${template.afterUpload.length} post-step`,
+                      ].filter(Boolean).join(' · ')}
+                    </p>
+                  </div>
+                  <span className="material-symbols-outlined text-[20px] text-slate-900/70">chevron_right</span>
+                </button>
+              )}
+
+              {/* Divider */}
+              {templateId && (
+                <div className="flex items-center gap-3 py-1">
+                  <div className="flex-1 h-px bg-white/5" />
+                  <span className="text-[10px] font-semibold text-slate-600 uppercase tracking-widest">or</span>
+                  <div className="flex-1 h-px bg-white/5" />
+                </div>
+              )}
+
+              {/* Quick actions */}
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={handleCopy}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition-all"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    fontFamily: 'Manrope, sans-serif',
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[16px] text-slate-400">content_copy</span>
+                  Copy
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-semibold text-slate-300 hover:text-white transition-all"
+                  style={{
+                    background: 'rgba(255,255,255,0.04)',
+                    border: '1px solid rgba(255,255,255,0.07)',
+                    fontFamily: 'Manrope, sans-serif',
+                  }}
+                >
+                  <span className="material-symbols-outlined text-[16px] text-slate-400">save</span>
+                  Save
+                </button>
+              </div>
+            </div>
+          )}
+
+          {status === 'loading' && (
+            <div className="flex items-center justify-center gap-3 py-5">
+              <div className="w-5 h-5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+              <span className="text-sm text-slate-400" style={{ fontFamily: 'Manrope, sans-serif' }}>Running…</span>
+            </div>
+          )}
+
+          {status === 'done' && (
+            <div className="space-y-1.5">
+              {/* No-result fallback */}
+              {!result && (
+                <div className="flex items-center gap-3 py-3 px-4 rounded-xl bg-secondary/10 border border-secondary/20">
+                  <span className="material-symbols-outlined text-secondary text-lg">check_circle</span>
+                  <span className="text-sm font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Done!</span>
+                </div>
+              )}
+
+              {result?.copiedToClipboard && (
+                <ResultRow icon="content_paste" label="Copied to clipboard" success />
+              )}
+              {result?.savedPath && (
+                <ResultRow icon="save" label={result.savedPath.split(/[\\/]/).pop() ?? 'Saved'} success />
+              )}
+              {result?.uploads.map((u, i) => (
+                <ResultRow
+                  key={i}
+                  icon={u.success ? 'cloud_done' : 'cloud_off'}
+                  label={u.destination}
+                  success={u.success}
+                  error={u.error}
+                  url={u.url}
+                />
+              ))}
+
               <button
-                onClick={handleRunWorkflow}
-                className="w-full primary-gradient text-slate-900 font-bold py-4 rounded-2xl flex items-center justify-center gap-3 hover:scale-[1.02] transition-transform"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
+                onClick={onClose}
+                className="w-full mt-2 py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                  fontFamily: 'Manrope, sans-serif',
+                }}
               >
-                <span className="material-symbols-outlined">rocket_launch</span>
-                Run Workflow
-              </button>
-            )}
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={handleCopyClipboard}
-                className="flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-semibold text-white transition-all border border-white/10"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                <span className="material-symbols-outlined text-sm">content_copy</span>
-                Copy
-              </button>
-              <button
-                onClick={handleSave}
-                className="flex items-center justify-center gap-2 py-3 bg-white/5 hover:bg-white/10 rounded-2xl text-sm font-semibold text-white transition-all border border-white/10"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                <span className="material-symbols-outlined text-sm">save</span>
-                Save
+                Close
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {status === 'loading' && (
-          <div className="flex items-center justify-center py-8 gap-4">
-            <div className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            <span className="text-slate-400 text-sm">Processing...</span>
-          </div>
-        )}
-
-        {status === 'done' && result && (
-          <div className="space-y-3">
-            <p className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-4" style={{ fontFamily: 'Manrope, sans-serif' }}>Results</p>
-            {result.copiedToClipboard && (
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <span className="material-symbols-outlined text-secondary">check_circle</span>
-                <span className="text-sm text-slate-200">Copied to clipboard</span>
+          {status === 'error' && (
+            <div className="space-y-2">
+              <div className="flex items-start gap-3 p-3 rounded-xl bg-tertiary/10 border border-tertiary/20">
+                <span className="material-symbols-outlined text-tertiary text-lg flex-shrink-0">error</span>
+                <p className="text-xs text-tertiary leading-relaxed">{errorMsg}</p>
               </div>
-            )}
-            {result.savedPath && (
-              <div className="flex items-center gap-3 p-3 bg-white/5 rounded-xl">
-                <span className="material-symbols-outlined text-secondary">check_circle</span>
-                <span className="text-sm text-slate-200 truncate">Saved: {result.savedPath}</span>
-              </div>
-            )}
-            {result.uploads.map((u, i) => (
-              <div key={i} className="flex items-center justify-between p-3 bg-white/5 rounded-xl">
-                <div className="flex items-center gap-3">
-                  <span className={`material-symbols-outlined ${u.success ? 'text-secondary' : 'text-tertiary'}`}>
-                    {u.success ? 'check_circle' : 'error'}
-                  </span>
-                  <span className="text-sm text-slate-200 capitalize">{u.destination}</span>
-                </div>
-                {u.url && (
-                  <button
-                    onClick={() => window.electronAPI?.openExternal(u.url!)}
-                    className="text-xs text-primary hover:underline"
-                  >
-                    Open ↗
-                  </button>
-                )}
-                {u.error && <span className="text-xs text-tertiary truncate max-w-32">{u.error}</span>}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {status === 'done' && !result && (
-          <div className="flex items-center gap-3 py-4">
-            <span className="material-symbols-outlined text-secondary">check_circle</span>
-            <span className="text-sm text-slate-200">Done!</span>
-          </div>
-        )}
-
-        {status === 'error' && (
-          <div className="flex items-center gap-3 py-4">
-            <span className="material-symbols-outlined text-tertiary">error</span>
-            <span className="text-sm text-tertiary">{errorMsg}</span>
-          </div>
-        )}
+              <button
+                onClick={() => setStatus('idle')}
+                className="w-full py-2.5 rounded-xl text-xs font-bold text-slate-400 hover:text-white transition-colors"
+                style={{
+                  background: 'rgba(255,255,255,0.04)',
+                  border: '1px solid rgba(255,255,255,0.07)',
+                  fontFamily: 'Manrope, sans-serif',
+                }}
+              >
+                Try again
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  )
+}
+
+function ResultRow({ icon, label, success, error, url }: {
+  icon: string
+  label: string
+  success: boolean
+  error?: string
+  url?: string
+}) {
+  return (
+    <div className="flex items-center gap-3 px-3 py-2.5 rounded-xl"
+      style={{ background: success ? 'rgba(0,227,253,0.06)' : 'rgba(255,108,149,0.06)', border: `1px solid ${success ? 'rgba(0,227,253,0.15)' : 'rgba(255,108,149,0.15)'}` }}
+    >
+      <span className={`material-symbols-outlined text-base flex-shrink-0 ${success ? 'text-secondary' : 'text-tertiary'}`}>{icon}</span>
+      <span className="flex-1 text-xs font-medium text-slate-200 truncate capitalize" style={{ fontFamily: 'Manrope, sans-serif' }}>
+        {error ?? label}
+      </span>
+      {url && (
+        <button
+          onClick={() => window.electronAPI?.openExternal(url)}
+          className="flex-shrink-0 flex items-center gap-1 text-[10px] font-bold text-primary hover:text-white transition-colors"
+          style={{ fontFamily: 'Manrope, sans-serif' }}
+        >
+          Open
+          <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+        </button>
+      )}
     </div>
   )
 }

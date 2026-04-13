@@ -1,8 +1,7 @@
 import { globalShortcut, app } from 'electron'
 import Store from 'electron-store'
 import { sendCaptureToEditor } from './capture'
-import { createOverlayWindow } from './index'
-import { getMainWindow } from './index'
+import { createOverlayWindow, getMainWindow, getOverlayWindow } from './index'
 
 interface HotkeyConfig {
   [action: string]: string
@@ -76,23 +75,39 @@ export function setupHotkeys() {
     setTimeout(resolve, 200)
   })
 
+  let isCapturing = false
+
+  const withLock = (fn: () => Promise<void>) => async () => {
+    if (isCapturing) return
+    if (getOverlayWindow()) return
+    isCapturing = true
+    try { await fn() } finally { isCapturing = false }
+  }
+
   const handlers: Record<string, () => void> = {
-    RectangleRegion: async () => {
+    RectangleRegion: withLock(async () => {
       await hideMain()
       createOverlayWindow()
-    },
-    PrintScreen: async () => {
+    }),
+    PrintScreen: withLock(async () => {
       await hideMain()
       const { desktopCapturer, screen } = await import('electron')
-      const d = screen.getPrimaryDisplay()
+      const cursorPoint = screen.getCursorScreenPoint()
+      const allDisplays = screen.getAllDisplays()
+      const d = screen.getDisplayNearestPoint(cursorPoint)
       const sf = d.scaleFactor
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
       })
-      sendCaptureToEditor(sources[0].thumbnail.toDataURL(), 'fullscreen')
-    },
-    ActiveWindow: async () => {
+      let source = sources.find(s => s.display_id === String(d.id))
+      if (!source) {
+        const idx = allDisplays.findIndex(disp => disp.id === d.id)
+        source = (idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
+      }
+      sendCaptureToEditor(source.thumbnail.toDataURL(), 'fullscreen')
+    }),
+    ActiveWindow: withLock(async () => {
       await hideMain()
       const { desktopCapturer } = await import('electron')
       const sources = await desktopCapturer.getSources({
@@ -103,11 +118,12 @@ export function setupHotkeys() {
         !s.name.includes('ShareAnywhere') && !s.thumbnail.isEmpty()
       )
       if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
-    },
-    ActiveMonitor: async () => {
+    }),
+    ActiveMonitor: withLock(async () => {
       await hideMain()
       const { desktopCapturer, screen } = await import('electron')
       const cursorPoint = screen.getCursorScreenPoint()
+      const allDisplays = screen.getAllDisplays()
       const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
       const { width, height } = activeDisplay.size
       const sf = activeDisplay.scaleFactor
@@ -117,15 +133,13 @@ export function setupHotkeys() {
         thumbnailSize: { width: width * sf, height: height * sf }
       })
 
-      let source = sources[0]
-      if (sources.length > 1) {
-        const allDisplays = screen.getAllDisplays()
+      let source = sources.find(s => s.display_id === String(activeDisplay.id))
+      if (!source) {
         const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
-        if (idx >= 0 && idx < sources.length) source = sources[idx]
+        source = (sources.length > 1 && idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
       }
-
       if (source) sendCaptureToEditor(source.thumbnail.toDataURL(), 'active-monitor')
-    },
+    }),
     ScreenRecorder: () => {
       const win = getMainWindow()
       win?.show()

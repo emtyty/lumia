@@ -8,6 +8,10 @@ interface AppSettings {
   customUploadFieldName: string
   theme: 'dark' | 'light'
   activeWorkflowId: string
+  googleDriveRefreshToken: string
+  googleDriveAccessToken: string
+  googleDriveTokenExpiresAt: number
+  googleDriveFolderId: string
 }
 
 declare global {
@@ -31,8 +35,13 @@ declare global {
       openHistoryFile: (filePath: string) => Promise<void>
       addHistoryItem: (item: import('./types').HistoryItem) => Promise<void>
 
+      getHotkeys: () => Promise<Record<string, string>>
       getSettings: () => Promise<AppSettings>
       setSetting: (key: keyof AppSettings, value: unknown) => Promise<void>
+
+      gdriveStartAuth: () => Promise<{ success: boolean; error?: string }>
+      gdriveDisconnect: () => Promise<{ success: boolean }>
+      onGdriveConnected: (cb: () => void) => void
 
       saveFile: (dataUrl: string, filePath: string) => Promise<string>
       readLocalFile: (filePath: string) => Promise<ArrayBuffer>

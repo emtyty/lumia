@@ -28,9 +28,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openHistoryFile: (filePath: string) => ipcRenderer.invoke('history:openFile', filePath),
   addHistoryItem: (item: unknown) => ipcRenderer.invoke('history:addCapture', item),
 
+  // Hotkeys
+  getHotkeys: () => ipcRenderer.invoke('hotkeys:get'),
+
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+
+  // Google Drive
+  gdriveStartAuth: () => ipcRenderer.invoke('gdrive:startAuth'),
+  gdriveDisconnect: () => ipcRenderer.invoke('gdrive:disconnect'),
+  onGdriveConnected: (cb: () => void) => ipcRenderer.on('gdrive:connected', cb),
 
   // Save file
   saveFile: (dataUrl: string, filePath: string) => ipcRenderer.invoke('capture:saveFile', dataUrl, filePath),

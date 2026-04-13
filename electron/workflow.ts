@@ -6,6 +6,8 @@ import type { TemplateStore } from './templates'
 import type { WorkflowResult, UploadResult, UploadDestination } from './types'
 import { uploadToImgur } from './uploaders/imgur'
 import { uploadToCustom } from './uploaders/custom'
+import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive'
+import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
 import { getSettings } from './settings'
 import { getMainWindow } from './index'
@@ -121,6 +123,41 @@ export class WorkflowEngine {
     switch (dest.type) {
       case 'imgur': return uploadToImgur(imageData, dest.clientId)
       case 'custom': return uploadToCustom(imageData, dest.url, dest.headers, dest.fieldName)
+      case 'google-drive': return this.uploadToGoogleDrive(imageData, dest.folderId)
+      case 'r2': return this.uploadToR2(imageData, dest.bucket)
     }
+  }
+
+  private async uploadToR2(imageData: string, bucket?: string): Promise<UploadResult> {
+    return uploadToR2(
+      imageData,
+      import.meta.env.MAIN_VITE_R2_ACCOUNT_ID,
+      import.meta.env.MAIN_VITE_R2_ACCESS_KEY_ID,
+      import.meta.env.MAIN_VITE_R2_SECRET_ACCESS_KEY,
+      bucket || import.meta.env.MAIN_VITE_R2_BUCKET,
+      import.meta.env.MAIN_VITE_R2_PUBLIC_URL
+    )
+  }
+
+  private async uploadToGoogleDrive(imageData: string, folderId?: string): Promise<UploadResult> {
+    const settings = getSettings()
+    let { googleDriveAccessToken } = settings
+    const { googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+
+    // Auto-refresh token if expired
+    if (googleDriveRefreshToken && Date.now() >= googleDriveTokenExpiresAt - 60_000) {
+      try {
+        const refreshed = await refreshGoogleToken(googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken)
+        googleDriveAccessToken = refreshed.accessToken
+        const { setSetting } = await import('./settings')
+        setSetting('googleDriveAccessToken', refreshed.accessToken)
+        setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
+      } catch (err) {
+        return { destination: 'google-drive', success: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+
+    const folder = folderId || settings.googleDriveFolderId || undefined
+    return uploadToGoogleDrive(imageData, googleDriveAccessToken, folder)
   }
 }

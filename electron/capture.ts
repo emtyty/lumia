@@ -1,9 +1,10 @@
 import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard } from 'electron'
-import { getMainWindow, createOverlayWindow, getOverlayWindow, getHistoryStore } from './index'
+import { getMainWindow, createOverlayWindow, getOverlayWindow, getHistoryStore, getOverlayDisplayId } from './index'
 
 export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
 
-const HIDE_DELAY_MS = 200 // wait for window to fully disappear before capturing
+// macOS needs slightly more time due to window animation; Windows is faster
+const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 
 function hideMainWindow(): Promise<void> {
   return new Promise(resolve => {
@@ -20,6 +21,26 @@ function showMainWindow() {
   if (!win || win.isDestroyed()) return
   win.show()
   win.focus()
+}
+
+/**
+ * Match a desktopCapturer source to a specific display.
+ * Use source.display_id (available since Electron 22) for reliable matching,
+ * with index-based fallback for edge cases.
+ */
+function findSourceForDisplay(
+  sources: Electron.DesktopCapturerSource[],
+  allDisplays: Electron.Display[],
+  displayId: number
+): Electron.DesktopCapturerSource {
+  if (sources.length === 1) return sources[0]
+  // Primary: match by display_id (string) to Display.id (number)
+  const byId = sources.find(s => s.display_id === String(displayId))
+  if (byId) return byId
+  // Fallback: index-based matching (assumes same ordering — not always true)
+  const idx = allDisplays.findIndex(d => d.id === displayId)
+  if (idx >= 0 && idx < sources.length) return sources[idx]
+  return sources[0]
 }
 
 export function setupCapture() {
@@ -47,16 +68,19 @@ export function setupCapture() {
 async function captureFullscreen(): Promise<string> {
   await hideMainWindow()
 
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const { width, height } = primaryDisplay.size
-  const scaleFactor = primaryDisplay.scaleFactor
+  // Capture the display containing the cursor so multi-monitor users get the expected screen
+  const cursorPoint = screen.getCursorScreenPoint()
+  const allDisplays = screen.getAllDisplays()
+  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
+  const { width, height } = targetDisplay.size
+  const scaleFactor = targetDisplay.scaleFactor
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
   })
 
-  const source = sources.find(s => s.name === 'Entire Screen' || s.name === 'Screen 1') ?? sources[0]
+  const source = findSourceForDisplay(sources, allDisplays, targetDisplay.id)
   const dataUrl = source.thumbnail.toDataURL()
 
   await sendCaptureToEditor(dataUrl, 'fullscreen')
@@ -92,16 +116,21 @@ async function captureRegion(): Promise<void> {
 }
 
 async function captureRect(rect: { x: number; y: number; width: number; height: number }): Promise<string> {
-  const primaryDisplay = screen.getPrimaryDisplay()
-  const scaleFactor = primaryDisplay.scaleFactor
-  const { width, height } = primaryDisplay.size
+  // Use the display that the overlay was shown on — not always the primary display
+  const allDisplays = screen.getAllDisplays()
+  const overlayId = getOverlayDisplayId()
+  const targetDisplay = allDisplays.find(d => d.id === overlayId) ?? screen.getPrimaryDisplay()
+  const { width, height } = targetDisplay.size
+  const scaleFactor = targetDisplay.scaleFactor
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
   })
 
-  const full = sources[0].thumbnail
+  // rect coords are clientX/clientY from the overlay window, which is positioned
+  // at the display's origin — so they are already display-local, no offset needed
+  const full = findSourceForDisplay(sources, allDisplays, targetDisplay.id).thumbnail
   const cropped = full.crop({
     x: Math.round(rect.x * scaleFactor),
     y: Math.round(rect.y * scaleFactor),
@@ -118,27 +147,18 @@ async function captureRect(rect: { x: number; y: number; width: number; height: 
 async function captureActiveMonitor(): Promise<string> {
   await hideMainWindow()
 
-  // Detect which display contains the mouse cursor
   const cursorPoint = screen.getCursorScreenPoint()
+  const allDisplays = screen.getAllDisplays()
   const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
   const { width, height } = activeDisplay.size
   const scaleFactor = activeDisplay.scaleFactor
-  const { x, y } = activeDisplay.bounds
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
   })
 
-  // Match the source to the active display by comparing bounds
-  // desktopCapturer returns sources ordered by display, pick the matching one
-  let source = sources[0]
-  if (sources.length > 1) {
-    const allDisplays = screen.getAllDisplays()
-    const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
-    if (idx >= 0 && idx < sources.length) source = sources[idx]
-  }
-
+  const source = findSourceForDisplay(sources, allDisplays, activeDisplay.id)
   const dataUrl = source.thumbnail.toDataURL()
   await sendCaptureToEditor(dataUrl, 'active-monitor')
   return dataUrl

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
-import { setupHotkeys, teardownHotkeys } from './hotkeys'
+import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
@@ -26,10 +26,12 @@ const isDev = !app.isPackaged
 let mainWindow: BrowserWindow | null = null
 let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
 let overlayWindow: BrowserWindow | null = null
+let overlayDisplayId: number | null = null
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
 export function getOverlayWindow() { return overlayWindow }
+export function getOverlayDisplayId() { return overlayDisplayId }
 
 const ICON_PATH = process.platform === 'win32'
   ? join(__dirname, '../../resources/icons/win/icon.ico')
@@ -89,7 +91,12 @@ export function createOverlayWindow(): BrowserWindow {
     overlayWindow = null
   }
 
-  const { width, height, x, y } = screen.getPrimaryDisplay().bounds
+  // Use the display containing the cursor — not always the primary display
+  const cursorPoint = screen.getCursorScreenPoint()
+  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
+  const { width, height, x, y } = targetDisplay.bounds
+  overlayDisplayId = targetDisplay.id
+
   const win = new BrowserWindow({
     x,
     y,
@@ -111,9 +118,13 @@ export function createOverlayWindow(): BrowserWindow {
   })
 
   win.setIgnoreMouseEvents(false)
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // 'pop-up-menu' is above all application windows but below macOS system UI
+  // (Stage Manager, Dock, menubar). Using 'screen-saver' (the old value) sits
+  // above ALL system UI, which forces macOS to hide Stage Manager while the
+  // overlay is visible and then snap it back in when the overlay closes —
+  // that "snap back" is the sidebar-appearing bug users see on macOS.
+  win.setAlwaysOnTop(true, 'pop-up-menu')
   win.setVisibleOnAllWorkspaces(true)
-  win.maximize()
 
   if (isDev) {
     win.loadURL('http://localhost:5173/#/overlay')
@@ -139,6 +150,18 @@ function navigateTo(route: string) {
 if (isDev) {
   const devMenu = Menu.buildFromTemplate([
     {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
       label: 'Dev',
       submenu: [
         { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => BrowserWindow.getFocusedWindow()?.webContents.reload() },
@@ -149,7 +172,31 @@ if (isDev) {
   ])
   Menu.setApplicationMenu(devMenu)
 } else {
-  Menu.setApplicationMenu(null)
+  // On macOS, Cut/Copy/Paste/Undo work via the application menu's Edit entry.
+  // Setting null removes that, breaking all text-input shortcuts system-wide.
+  // Keep a minimal hidden menu so keyboard shortcuts still work.
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [{ role: 'hide' }, { role: 'hideOthers' }, { type: 'separator' }, { role: 'quit' }]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' }
+        ]
+      }
+    ]))
+  } else {
+    Menu.setApplicationMenu(null)
+  }
 }
 
 if (process.platform === 'win32') {
@@ -210,8 +257,208 @@ app.whenReady().then(async () => {
   ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
 
   // IPC: Settings
+  ipcMain.handle('hotkeys:get', () => getHotkeys())
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => setSetting(key, value as AppSettings[typeof key]))
+
+  // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
+  ipcMain.handle('gdrive:startAuth', async () => {
+    const { createServer } = await import('http')
+    const { exchangeGoogleAuthCode } = await import('./uploaders/googledrive')
+    const { GDRIVE_CLIENT_ID: clientId, GDRIVE_CLIENT_SECRET: clientSecret } = await import('./gdrive-credentials')
+
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      const server = createServer(async (req, res) => {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+
+        if (url.pathname !== '/') {
+          res.writeHead(404)
+          res.end()
+          return
+        }
+
+        const code = url.searchParams.get('code')
+        const error = url.searchParams.get('error')
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        if (error || !code) {
+          res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumia — Authorization Failed</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d0f;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #fff;
+  }
+  .card {
+    text-align: center;
+    padding: 48px 56px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    backdrop-filter: blur(24px);
+    max-width: 420px;
+    width: 90vw;
+  }
+  .icon {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(239,68,68,0.15);
+    border: 1px solid rgba(239,68,68,0.3);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 24px;
+    font-size: 28px;
+  }
+  h1 { font-size: 22px; font-weight: 700; margin-bottom: 10px; letter-spacing: -0.3px; }
+  p { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✕</div>
+    <h1>Authorization failed</h1>
+    <p>Something went wrong. You may close this tab and try again from Lumia.</p>
+  </div>
+</body>
+</html>`)
+          server.close()
+          resolve({ success: false, error: error ?? 'No code returned' })
+          return
+        }
+
+        res.end(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lumia — Connected</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #0d0d0f;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #fff;
+  }
+  .card {
+    text-align: center;
+    padding: 48px 56px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 24px;
+    backdrop-filter: blur(24px);
+    max-width: 420px;
+    width: 90vw;
+    animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .icon {
+    width: 64px; height: 64px;
+    border-radius: 50%;
+    background: rgba(74,222,128,0.12);
+    border: 1px solid rgba(74,222,128,0.3);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 24px;
+    font-size: 28px;
+    animation: pop 0.5s 0.2s cubic-bezier(0.16,1,0.3,1) both;
+  }
+  @keyframes pop {
+    from { opacity: 0; transform: scale(0.6); }
+    to   { opacity: 1; transform: scale(1); }
+  }
+  h1 {
+    font-size: 22px; font-weight: 700;
+    margin-bottom: 10px;
+    letter-spacing: -0.3px;
+  }
+  p { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; }
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 20px;
+    padding: 6px 14px;
+    background: rgba(74,222,128,0.08);
+    border: 1px solid rgba(74,222,128,0.2);
+    border-radius: 999px;
+    font-size: 12px;
+    color: rgba(74,222,128,0.9);
+    font-weight: 600;
+    letter-spacing: 0.2px;
+  }
+  .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #4ade80;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">✓</div>
+    <h1>Connected!</h1>
+    <p>Google Drive has been linked to your Lumia account.<br>You may close this tab.</p>
+    <div class="badge"><span class="dot"></span> Lumia is ready</div>
+  </div>
+</body>
+</html>`)
+        server.close()
+
+        try {
+          const result = await exchangeGoogleAuthCode(code, clientId, clientSecret, 'http://localhost:42813')
+          setSetting('googleDriveAccessToken', result.accessToken)
+          setSetting('googleDriveRefreshToken', result.refreshToken)
+          setSetting('googleDriveTokenExpiresAt', result.expiresAt)
+          mainWindow?.webContents.send('gdrive:connected')
+          resolve({ success: true })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          resolve({ success: false, error: msg })
+        }
+      })
+
+      server.listen(42813, '127.0.0.1', () => {
+        const params = new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: 'http://localhost:42813',
+          response_type: 'code',
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          access_type: 'offline',
+          prompt: 'consent'
+        })
+        shell.openExternal(`https://accounts.google.com/o/oauth2/v2/auth?${params}`)
+      })
+
+      server.on('error', (err) => {
+        resolve({ success: false, error: `Local server error: ${err.message}` })
+      })
+    })
+  })
+
+  ipcMain.handle('gdrive:disconnect', () => {
+    setSetting('googleDriveAccessToken', '')
+    setSetting('googleDriveRefreshToken', '')
+    setSetting('googleDriveTokenExpiresAt', 0)
+    return { success: true }
+  })
 
   // IPC: Save file from dataURL (used by ShareDialog save button)
   ipcMain.handle('capture:saveFile', async (_e, dataUrl: string, filePath: string) => {
