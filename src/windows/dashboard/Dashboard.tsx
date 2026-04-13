@@ -7,8 +7,6 @@ import { UpdateNotification } from '../../components/UpdateNotification'
 type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
 type FilterType = 'all' | 'screenshot' | 'recording'
 
-const isMac = navigator.platform.startsWith('Mac')
-
 // Map capture mode → hotkey action name (from electron/hotkeys.ts)
 const MODE_ACTION: Record<CaptureMode, string> = {
   region: 'RectangleRegion',
@@ -27,13 +25,7 @@ const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
 /** Parse an Electron accelerator string like "Ctrl+Shift+4" into display keys */
 function parseShortcut(accel: string): string[] {
   return accel.split('+').map(k => {
-    if (isMac) {
-      if (k === 'Ctrl' || k === 'CommandOrControl' || k === 'CmdOrCtrl') return '⌘'
-      if (k === 'Command' || k === 'Cmd') return '⌘'
-      if (k === 'Alt' || k === 'Option') return '⌥'
-    } else {
-      if (k === 'CommandOrControl' || k === 'CmdOrCtrl') return 'Ctrl'
-    }
+    if (k === 'CommandOrControl' || k === 'CmdOrCtrl') return 'Ctrl'
     return k
   })
 }
