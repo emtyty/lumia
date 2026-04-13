@@ -7,6 +7,10 @@ interface AppSettings {
   customUploadHeaders: Record<string, string>
   customUploadFieldName: string
   theme: 'dark' | 'light'
+  googleDriveRefreshToken: string
+  googleDriveAccessToken: string
+  googleDriveTokenExpiresAt: number
+  googleDriveFolderId: string
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -15,7 +19,11 @@ const DEFAULT_SETTINGS: AppSettings = {
   customUploadUrl: '',
   customUploadHeaders: {},
   customUploadFieldName: 'file',
-  theme: 'dark'
+  theme: 'dark',
+  googleDriveRefreshToken: '',
+  googleDriveAccessToken: '',
+  googleDriveTokenExpiresAt: 0,
+  googleDriveFolderId: ''
 }
 
 export default function Settings() {
@@ -24,6 +32,8 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [activeSection, setActiveSection] = useState<string | null>(null)
   const originalRef = useRef<AppSettings>(DEFAULT_SETTINGS)
+  const [gdriveConnecting, setGdriveConnecting] = useState(false)
+  const [gdriveError, setGdriveError] = useState('')
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
@@ -58,6 +68,8 @@ export default function Settings() {
     }
   }
 
+  const gdriveConnected = !!settings.googleDriveRefreshToken
+
   if (loading) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -66,9 +78,29 @@ export default function Settings() {
     )
   }
 
+  const handleGdriveAuth = async () => {
+    setGdriveConnecting(true)
+    setGdriveError('')
+    const result = await window.electronAPI?.gdriveStartAuth()
+    if (result?.success) {
+      const s = await window.electronAPI?.getSettings()
+      if (s) { setSettings(s); originalRef.current = s }
+    } else {
+      setGdriveError(result?.error ?? 'Authorization failed')
+    }
+    setGdriveConnecting(false)
+  }
+
+  const handleGdriveDisconnect = async () => {
+    await window.electronAPI?.gdriveDisconnect()
+    update('googleDriveRefreshToken', '')
+    update('googleDriveAccessToken', '')
+  }
+
   const NAV_ITEMS = [
     { id: 'capture', icon: 'add_a_photo', label: 'Capture' },
     { id: 'imgur', icon: 'image', label: 'Imgur' },
+    { id: 'gdrive', icon: 'add_to_drive', label: 'Google Drive' },
     { id: 'custom', icon: 'api', label: 'Custom Upload' },
     { id: 'hotkeys', icon: 'keyboard', label: 'Hotkeys' },
   ]
@@ -189,6 +221,56 @@ export default function Settings() {
                 </button>{' '}
                 to get your own Client ID and avoid rate limits.
               </p>
+            </Section>
+
+            {/* Google Drive */}
+            <Section id="gdrive" title="Google Drive" icon="add_to_drive">
+              {gdriveConnected ? (
+                <div className="flex items-center justify-between p-3 bg-secondary/10 border border-secondary/20 rounded-xl">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-secondary text-lg">check_circle</span>
+                    <span className="text-xs font-semibold text-secondary" style={{ fontFamily: 'Manrope, sans-serif' }}>Connected</span>
+                  </div>
+                  <button
+                    onClick={handleGdriveDisconnect}
+                    className="px-3 py-1.5 text-[11px] font-semibold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-all"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <button
+                    onClick={handleGdriveAuth}
+                    disabled={gdriveConnecting}
+                    className="flex items-center gap-2 px-4 py-2.5 primary-gradient text-slate-900 font-bold rounded-xl text-xs hover:scale-[1.02] active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    <span className="material-symbols-outlined text-sm">
+                      {gdriveConnecting ? 'hourglass_empty' : 'add_to_drive'}
+                    </span>
+                    {gdriveConnecting ? 'Waiting for authorization…' : 'Connect Google Drive'}
+                  </button>
+                  {gdriveError && (
+                    <p className="text-[11px] text-red-400 flex items-center gap-1">
+                      <span className="material-symbols-outlined text-sm">error</span>
+                      {gdriveError}
+                    </p>
+                  )}
+                </div>
+              )}
+              <Field
+                label="Folder ID (optional)"
+                description="Upload to a specific Drive folder. Leave blank for root."
+              >
+                <input
+                  value={settings.googleDriveFolderId}
+                  onChange={e => update('googleDriveFolderId', e.target.value)}
+                  placeholder="e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2wtTs"
+                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
+                />
+              </Field>
             </Section>
 
             {/* Custom Upload */}

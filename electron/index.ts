@@ -150,6 +150,18 @@ function navigateTo(route: string) {
 if (isDev) {
   const devMenu = Menu.buildFromTemplate([
     {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' }
+      ]
+    },
+    {
       label: 'Dev',
       submenu: [
         { label: 'Reload', accelerator: 'CmdOrCtrl+R', click: () => BrowserWindow.getFocusedWindow()?.webContents.reload() },
@@ -160,7 +172,31 @@ if (isDev) {
   ])
   Menu.setApplicationMenu(devMenu)
 } else {
-  Menu.setApplicationMenu(null)
+  // On macOS, Cut/Copy/Paste/Undo work via the application menu's Edit entry.
+  // Setting null removes that, breaking all text-input shortcuts system-wide.
+  // Keep a minimal hidden menu so keyboard shortcuts still work.
+  if (process.platform === 'darwin') {
+    Menu.setApplicationMenu(Menu.buildFromTemplate([
+      {
+        label: app.name,
+        submenu: [{ role: 'hide' }, { role: 'hideOthers' }, { type: 'separator' }, { role: 'quit' }]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'selectAll' }
+        ]
+      }
+    ]))
+  } else {
+    Menu.setApplicationMenu(null)
+  }
 }
 
 if (process.platform === 'win32') {
@@ -224,6 +260,74 @@ app.whenReady().then(async () => {
   ipcMain.handle('hotkeys:get', () => getHotkeys())
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => setSetting(key, value as AppSettings[typeof key]))
+
+  // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
+  ipcMain.handle('gdrive:startAuth', async () => {
+    const { createServer } = await import('http')
+    const { exchangeGoogleAuthCode } = await import('./uploaders/googledrive')
+    const { GDRIVE_CLIENT_ID: clientId, GDRIVE_CLIENT_SECRET: clientSecret } = await import('./gdrive-credentials')
+
+    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+      const server = createServer(async (req, res) => {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+
+        if (url.pathname !== '/') {
+          res.writeHead(404)
+          res.end()
+          return
+        }
+
+        const code = url.searchParams.get('code')
+        const error = url.searchParams.get('error')
+
+        res.writeHead(200, { 'Content-Type': 'text/html' })
+        if (error || !code) {
+          res.end('<html><body><h2>Authorization failed.</h2><p>You may close this tab.</p></body></html>')
+          server.close()
+          resolve({ success: false, error: error ?? 'No code returned' })
+          return
+        }
+
+        res.end('<html><body><h2>Connected!</h2><p>You may close this tab and return to Lumia.</p></body></html>')
+        server.close()
+
+        try {
+          const result = await exchangeGoogleAuthCode(code, clientId, clientSecret, 'http://localhost:42813')
+          setSetting('googleDriveAccessToken', result.accessToken)
+          setSetting('googleDriveRefreshToken', result.refreshToken)
+          setSetting('googleDriveTokenExpiresAt', result.expiresAt)
+          mainWindow?.webContents.send('gdrive:connected')
+          resolve({ success: true })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          resolve({ success: false, error: msg })
+        }
+      })
+
+      server.listen(42813, '127.0.0.1', () => {
+        const params = new URLSearchParams({
+          client_id: clientId,
+          redirect_uri: 'http://localhost:42813',
+          response_type: 'code',
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          access_type: 'offline',
+          prompt: 'consent'
+        })
+        shell.openExternal(`https://accounts.google.com/o/oauth2/v2/auth?${params}`)
+      })
+
+      server.on('error', (err) => {
+        resolve({ success: false, error: `Local server error: ${err.message}` })
+      })
+    })
+  })
+
+  ipcMain.handle('gdrive:disconnect', () => {
+    setSetting('googleDriveAccessToken', '')
+    setSetting('googleDriveRefreshToken', '')
+    setSetting('googleDriveTokenExpiresAt', 0)
+    return { success: true }
+  })
 
   // IPC: Save file from dataURL (used by ShareDialog save button)
   ipcMain.handle('capture:saveFile', async (_e, dataUrl: string, filePath: string) => {

@@ -1,0 +1,129 @@
+import type { UploadResult } from '../types'
+
+const GOOGLE_DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
+
+export async function uploadToGoogleDrive(
+  imageData: string,
+  accessToken: string,
+  folderId?: string
+): Promise<UploadResult> {
+  if (!accessToken) {
+    return { destination: 'google-drive', success: false, error: 'No access token — please connect Google Drive in Settings' }
+  }
+
+  const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
+  const buffer = Buffer.from(base64, 'base64')
+
+  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const filename = `capture-${ts}.png`
+
+  // Build multipart/related body per Google Drive API v3
+  const metadata: Record<string, unknown> = {
+    name: filename,
+    mimeType: 'image/png'
+  }
+  if (folderId) {
+    metadata.parents = [folderId]
+  }
+
+  const boundary = '----LumiaDriveBoundary'
+  const body =
+    `--${boundary}\r\n` +
+    `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
+    `${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\n` +
+    `Content-Type: image/png\r\n` +
+    `Content-Transfer-Encoding: base64\r\n\r\n` +
+    `${base64}\r\n` +
+    `--${boundary}--`
+
+  const response = await fetch(GOOGLE_DRIVE_UPLOAD_URL, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': `multipart/related; boundary=${boundary}`
+    },
+    body
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    return { destination: 'google-drive', success: false, error: `HTTP ${response.status}: ${text}` }
+  }
+
+  const json = await response.json() as { id: string; name: string }
+  const viewUrl = `https://drive.google.com/file/d/${json.id}/view`
+
+  return { destination: 'google-drive', success: true, url: viewUrl }
+}
+
+/**
+ * Exchange an authorization code for tokens using Google OAuth2.
+ */
+export async function exchangeGoogleAuthCode(
+  code: string,
+  clientId: string,
+  clientSecret: string,
+  redirectUri: string
+): Promise<{ accessToken: string; refreshToken: string; expiresAt: number }> {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: clientId,
+      client_secret: clientSecret,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code'
+    })
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Token exchange failed: ${text}`)
+  }
+
+  const json = await response.json() as {
+    access_token: string
+    refresh_token?: string
+    expires_in: number
+  }
+
+  return {
+    accessToken: json.access_token,
+    refreshToken: json.refresh_token ?? '',
+    expiresAt: Date.now() + json.expires_in * 1000
+  }
+}
+
+/**
+ * Refresh an expired access token.
+ */
+export async function refreshGoogleToken(
+  clientId: string,
+  clientSecret: string,
+  refreshToken: string
+): Promise<{ accessToken: string; expiresAt: number }> {
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token'
+    })
+  })
+
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Token refresh failed: ${text}`)
+  }
+
+  const json = await response.json() as { access_token: string; expires_in: number }
+
+  return {
+    accessToken: json.access_token,
+    expiresAt: Date.now() + json.expires_in * 1000
+  }
+}

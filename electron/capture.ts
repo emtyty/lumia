@@ -25,8 +25,8 @@ function showMainWindow() {
 
 /**
  * Match a desktopCapturer source to a specific display.
- * Electron orders screen sources to match screen.getAllDisplays(), so we use
- * the display index as primary strategy, with sources[0] as fallback.
+ * Use source.display_id (available since Electron 22) for reliable matching,
+ * with index-based fallback for edge cases.
  */
 function findSourceForDisplay(
   sources: Electron.DesktopCapturerSource[],
@@ -34,6 +34,10 @@ function findSourceForDisplay(
   displayId: number
 ): Electron.DesktopCapturerSource {
   if (sources.length === 1) return sources[0]
+  // Primary: match by display_id (string) to Display.id (number)
+  const byId = sources.find(s => s.display_id === String(displayId))
+  if (byId) return byId
+  // Fallback: index-based matching (assumes same ordering — not always true)
   const idx = allDisplays.findIndex(d => d.id === displayId)
   if (idx >= 0 && idx < sources.length) return sources[idx]
   return sources[0]

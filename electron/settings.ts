@@ -11,6 +11,10 @@ export interface AppSettings {
   theme: 'dark' | 'light'
   activeWorkflowId: string
   lastSeenReleaseVersion: string
+  googleDriveRefreshToken: string
+  googleDriveAccessToken: string
+  googleDriveTokenExpiresAt: number
+  googleDriveFolderId: string
 }
 
 const store = new Store<AppSettings>({
@@ -23,7 +27,11 @@ const store = new Store<AppSettings>({
     customUploadFieldName: 'file',
     theme: 'dark',
     activeWorkflowId: '',
-    lastSeenReleaseVersion: ''
+    lastSeenReleaseVersion: '',
+    googleDriveRefreshToken: '',
+    googleDriveAccessToken: '',
+    googleDriveTokenExpiresAt: 0,
+    googleDriveFolderId: ''
   }
 })
 
@@ -36,7 +44,11 @@ export function getSettings(): AppSettings {
     customUploadFieldName: store.get('customUploadFieldName'),
     theme: store.get('theme'),
     activeWorkflowId: store.get('activeWorkflowId'),
-    lastSeenReleaseVersion: store.get('lastSeenReleaseVersion')
+    lastSeenReleaseVersion: store.get('lastSeenReleaseVersion'),
+    googleDriveRefreshToken: store.get('googleDriveRefreshToken'),
+    googleDriveAccessToken: store.get('googleDriveAccessToken'),
+    googleDriveTokenExpiresAt: store.get('googleDriveTokenExpiresAt'),
+    googleDriveFolderId: store.get('googleDriveFolderId')
   }
 }
 

@@ -6,8 +6,9 @@ const STEP_META: Record<string, { icon: string; label: string; color: string }> 
   annotate:  { icon: 'draw',          label: 'Annotate',           color: 'primary' },
   save:      { icon: 'save',          label: 'Save to Disk',       color: 'primary' },
   clipboard: { icon: 'content_copy',  label: 'Copy to Clipboard',  color: 'primary' },
-  imgur:     { icon: 'cloud_upload',   label: 'Imgur',              color: 'secondary' },
-  custom:    { icon: 'api',           label: 'Custom Endpoint',    color: 'secondary' },
+  imgur:          { icon: 'cloud_upload',   label: 'Imgur',              color: 'secondary' },
+  'google-drive': { icon: 'add_to_drive',  label: 'Google Drive',       color: 'secondary' },
+  custom:         { icon: 'api',           label: 'Custom Endpoint',    color: 'secondary' },
   copyUrl:   { icon: 'link',          label: 'Copy URL',           color: 'tertiary' },
   notify:    { icon: 'notifications', label: 'Notification',       color: 'tertiary' },
   openUrl:   { icon: 'open_in_new',   label: 'Open URL',           color: 'tertiary' },
@@ -78,9 +79,10 @@ export default function Workflow() {
 
   const addDestination = (type: UploadDestination['type']) => {
     if (!selected) return
-    const dest: UploadDestination = type === 'imgur'
-      ? { type: 'imgur', clientId: '' }
-      : { type: 'custom', url: '', headers: {} }
+    let dest: UploadDestination
+    if (type === 'imgur') dest = { type: 'imgur', clientId: '' }
+    else if (type === 'google-drive') dest = { type: 'google-drive' }
+    else dest = { type: 'custom', url: '', headers: {} }
     setSelected({ ...selected, destinations: [...selected.destinations, dest] })
   }
 
@@ -314,6 +316,7 @@ export default function Workflow() {
                             </div>
                             <span className="text-xs font-medium text-slate-300 flex-1" style={{ fontFamily: 'Manrope, sans-serif' }}>
                               {field === 'destinations' && step.type === 'imgur' ? 'Upload to Imgur' :
+                               field === 'destinations' && step.type === 'google-drive' ? 'Upload to Google Drive' :
                                field === 'destinations' && step.type === 'custom' ? `Upload to ${(step as { url?: string }).url || 'Custom'}` :
                                meta.label}
                             </span>
@@ -350,6 +353,16 @@ export default function Workflow() {
                               />
                             </div>
                           )}
+                          {field === 'destinations' && step.type === 'google-drive' && !selected.builtIn && (
+                            <div className="ml-9 mt-1.5 mb-1">
+                              <input
+                                value={(step as { folderId?: string }).folderId ?? ''}
+                                onChange={e => updateDestination(i, { folderId: e.target.value } as Partial<UploadDestination>)}
+                                placeholder="Folder ID (optional — uses root or Settings default)"
+                                className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-1.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
+                              />
+                            </div>
+                          )}
                           {field === 'destinations' && step.type === 'custom' && !selected.builtIn && (
                             <div className="ml-9 mt-1.5 mb-1">
                               <input
@@ -377,6 +390,7 @@ export default function Workflow() {
                         {field === 'destinations' && (
                           <>
                             <AddChip label="Imgur" icon="cloud_upload" accent={phase.accent} onClick={() => addDestination('imgur')} />
+                            <AddChip label="Google Drive" icon="add_to_drive" accent={phase.accent} onClick={() => addDestination('google-drive')} />
                             <AddChip label="Custom URL" icon="api" accent={phase.accent} onClick={() => addDestination('custom')} />
                           </>
                         )}

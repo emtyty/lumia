@@ -35,6 +35,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
 
+  // Google Drive
+  gdriveStartAuth: () => ipcRenderer.invoke('gdrive:startAuth'),
+  gdriveDisconnect: () => ipcRenderer.invoke('gdrive:disconnect'),
+  onGdriveConnected: (cb: () => void) => ipcRenderer.on('gdrive:connected', cb),
+
   // Save file
   saveFile: (dataUrl: string, filePath: string) => ipcRenderer.invoke('capture:saveFile', dataUrl, filePath),
 

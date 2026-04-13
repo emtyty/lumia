@@ -16,6 +16,7 @@ export type AfterCaptureStep =
 export type UploadDestination =
   | { type: 'imgur'; clientId: string }
   | { type: 'custom'; url: string; headers: Record<string, string>; fieldName?: string }
+  | { type: 'google-drive'; folderId?: string }
 
 export type AfterUploadStep =
   | { type: 'copyUrl'; which: 'first' | 'all' }
