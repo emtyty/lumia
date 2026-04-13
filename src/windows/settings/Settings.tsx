@@ -1,5 +1,31 @@
 import { useState, useEffect, useRef } from 'react'
 
+const isMac = navigator.platform.startsWith('Mac')
+
+const ACTION_LABELS: Record<string, string> = {
+  RectangleRegion:     'Region Screenshot',
+  PrintScreen:         'Fullscreen',
+  ActiveWindow:        'Active Window',
+  ActiveMonitor:       'Active Screen',
+  ScreenRecorder:      'Screen Recorder',
+  ScreenRecorderGIF:   'GIF Recorder',
+  StopScreenRecording: 'Stop Recording',
+  OpenMainWindow:      'Open Main Window',
+  WorkflowPicker:      'Workflow Picker',
+}
+
+function parseShortcut(accel: string): string {
+  return accel.split('+').map(k => {
+    if (isMac) {
+      if (k === 'Ctrl' || k === 'CommandOrControl' || k === 'CmdOrCtrl') return '⌘'
+      if (k === 'Command' || k === 'Cmd') return '⌘'
+      if (k === 'Alt' || k === 'Option') return '⌥'
+      if (k === 'Shift') return '⇧'
+    }
+    return k
+  }).join(isMac ? '' : '+')
+}
+
 interface AppSettings {
   imgurClientId: string
   defaultSavePath: string
@@ -34,6 +60,7 @@ export default function Settings() {
   const originalRef = useRef<AppSettings>(DEFAULT_SETTINGS)
   const [gdriveConnecting, setGdriveConnecting] = useState(false)
   const [gdriveError, setGdriveError] = useState('')
+  const [hotkeys, setHotkeys] = useState<Record<string, string>>({})
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
@@ -41,6 +68,7 @@ export default function Settings() {
       originalRef.current = s
       setLoading(false)
     })
+    window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
   }, [])
 
   const isDirty = JSON.stringify(settings) !== JSON.stringify(originalRef.current)
@@ -320,12 +348,18 @@ export default function Settings() {
             {/* Hotkeys */}
             <Section id="hotkeys" title="Keyboard Shortcuts" icon="keyboard">
               <div className="space-y-1">
-                {HOTKEY_REFERENCE.map(({ action, key }) => (
-                  <div key={action} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
-                    <span className="text-xs font-medium text-slate-300" style={{ fontFamily: 'Manrope, sans-serif' }}>{action}</span>
-                    <kbd className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[11px] font-mono text-slate-400">{key}</kbd>
-                  </div>
-                ))}
+                {Object.entries(ACTION_LABELS).map(([action, label]) => {
+                  const accel = hotkeys[action]
+                  return (
+                    <div key={action} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
+                      <span className="text-xs font-medium text-slate-300" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
+                      {accel
+                        ? <kbd className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[11px] font-mono text-slate-400">{parseShortcut(accel)}</kbd>
+                        : <span className="text-[11px] text-slate-600 italic">—</span>
+                      }
+                    </div>
+                  )
+                })}
               </div>
               <p className="text-[11px] text-slate-500 mt-3">Hotkey rebinding coming in a future release.</p>
             </Section>
@@ -337,15 +371,6 @@ export default function Settings() {
   )
 }
 
-const HOTKEY_REFERENCE = [
-  { action: 'Region Screenshot',   key: 'Ctrl+Shift+4' },
-  { action: 'Fullscreen',          key: 'Ctrl+Shift+3' },
-  { action: 'Active Window',       key: 'Ctrl+Shift+2' },
-  { action: 'Screen Recorder',     key: 'Ctrl+Shift+R' },
-  { action: 'GIF Recorder',        key: 'Ctrl+Shift+G' },
-  { action: 'Stop Recording',      key: 'Ctrl+Shift+S' },
-  { action: 'Open Main Window',    key: 'Ctrl+Shift+X' },
-]
 
 function Section({ id, title, icon, children }: { id: string; title: string; icon: string; children: React.ReactNode }) {
   return (
