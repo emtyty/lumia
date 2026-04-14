@@ -17,7 +17,7 @@ interface AppSettings {
 declare global {
   interface Window {
     electronAPI: {
-      captureScreenshot: (mode: 'fullscreen' | 'region' | 'window') => Promise<string | void>
+      captureScreenshot: (mode: 'fullscreen' | 'region' | 'window' | 'active-monitor') => Promise<string | void>
 
       // Recording
       getRecordingSources: () => Promise<{ id: string; name: string; thumbnail: string }[]>
@@ -68,7 +68,23 @@ declare global {
       showSaveDialog: (opts: unknown) => Promise<{ filePath?: string; canceled: boolean }>
       showOpenDialog: (opts: unknown) => Promise<{ filePaths: string[]; canceled: boolean }>
 
+      onUpdateDownloaded: (cb: (version: string) => void) => void
+      installUpdate: () => Promise<void>
+      getAppVersion: () => Promise<string>
+      onAbout: (cb: () => void) => void
+
       platform: NodeJS.Platform
+
+      // Scrolling capture
+      startScrollCapture(opts?: { delay?: number; maxFrames?: number }): Promise<{ ok: boolean; error?: string }>
+      cancelScrollCapture(): Promise<void>
+      onScrollCaptureProgress(cb: (data: { frame: number; maxFrames: number }) => void): void
+      onScrollCaptureFrames(cb: (data: { dataUrls: string[]; scrollSteps: number[]; topFixed: number; bottomFixed: number }) => void): void
+      onScrollCaptureOpen(cb: () => void): void
+      onScrollCaptureError(cb: (data: { error: string }) => void): void
+      confirmScrollRegion(rect: { x: number; y: number; width: number; height: number }): Promise<void>
+      cancelScrollRegion(): Promise<void>
+      getOverlayMode(): Promise<'region' | 'scroll-region'>
     }
   }
 }

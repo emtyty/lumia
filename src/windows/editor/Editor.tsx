@@ -54,6 +54,7 @@ export default function Editor() {
   const canvasRef = useRef<CanvasHandle>(null)
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
+  const [zoomLevel, setZoomLevel] = useState(1)
   const [clipboardHistory, setClipboardHistory] = useState<
     { id: string; dataUrl: string; name: string; timestamp: number }[]
   >([])
@@ -93,10 +94,18 @@ export default function Editor() {
     })
   }, [])
 
-  // Keyboard shortcuts for tools
+  // Keyboard shortcuts for tools + zoom
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      // Zoom: Ctrl/Cmd + / - / 0
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === '=' || e.key === '+') { e.preventDefault(); canvasRef.current?.zoomIn(); return }
+        if (e.key === '-')                  { e.preventDefault(); canvasRef.current?.zoomOut(); return }
+        if (e.key === '0')                  { e.preventDefault(); canvasRef.current?.zoomReset(); return }
+      }
+
       const t = TOOLS.find(t => t.key?.toLowerCase() === e.key.toLowerCase())
       if (t) setTool(t.id)
     }
@@ -266,6 +275,22 @@ export default function Editor() {
           <HeaderBtn icon="delete_sweep" label="Clear all" onClick={() => canvasRef.current?.clear()} variant="danger" />
         </div>
 
+        <div className="w-px h-5 bg-white/10" />
+
+        {/* Zoom controls */}
+        <div className="flex items-center gap-0.5">
+          <HeaderBtn icon="remove" label="Zoom out (Ctrl+-)" onClick={() => canvasRef.current?.zoomOut()} />
+          <button
+            onClick={() => canvasRef.current?.zoomReset()}
+            className="h-7 px-1.5 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white hover:bg-white/10 transition-all tabular-nums"
+            title="Reset zoom (Ctrl+0)"
+            style={{ fontFamily: 'Manrope, sans-serif' }}
+          >
+            {Math.round(zoomLevel * 100)}%
+          </button>
+          <HeaderBtn icon="add" label="Zoom in (Ctrl+=)" onClick={() => canvasRef.current?.zoomIn()} />
+        </div>
+
         {/* Spacer */}
         <div className="flex-1" />
 
@@ -314,7 +339,7 @@ export default function Editor() {
 
         {/* ── Canvas container ── */}
         <div
-          className="flex-1 relative overflow-hidden flex items-center justify-center"
+          className="flex-1 relative overflow-hidden"
           style={{
             background: 'radial-gradient(circle at 30% 40%, rgba(15, 23, 42, 0.8) 0%, #020617 100%)',
           }}
@@ -339,6 +364,7 @@ export default function Editor() {
             onExport={handleExport}
             exportTrigger={exportTrigger}
             onHistoryChange={handleHistoryChange}
+            onZoomChange={setZoomLevel}
           />
 
         </div>

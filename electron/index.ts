@@ -3,6 +3,7 @@ import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
+import { setupScrollCapture, getOverlayMode, resetOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
@@ -209,6 +210,7 @@ app.whenReady().then(async () => {
   setupCapture()
   setupHotkeys()
   setupTray()
+  setupScrollCapture(mainWindow, createOverlayWindow, getOverlayWindow, getOverlayDisplayId)
 
   // Auto-update
   if (!isDev) {
@@ -255,6 +257,16 @@ app.whenReady().then(async () => {
     return shell.openPath(normalized)
   })
   ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
+
+  // IPC: Overlay mode (scroll-region vs region)
+  // Do NOT reset here — React StrictMode double-mounts the overlay,
+  // causing a second call that would see 'region' instead of 'scroll-region'.
+  // Mode is reset in scroll-region:confirm / scroll-region:cancel / region:confirm / region:cancel.
+  ipcMain.handle('overlay:get-mode', () => {
+    const mode = getOverlayMode()
+    console.log('[overlay] get-mode →', mode)
+    return mode
+  })
 
   // IPC: Settings
   ipcMain.handle('hotkeys:get', () => getHotkeys())

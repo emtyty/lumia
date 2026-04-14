@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Compiled native helpers (built from .swift source)
+electron/helpers/scroll-helper
+
 # Build outputs
 out/
 dist/
