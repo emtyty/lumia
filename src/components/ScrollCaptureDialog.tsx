@@ -163,12 +163,6 @@ function findOptimalSeamDP(
   const sortedRows = [...seamPath].sort((a, b) => a - b)
   const seamRow = sortedRows[Math.floor(sortedRows.length / 2)]
 
-  const minRow = sortedRows[0]
-  const maxRow = sortedRows[sortedRows.length - 1]
-  console.log(
-    `[ScrollCapture] DP seam path stats — min row: ${minRow}, max row: ${maxRow}, median (seamRow): ${seamRow}, overlap height: ${overlapHeight}, sampled columns: ${sampledW}`
-  )
-
   return { seamRow, seamPath }
 }
 
@@ -287,9 +281,6 @@ async function stitchFrames(
 
     // Validate overlap: clamp to [0, contentH] to prevent compound errors
     if (overlapH > contentH) {
-      console.warn(
-        `[ScrollCapture] Frame ${i}: overlapH (${overlapH}) exceeds contentH (${contentH}), clamping to contentH`
-      )
       overlapH = contentH
     }
     if (overlapH < 0) {
@@ -458,6 +449,15 @@ export default function ScrollCaptureDialog({ onClose }: Props) {
     window.electronAPI?.removeAllListeners('scroll-capture:error')
     onClose()
   }
+
+  // ESC key to cancel
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose()
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, []) // eslint-disable-line
 
   const progressPct =
     progress.maxFrames > 0

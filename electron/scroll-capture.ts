@@ -232,7 +232,6 @@ function detectFixedRegions(
   if (topFixed < minRegionHeight) topFixed = 0
   if (bottomFixed < minRegionHeight) bottomFixed = 0
 
-  console.log(`[scroll-capture] detectFixedRegions: topFixed=${topFixed}, bottomFixed=${bottomFixed}`)
   return { topFixed, bottomFixed }
 }
 
@@ -309,7 +308,7 @@ function detectScrollStepSAD(
     if (sizeA.width !== sizeB.width || sizeA.height !== sizeB.height) return defaultStep
 
     const { width, height } = sizeA
-    const minStep = Math.max(10, Math.floor(defaultStep * 0.1))
+    const minStep = 5
     const maxStep = Math.min(Math.floor(defaultStep * 2.5), height - 10)
 
     // Pass 1: coarse scan (every 4th step)
@@ -430,7 +429,7 @@ function detectScrollStepFFT(
   if (numCols === 0) return defaultStep
 
   // Find peak in valid scroll range
-  const minStep = Math.max(1, Math.floor(defaultStep * 0.1))
+  const minStep = 5
   const maxStep = Math.min(Math.floor(defaultStep * 2.5), contentH - 1)
 
   let bestIdx = defaultStep
@@ -489,9 +488,20 @@ function detectScrollStep(
     const sizeB = frameB.getSize()
     if (sizeA.width !== sizeB.width || sizeA.height !== sizeB.height) return defaultStep
 
+    const { width, height } = sizeA
+
     // Try FFT-based detection first
     const fftResult = detectScrollStepFFT(frameA, frameB, defaultStep, topSkip, bottomSkip)
-    if (fftResult > 0) return fftResult
+    if (fftResult > 0) {
+      // Cross-validate FFT result: verify that the detected step actually
+      // produces a low mismatch. FFT can return false peaks when the page
+      // barely scrolled (e.g., reached the bottom).
+      const bitmapA = frameA.toBitmap()
+      const bitmapB = frameB.toBitmap()
+      const fftMismatch = overlapMismatch(bitmapA, bitmapB, width, height, fftResult, topSkip, bottomSkip)
+      if (fftMismatch < 0.02) return fftResult
+      // FFT result doesn't validate — fall through to SAD
+    }
 
     // Fall back to SAD-based detection
     return detectScrollStepSAD(frameA, frameB, defaultStep, topSkip, bottomSkip)
@@ -563,14 +573,6 @@ async function captureScrollingInRect(
   const centerX = displayBounds.x + rect.x + rect.width / 2
   const centerY = displayBounds.y + rect.y + rect.height / 2
 
-  console.log('[scroll-capture] ── START ──')
-  console.log('[scroll-capture] rect:', JSON.stringify(rect))
-  console.log('[scroll-capture] displayId:', displayId, '→ matched:', targetDisplay.id)
-  console.log('[scroll-capture] displayBounds:', JSON.stringify(displayBounds))
-  console.log('[scroll-capture] scaleFactor:', scaleFactor)
-  console.log('[scroll-capture] scroll target (abs):', centerX, centerY)
-  console.log('[scroll-capture] helperPath:', getScrollHelperPath(), 'exists:', existsSync(getScrollHelperPath()))
-
   const frames: Electron.NativeImage[] = []
   const scrollSteps: number[] = [] // per-pair scroll offsets (in physical pixels)
 
@@ -597,20 +599,8 @@ async function captureScrollingInRect(
   let earlyTopFixed = 0
   let earlyBottomFixed = 0
 
-  console.log('[scroll-capture] framePhysH:', framePhysH,
-    'targetOverlap:', TARGET_OVERLAP_PX, 'targetStep:', targetStep)
-
   for (let i = 0; i < opts.maxFrames; i++) {
-    if (isCancelledFn()) {
-      console.log('[scroll-capture] cancelled at frame', i)
-      break
-    }
-
-    // Hide frame indicator before capturing so the border doesn't appear in the screenshot
-    if (frameIndicatorWindow && !frameIndicatorWindow.isDestroyed()) {
-      frameIndicatorWindow.hide()
-      await sleep(50) // brief wait for the window to fully disappear from screen
-    }
+    if (isCancelledFn()) break
 
     // Capture full screen
     const sources = await desktopCapturer.getSources({
@@ -621,25 +611,12 @@ async function captureScrollingInRect(
       }
     })
 
-    // Show frame indicator again after capture
-    if (frameIndicatorWindow && !frameIndicatorWindow.isDestroyed()) {
-      frameIndicatorWindow.show()
-    }
-
     // Find the source for the target display
     const source = sources.find(s => s.display_id === String(targetDisplay.id))
       ?? (allDisplays.length === 1 ? sources[0] : null)
       ?? sources[0]
 
-    if (!source) {
-      console.log('[scroll-capture] no source found — breaking')
-      break
-    }
-
-    if (i === 0) {
-      console.log('[scroll-capture] source:', source.id, source.name, 'display_id:', source.display_id)
-      console.log('[scroll-capture] thumbnail size:', source.thumbnail.getSize())
-    }
+    if (!source) break
 
     // Crop to selected rect (apply scaleFactor)
     const cropped = source.thumbnail.crop({
@@ -651,16 +628,12 @@ async function captureScrollingInRect(
 
     frames.push(cropped)
     progressCb({ frame: i + 1, maxFrames: opts.maxFrames })
-    console.log(`[scroll-capture] frame ${i + 1} captured, size:`, cropped.getSize())
 
     // Early fixed region detection after 3 frames are captured
     if (frames.length === 3 && earlyTopFixed === 0 && earlyBottomFixed === 0) {
       const early = detectFixedRegions(frames)
       earlyTopFixed = early.topFixed
       earlyBottomFixed = early.bottomFixed
-      if (earlyTopFixed > 0 || earlyBottomFixed > 0) {
-        console.log(`[scroll-capture] early fixed region detection: top=${earlyTopFixed}, bottom=${earlyBottomFixed}`)
-      }
     }
 
     // Detect scroll step for each consecutive pair
@@ -670,8 +643,6 @@ async function captureScrollingInRect(
       scrollSteps.push(step)
 
       const actualOverlap = framePhysH - step
-      console.log(`[scroll-capture] scrollStep[${scrollSteps.length - 1}]:`, step,
-        `overlap: ${actualOverlap}px (target: ${TARGET_OVERLAP_PX}px)`)
 
       // ── Calibrate scroll delta after the first pair ──
       // Ratio: how many physical scroll pixels per unit of delta we sent
@@ -682,7 +653,6 @@ async function captureScrollingInRect(
         // Clamp to reasonable range to avoid wild overshoots
         currentDelta = Math.max(50, Math.min(currentDelta, 2000))
         calibrated = true
-        console.log(`[scroll-capture] calibrated: pxPerDelta=${pxPerDelta.toFixed(2)}, newDelta=${currentDelta}`)
       } else if (calibrated && step > 10) {
         // Fine-tune: if actual overlap drifted from target, nudge the delta
         const overlapError = actualOverlap - TARGET_OVERLAP_PX
@@ -691,7 +661,6 @@ async function captureScrollingInRect(
           // Too little overlap → need less scroll (decrease delta)
           const adjustment = Math.round(overlapError * (currentDelta / step) * 0.5)
           currentDelta = Math.max(50, Math.min(currentDelta + adjustment, 2000))
-          console.log(`[scroll-capture] fine-tune delta: error=${overlapError}px, adj=${adjustment}, newDelta=${currentDelta}`)
         }
       }
     }
@@ -700,33 +669,22 @@ async function captureScrollingInRect(
     // then stop when two consecutive frames look the same — i.e. page didn't move)
     if (frames.length >= 3) {
       const identical = framesNearlyIdentical(frames[frames.length - 2], frames[frames.length - 1])
-      const lastStep = scrollSteps.length > 0 ? scrollSteps[scrollSteps.length - 1] : 0
-      console.log(`[scroll-capture] frames ${frames.length - 1} vs ${frames.length} identical:`, identical, 'lastStep:', lastStep)
       if (identical) {
-        // Only drop the last frame if the detected scroll step is tiny (< 5px),
-        // meaning the page truly didn't move. If the step is larger, the page
-        // scrolled a small amount before hitting bottom — keep the frame so
-        // we don't lose the final content strip at the bottom of the page.
-        if (lastStep < 5) {
-          frames.pop()
-          scrollSteps.pop()
-          console.log('[scroll-capture] dropped duplicate frame (step < 5px)')
-        } else {
-          console.log(`[scroll-capture] keeping final frame despite near-identical (step=${lastStep}px has new content)`)
-        }
+        // Frames are nearly identical (<0.2% pixel diff) — the page didn't
+        // meaningfully scroll. Any non-trivial lastStep here is a false
+        // positive from the step detector. Always drop the duplicate to
+        // prevent content duplication in the stitched output.
+        frames.pop()
+        scrollSteps.pop()
         break
       }
     }
 
     if (i < opts.maxFrames - 1) {
-      console.log(`[scroll-capture] scrolling at (${centerX}, ${centerY}) delta=${currentDelta}...`)
       await scrollAtPosition(centerX, centerY, currentDelta)
-      console.log('[scroll-capture] scroll done, waiting', opts.delay + 200, 'ms')
       await sleep(opts.delay + 200)
     }
   }
-
-  console.log(`[scroll-capture] ── DONE ── ${frames.length} frames, scrollSteps:`, scrollSteps)
 
   // Detect fixed header/footer regions across all captured frames
   const { topFixed, bottomFixed } = detectFixedRegions(frames)
@@ -734,12 +692,10 @@ async function captureScrollingInRect(
   // If fixed regions were found, re-run scroll step detection on content-only zones
   // for better accuracy (fixed elements create false match signals in overlap detection)
   if ((topFixed > 0 || bottomFixed > 0) && frames.length >= 2) {
-    console.log('[scroll-capture] re-running scroll step detection with fixed region skip:', { topFixed, bottomFixed })
     for (let i = 0; i < scrollSteps.length; i++) {
       const prevStep = i > 0 ? scrollSteps[i - 1] : defaultStep
       const refinedStep = detectScrollStep(frames[i], frames[i + 1], prevStep, topFixed, bottomFixed)
       if (refinedStep !== scrollSteps[i]) {
-        console.log(`[scroll-capture] scrollStep[${i}] refined: ${scrollSteps[i]} → ${refinedStep}`)
         scrollSteps[i] = refinedStep
       }
     }
@@ -747,82 +703,6 @@ async function captureScrollingInRect(
 
   const dataUrls = frames.map(f => f.toDataURL())
   return { dataUrls, scrollSteps, topFixed, bottomFixed }
-}
-
-// ── Capture frame indicator (border overlay during scroll capture) ──────────
-
-let frameIndicatorWindow: BrowserWindow | null = null
-
-/**
- * Create a transparent, click-through window that shows a border around the
- * capture region while scroll-capturing is in progress. This gives the user
- * visual feedback about which area is being captured.
- */
-function showFrameIndicator(
-  rect: { x: number; y: number; width: number; height: number },
-  displayId: number | null
-) {
-  if (frameIndicatorWindow) {
-    frameIndicatorWindow.close()
-    frameIndicatorWindow = null
-  }
-
-  const allDisplays = screen.getAllDisplays()
-  const targetDisplay = (displayId != null
-    ? allDisplays.find(d => d.id === displayId)
-    : null) ?? screen.getPrimaryDisplay()
-  const { x: dispX, y: dispY } = targetDisplay.bounds
-
-  const BORDER = 2
-  const win = new BrowserWindow({
-    x: dispX + Math.round(rect.x) - BORDER,
-    y: dispY + Math.round(rect.y) - BORDER,
-    width: Math.round(rect.width) + BORDER * 2,
-    height: Math.round(rect.height) + BORDER * 2,
-    transparent: true,
-    backgroundColor: '#00000000',
-    frame: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    focusable: false,
-    webPreferences: { contextIsolation: true, nodeIntegration: false }
-  })
-
-  win.setIgnoreMouseEvents(true)
-  win.setAlwaysOnTop(true, 'pop-up-menu')
-  win.setVisibleOnAllWorkspaces(true)
-
-  // Inline HTML: just a pulsing border
-  const html = `<!DOCTYPE html>
-<html><head><style>
-  * { margin:0; padding:0; }
-  html, body { background: transparent; overflow: hidden; }
-  .frame {
-    position: fixed; inset: 0;
-    border: ${BORDER}px solid rgba(56, 189, 248, 0.8);
-    border-radius: 4px;
-    pointer-events: none;
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { border-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 8px rgba(56, 189, 248, 0.3); }
-    50% { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 16px rgba(56, 189, 248, 0.5); }
-  }
-</style></head><body><div class="frame"></div></body></html>`
-
-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
-  win.on('closed', () => { frameIndicatorWindow = null })
-  frameIndicatorWindow = win
-}
-
-function hideFrameIndicator() {
-  if (frameIndicatorWindow) {
-    frameIndicatorWindow.close()
-    frameIndicatorWindow = null
-  }
 }
 
 // ── Overlay mode tracking ──────────────────────────────────────────────────
@@ -850,38 +730,30 @@ export function setupScrollCapture(
   getOverlayDisplayId: () => number | null
 ) {
   let cancelled = false
-  let captureOpts = { delay: 600, maxFrames: 20 }
-
-  console.log('[scroll-capture] setupScrollCapture registered')
+  let captureOpts = { delay: 600, maxFrames: 50 }
 
   // Step 1: User clicks "Scrolling" — hide main window, open overlay
   ipcMain.handle('scroll-capture:start', async (_e, opts?: { delay?: number; maxFrames?: number }) => {
-    console.log('[scroll-capture] >>> scroll-capture:start received')
     cancelled = false
-    captureOpts = { delay: opts?.delay ?? 600, maxFrames: opts?.maxFrames ?? 20 }
+    captureOpts = { delay: opts?.delay ?? 600, maxFrames: opts?.maxFrames ?? 50 }
 
     mainWindow.hide()
     await sleep(200) // wait for window to hide before opening overlay
 
     // Tell overlay to use 'scroll-region' mode before creating it
     overlayMode = 'scroll-region'
-    console.log('[scroll-capture] opening overlay in scroll-region mode')
     createOverlayWindow()
     return { ok: true }
   })
 
   // Step 2: Overlay confirms region selection
   ipcMain.handle('scroll-region:confirm', async (_e, rect: { x: number; y: number; width: number; height: number }) => {
-    console.log('[scroll-capture] >>> scroll-region:confirm received, rect:', JSON.stringify(rect))
     const captureDisplayId = getOverlayDisplayId()
     resetOverlayMode()
     getOverlayWindow()?.close()
 
     try {
       await sleep(150) // brief delay after overlay closes
-
-      // Show frame indicator border around the capture region
-      showFrameIndicator(rect, captureDisplayId)
 
       const { dataUrls, scrollSteps, topFixed, bottomFixed } = await captureScrollingInRect(
         rect,
@@ -895,8 +767,6 @@ export function setupScrollCapture(
         captureDisplayId
       )
 
-      hideFrameIndicator()
-
       if (!mainWindow.isDestroyed()) {
         mainWindow.show()
         mainWindow.focus()
@@ -908,7 +778,6 @@ export function setupScrollCapture(
         mainWindow.webContents.send('scroll-capture:frames', { dataUrls, scrollSteps, topFixed, bottomFixed })
       }
     } catch (err: unknown) {
-      hideFrameIndicator()
       if (!mainWindow.isDestroyed()) {
         mainWindow.show()
         mainWindow.focus()
@@ -932,6 +801,5 @@ export function setupScrollCapture(
 
   ipcMain.handle('scroll-capture:cancel', () => {
     cancelled = true
-    hideFrameIndicator()
   })
 }
