@@ -19,7 +19,15 @@
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
     "fft.js": "^4.0.4",
+    "koffi": "^2.16.0",
     "uuid": "^10.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "koffi"
+    ]
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.4",

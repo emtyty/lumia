@@ -76,10 +76,14 @@ declare global {
       platform: NodeJS.Platform
 
       // Scrolling capture
-      startScrollCapture(opts?: { delay?: number; maxFrames?: number }): Promise<{ ok: boolean; error?: string }>
+      startScrollCapture(opts?: {
+        delay?: number; maxFrames?: number;
+        scrollMethod?: 'mouseWheel' | 'vscroll' | 'downArrow' | 'pageDown';
+        scrollToTopFirst?: boolean
+      }): Promise<{ ok: boolean; error?: string }>
       cancelScrollCapture(): Promise<void>
-      onScrollCaptureProgress(cb: (data: { frame: number; maxFrames: number }) => void): void
-      onScrollCaptureFrames(cb: (data: { dataUrls: string[]; scrollSteps: number[]; topFixed: number; bottomFixed: number }) => void): void
+      onScrollCaptureProgress(cb: (data: { frame: number; maxFrames: number; phase?: 'capturing' | 'stitching' }) => void): void
+      onScrollCaptureResult(cb: (data: { dataUrl: string }) => void): void
       onScrollCaptureOpen(cb: () => void): void
       onScrollCaptureError(cb: (data: { error: string }) => void): void
       confirmScrollRegion(rect: { x: number; y: number; width: number; height: number }): Promise<void>

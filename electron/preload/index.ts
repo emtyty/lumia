@@ -83,8 +83,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('scroll-capture:cancel'),
   onScrollCaptureProgress: (cb: (data: { frame: number; maxFrames: number }) => void) =>
     ipcRenderer.on('scroll-capture:progress', (_e, data) => cb(data)),
-  onScrollCaptureFrames: (cb: (data: { dataUrls: string[]; scrollSteps: number[]; topFixed: number; bottomFixed: number }) => void) =>
-    ipcRenderer.on('scroll-capture:frames', (_e, data) => cb(data)),
+  onScrollCaptureResult: (cb: (data: { dataUrl: string }) => void) =>
+    ipcRenderer.on('scroll-capture:result', (_e, data) => cb(data)),
   onScrollCaptureOpen: (cb: () => void) =>
     ipcRenderer.on('scroll-capture:open', cb),
   onScrollCaptureError: (cb: (data: { error: string }) => void) =>
