@@ -76,6 +76,26 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onAbout: (cb: () => void) => { ipcRenderer.on('app:about', () => cb()) },
   getAppVersion: () => ipcRenderer.invoke('app:version'),
 
+  // Scrolling capture
+  startScrollCapture: (opts: unknown) =>
+    ipcRenderer.invoke('scroll-capture:start', opts),
+  cancelScrollCapture: () =>
+    ipcRenderer.invoke('scroll-capture:cancel'),
+  onScrollCaptureProgress: (cb: (data: { frame: number; maxFrames: number }) => void) =>
+    ipcRenderer.on('scroll-capture:progress', (_e, data) => cb(data)),
+  onScrollCaptureResult: (cb: (data: { dataUrl: string }) => void) =>
+    ipcRenderer.on('scroll-capture:result', (_e, data) => cb(data)),
+  onScrollCaptureOpen: (cb: () => void) =>
+    ipcRenderer.on('scroll-capture:open', cb),
+  onScrollCaptureError: (cb: (data: { error: string }) => void) =>
+    ipcRenderer.on('scroll-capture:error', (_e, data) => cb(data)),
+  confirmScrollRegion: (rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke('scroll-region:confirm', rect),
+  cancelScrollRegion: () =>
+    ipcRenderer.invoke('scroll-region:cancel'),
+  getOverlayMode: () =>
+    ipcRenderer.invoke('overlay:get-mode'),
+
   removeAllListeners: (channel: string) => ipcRenderer.removeAllListeners(channel),
 
   // Overlay-specific

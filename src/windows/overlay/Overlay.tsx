@@ -13,10 +13,16 @@ export default function Overlay() {
     }
   }, [])
 
+  const [mode, setMode] = useState<'region' | 'scroll-region'>('region')
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null)
   const [currentPos, setCurrentPos] = useState<{ x: number; y: number } | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
+
+  // Fetch the overlay mode from main process on mount
+  useEffect(() => {
+    window.electronAPI?.getOverlayMode().then(m => setMode(m))
+  }, [])
 
   const getRect = (): Rect | null => {
     if (!startPos || !currentPos) return null
@@ -29,9 +35,13 @@ export default function Overlay() {
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') {
-      window.electronAPI?.cancelRegion()
+      if (mode === 'scroll-region') {
+        window.electronAPI?.cancelScrollRegion()
+      } else {
+        window.electronAPI?.cancelRegion()
+      }
     }
-  }, [])
+  }, [mode])
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown)
@@ -54,10 +64,18 @@ export default function Overlay() {
     setIsDrawing(false)
     const rect = getRect()
     if (!rect || rect.width < 10 || rect.height < 10) return
-    await window.electronAPI?.confirmRegion(rect)
+    if (mode === 'scroll-region') {
+      await window.electronAPI?.confirmScrollRegion(rect)
+    } else {
+      await window.electronAPI?.confirmRegion(rect)
+    }
   }
 
   const rect = getRect()
+
+  const hint = mode === 'scroll-region'
+    ? 'Drag to select scroll region · ESC to cancel'
+    : 'Drag to select region · ESC to cancel'
 
   return (
     <div
@@ -68,14 +86,26 @@ export default function Overlay() {
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
     >
+      {/* Pulse animation for scroll-region mode */}
+      <style>{`
+        @keyframes scroll-region-border-pulse {
+          0%, 100% { border-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); }
+          50% { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45), 0 0 12px 2px rgba(56, 189, 248, 0.3); }
+        }
+        .scroll-region-pulse {
+          animation: scroll-region-border-pulse 1.5s ease-in-out infinite;
+        }
+      `}</style>
       {/* Instruction hint */}
       {!isDrawing && (
         <div
           className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
           style={{ fontFamily: 'Manrope, sans-serif' }}
         >
-          <span className="material-symbols-outlined text-sm mr-2 align-middle">crop_free</span>
-          Drag to select region · ESC to cancel
+          <span className="material-symbols-outlined text-sm mr-2 align-middle">
+            {mode === 'scroll-region' ? 'swipe_down' : 'crop_free'}
+          </span>
+          {hint}
         </div>
       )}
 
@@ -84,7 +114,7 @@ export default function Overlay() {
         <>
           {/* Highlight (clear area) */}
           <div
-            className="absolute pointer-events-none"
+            className={`absolute pointer-events-none${mode === 'scroll-region' ? ' scroll-region-pulse' : ''}`}
             style={{
               left: rect.x,
               top: rect.y,
@@ -92,7 +122,9 @@ export default function Overlay() {
               height: rect.height,
               background: 'transparent',
               boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
-              border: '2px solid rgba(182,160,255,0.8)',
+              border: mode === 'scroll-region'
+                ? '2px solid rgba(56, 189, 248, 0.8)'
+                : '2px solid rgba(182,160,255,0.8)',
               borderRadius: 4
             }}
           />

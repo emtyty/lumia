@@ -3,6 +3,7 @@ import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
+import { setupScrollCapture, getOverlayMode, resetOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
@@ -97,11 +98,10 @@ export function createOverlayWindow(): BrowserWindow {
   const { width, height, x, y } = targetDisplay.bounds
   overlayDisplayId = targetDisplay.id
 
+  const displayBounds = { x, y, width, height }
+
   const win = new BrowserWindow({
-    x,
-    y,
-    width,
-    height,
+    ...displayBounds,
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
@@ -110,12 +110,20 @@ export function createOverlayWindow(): BrowserWindow {
     hasShadow: false,
     resizable: false,
     movable: false,
+    enableLargerThanScreen: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   })
+
+  // On Windows, per-monitor DPI awareness can distort bounds when the overlay
+  // is created on a secondary display with a different scale factor.
+  // Force-setting bounds after construction corrects for DPI mis-conversion.
+  if (process.platform === 'win32') {
+    win.setBounds(displayBounds)
+  }
 
   win.setIgnoreMouseEvents(false)
   // 'pop-up-menu' is above all application windows but below macOS system UI
@@ -131,6 +139,12 @@ export function createOverlayWindow(): BrowserWindow {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
   }
+
+  // Re-apply bounds once the window is ready — handles edge cases where the
+  // compositor adjusts the frame between creation and first paint.
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.setBounds(displayBounds)
+  })
 
   win.on('closed', () => { overlayWindow = null })
   overlayWindow = win
@@ -209,6 +223,7 @@ app.whenReady().then(async () => {
   setupCapture()
   setupHotkeys()
   setupTray()
+  setupScrollCapture(mainWindow, createOverlayWindow, getOverlayWindow, getOverlayDisplayId)
 
   // Auto-update
   if (!isDev) {
@@ -255,6 +270,16 @@ app.whenReady().then(async () => {
     return shell.openPath(normalized)
   })
   ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
+
+  // IPC: Overlay mode (scroll-region vs region)
+  // Do NOT reset here — React StrictMode double-mounts the overlay,
+  // causing a second call that would see 'region' instead of 'scroll-region'.
+  // Mode is reset in scroll-region:confirm / scroll-region:cancel / region:confirm / region:cancel.
+  ipcMain.handle('overlay:get-mode', () => {
+    const mode = getOverlayMode()
+    console.log('[overlay] get-mode →', mode)
+    return mode
+  })
 
   // IPC: Settings
   ipcMain.handle('hotkeys:get', () => getHotkeys())

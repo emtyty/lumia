@@ -9,6 +9,9 @@ directories:
 files:
   - out/**/*
 
+asarUnpack:
+  - "node_modules/koffi/**"
+
 extraResources:
   - from: resources/tray
     to: tray

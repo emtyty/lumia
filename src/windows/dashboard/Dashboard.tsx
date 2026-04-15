@@ -2,9 +2,10 @@ import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import VideoRecorder from '../../components/VideoRecorder'
+import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
 import { UpdateNotification } from '../../components/UpdateNotification'
 
-type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
+type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
 type FilterType = 'all' | 'screenshot' | 'recording'
 
 // Map capture mode → hotkey action name (from electron/hotkeys.ts)
@@ -13,6 +14,7 @@ const MODE_ACTION: Record<CaptureMode, string> = {
   window: 'ActiveWindow',
   fullscreen: 'PrintScreen',
   'active-monitor': 'ActiveMonitor',
+  scrolling: 'ScrollingCapture',
 }
 
 const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
@@ -70,6 +72,7 @@ export default function Dashboard() {
   const navigate = useNavigate()
   const [recentItems, setRecentItems] = useState<HistoryItem[]>([])
   const [showRecorder, setShowRecorder] = useState(false)
+  const [showScrollCapture, setShowScrollCapture] = useState(false)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterType>('all')
   const [searchFocused, setSearchFocused] = useState(false)
@@ -86,11 +89,13 @@ export default function Dashboard() {
 
     window.electronAPI?.onRecorderOpen(() => setShowRecorder(true))
     window.electronAPI?.onRecorderOpenGif(() => setShowRecorder(true))
+    window.electronAPI?.onScrollCaptureOpen(() => setShowScrollCapture(true))
 
     return () => {
       window.electronAPI?.removeAllListeners('capture:ready')
       window.electronAPI?.removeAllListeners('recorder:open')
       window.electronAPI?.removeAllListeners('recorder:open-gif')
+      window.electronAPI?.removeAllListeners('scroll-capture:open')
     }
   }, [navigate])
 
@@ -107,7 +112,9 @@ export default function Dashboard() {
   }, [])
 
   const handleCapture = async (mode: CaptureMode) => {
-    if (mode === 'region') {
+    if (mode === 'scrolling') {
+      await window.electronAPI?.startScrollCapture()
+    } else if (mode === 'region') {
       await window.electronAPI?.captureScreenshot('region')
     } else {
       const dataUrl = await window.electronAPI?.captureScreenshot(mode) as string
@@ -185,6 +192,28 @@ export default function Dashboard() {
               )
             })}
           </div>
+          {/* Scrolling capture — full width below the 2×2 grid */}
+          <button
+            onClick={() => handleCapture('scrolling')}
+            className="group flex items-center gap-3 px-3 py-3 mt-2 rounded-xl
+                       bg-white/[0.03] border border-white/[0.05]
+                       hover:bg-primary/[0.08] hover:border-primary/20
+                       active:scale-[0.98] transition-all duration-200 cursor-pointer w-full"
+          >
+            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0
+                            group-hover:bg-primary/20 transition-colors duration-200">
+              <span className="material-symbols-outlined text-primary text-lg">swipe_down</span>
+            </div>
+            <div className="text-left min-w-0">
+              <span
+                className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
+                style={{ fontFamily: 'Manrope, sans-serif' }}
+              >
+                Scrolling
+              </span>
+              {hotkeys.ScrollingCapture && <KeyCombo keys={parseShortcut(hotkeys.ScrollingCapture)} />}
+            </div>
+          </button>
         </div>
 
         {/* Video group */}
@@ -358,6 +387,7 @@ export default function Dashboard() {
       </section>
 
       {showRecorder && <VideoRecorder onClose={() => setShowRecorder(false)} />}
+      {showScrollCapture && <ScrollCaptureDialog onClose={() => setShowScrollCapture(false)} />}
     </div>
   )
 }

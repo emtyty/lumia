@@ -18,7 +18,16 @@
   "dependencies": {
     "electron-store": "^8.2.0",
     "electron-updater": "^6.6.2",
+    "fft.js": "^4.0.4",
+    "koffi": "^2.16.0",
     "uuid": "^10.0.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild",
+      "koffi"
+    ]
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.4",
@@ -28,7 +37,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.3.0",
     "dotenv": "^17.4.0",
-    "electron": "^33.0.0",
+    "electron": "^33.4.0",
     "electron-builder": "^25.0.0",
     "electron-vite": "^2.3.0",
     "konva": "^9.3.0",

@@ -55,11 +55,14 @@ export function setupCapture() {
 
   // Overlay sends confirmed rect back to main process
   ipcMain.handle('region:confirm', async (_e, rect: { x: number; y: number; width: number; height: number }) => {
+    const { resetOverlayMode } = await import('./scroll-capture')
+    resetOverlayMode()
     getOverlayWindow()?.close()
     return captureRect(rect)
   })
 
   ipcMain.handle('region:cancel', () => {
+    import('./scroll-capture').then(m => m.resetOverlayMode())
     getOverlayWindow()?.close()
     showMainWindow()
   })

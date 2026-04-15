@@ -44,6 +44,10 @@ export interface CanvasHandle {
   clear: () => void
   canUndo: boolean
   canRedo: boolean
+  zoomIn: () => void
+  zoomOut: () => void
+  zoomReset: () => void
+  zoomLevel: number
 }
 
 interface Props {
@@ -56,6 +60,7 @@ interface Props {
   /** Called whenever the undo/redo availability changes so the parent can
    *  reflect the state in its own UI (e.g. toolbar buttons). */
   onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void
+  onZoomChange?: (zoom: number) => void
 }
 
 let idCounter = 0
@@ -63,7 +68,7 @@ const uid = () => `obj-${++idCounter}-${Date.now()}`
 
 const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
   function AnnotationCanvas(
-    { imageDataUrl, tool, color, strokeWidth, onExport, exportTrigger, onHistoryChange },
+    { imageDataUrl, tool, color, strokeWidth, onExport, exportTrigger, onHistoryChange, onZoomChange },
     ref,
   ) {
     const [bgImage] = useImage(imageDataUrl)
@@ -80,6 +85,13 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const trRef = useRef<Konva.Transformer>(null)
     const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
 
+    // ── Zoom ────────────────────────────────────────────────────────────────
+    const [userZoom, setUserZoom] = useState(1)
+    const clampZoom = (z: number) => Math.max(0.1, Math.min(z, 5))
+    const zoomIn  = useCallback(() => setUserZoom(z => clampZoom(z + 0.1)), [])
+    const zoomOut = useCallback(() => setUserZoom(z => clampZoom(z - 0.1)), [])
+    const zoomReset = useCallback(() => setUserZoom(1), [])
+
     // ── History ───────────────────────────────────────────────────────────────
     const {
       state: objects,
@@ -92,8 +104,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     } = useHistory<DrawObject[]>([])
 
     // Expose imperative handle to parent
-    useImperativeHandle(ref, () => ({ undo, redo, clear, canUndo, canRedo }), [
-      undo, redo, clear, canUndo, canRedo,
+    useImperativeHandle(ref, () => ({ undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, zoomLevel: userZoom }), [
+      undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom,
     ])
 
     // Notify parent when undo/redo availability changes
@@ -124,10 +136,33 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const naturalW = bgImage?.width  ?? 800
     const naturalH = bgImage?.height ?? 600
 
-    // Fit to container, never enlarge beyond natural size
-    const scale = containerSize.w > 0 && containerSize.h > 0
-      ? Math.min((containerSize.w - 32) / naturalW, (containerSize.h - 32) / naturalH, 1)
+    // Base scale: fit image into container.
+    // For very tall images (scroll captures), fit to width only and allow vertical scrolling.
+    const isTallImage = naturalH / naturalW > 2
+    const baseScale = containerSize.w > 0 && containerSize.h > 0
+      ? isTallImage
+        ? Math.min((containerSize.w - 32) / naturalW, 1)
+        : Math.min((containerSize.w - 32) / naturalW, (containerSize.h - 32) / naturalH, 1)
       : 1
+
+    const scale = baseScale * userZoom
+
+    useEffect(() => { onZoomChange?.(userZoom) }, [userZoom, onZoomChange])
+
+    // Ctrl+Wheel zoom
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const onWheel = (e: WheelEvent) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault()
+          const delta = e.deltaY > 0 ? -0.05 : 0.05
+          setUserZoom(z => clampZoom(z + delta))
+        }
+      }
+      el.addEventListener('wheel', onWheel, { passive: false })
+      return () => el.removeEventListener('wheel', onWheel)
+    }, [])
 
     const stageWidth  = Math.round(naturalW * scale)
     const stageHeight = Math.round(naturalH * scale)
@@ -135,6 +170,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     // ── Export ────────────────────────────────────────────────────────────────
     useEffect(() => {
       if (exportTrigger > 0 && stageRef.current) {
+        // Always export at full natural resolution regardless of zoom level
         const dataUrl = stageRef.current.toDataURL({
           mimeType: 'image/png',
           pixelRatio: 1 / scale,
@@ -331,7 +367,18 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     )
 
     return (
-      <div ref={containerRef} className="w-full h-full flex items-center justify-center relative">
+      <div ref={containerRef} className="w-full h-full relative overflow-auto">
+        {/* Grid wrapper: centers stage when smaller than viewport,
+            grows to fit stage when larger → scrollable from top-left. */}
+        <div style={{
+          display: 'grid',
+          placeItems: 'center',
+          minWidth: '100%',
+          minHeight: '100%',
+          width: Math.max(stageWidth, 0),
+          height: Math.max(stageHeight, 0),
+          padding: 16,
+        }}>
         <Stage
           ref={stageRef}
           width={stageWidth}
@@ -353,6 +400,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             <Transformer ref={trRef} />
           </Layer>
         </Stage>
+        </div>
 
         {textInput && (
           <div

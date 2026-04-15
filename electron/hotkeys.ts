@@ -12,6 +12,7 @@ const defaultHotkeys: HotkeyConfig = {
   PrintScreen:       'Ctrl+Shift+3',
   ActiveWindow:      'Ctrl+Shift+2',
   ActiveMonitor:     'Ctrl+Shift+1',
+  ScrollingCapture:  'Ctrl+Shift+5',
   ScreenRecorder:    'Ctrl+Shift+R',
   ScreenRecorderGIF: 'Ctrl+Shift+G',
   StopScreenRecording: 'Ctrl+Shift+S',
@@ -56,7 +57,9 @@ const store = new Store<{ hotkeys: HotkeyConfig }>({
 })
 
 export function getHotkeys(): HotkeyConfig {
-  return store.get('hotkeys')
+  const saved = store.get('hotkeys')
+  // Merge defaults for any new actions not yet in the user's saved config
+  return { ...defaultHotkeys, ...saved }
 }
 
 export function saveHotkeys(hotkeys: HotkeyConfig) {
@@ -139,6 +142,12 @@ export function setupHotkeys() {
         source = (sources.length > 1 && idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
       }
       if (source) sendCaptureToEditor(source.thumbnail.toDataURL(), 'active-monitor')
+    }),
+    ScrollingCapture: withLock(async () => {
+      await hideMain()
+      const { setOverlayMode } = await import('./scroll-capture')
+      setOverlayMode('scroll-region')
+      createOverlayWindow()
     }),
     ScreenRecorder: () => {
       const win = getMainWindow()
