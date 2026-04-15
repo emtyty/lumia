@@ -6,6 +6,8 @@ interface ImportMetaEnv {
   readonly MAIN_VITE_R2_SECRET_ACCESS_KEY: string
   readonly MAIN_VITE_R2_BUCKET: string
   readonly MAIN_VITE_R2_PUBLIC_URL: string
+  readonly MAIN_VITE_GDRIVE_CLIENT_ID: string
+  readonly MAIN_VITE_GDRIVE_CLIENT_SECRET: string
 }
 
 interface ImportMeta {

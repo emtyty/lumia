@@ -265,7 +265,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('gdrive:startAuth', async () => {
     const { createServer } = await import('http')
     const { exchangeGoogleAuthCode } = await import('./uploaders/googledrive')
-    const { GDRIVE_CLIENT_ID: clientId, GDRIVE_CLIENT_SECRET: clientSecret } = await import('./gdrive-credentials')
+    const clientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
+    const clientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
 
     return new Promise<{ success: boolean; error?: string }>((resolve) => {
       const server = createServer(async (req, res) => {
