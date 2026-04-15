@@ -18,7 +18,7 @@ export class WorkflowEngine {
 
   constructor(private templateStore: TemplateStore) {}
 
-  async run(templateId: string, imageData: string): Promise<WorkflowResult> {
+  async run(templateId: string, imageData: string, destinationIndex?: number): Promise<WorkflowResult> {
     const template = this.templateStore.getById(templateId)
     if (!template) throw new Error(`Template not found: ${templateId}`)
 
@@ -52,14 +52,18 @@ export class WorkflowEngine {
       // 'annotate' is handled by the renderer before calling workflow:run
     }
 
-    // ── Upload phase (parallel) ──
-    if (template.destinations.length > 0) {
+    // ── Upload phase (parallel, or single if destinationIndex given) ──
+    const dests = destinationIndex !== undefined
+      ? [template.destinations[destinationIndex]].filter(Boolean)
+      : template.destinations
+
+    if (dests.length > 0) {
       const uploadResults = await Promise.allSettled(
-        template.destinations.map(dest => this.upload(dest, imageData))
+        dests.map(dest => this.upload(dest, imageData))
       )
 
       result.uploads = uploadResults.map((r, i) => {
-        const dest = template.destinations[i]
+        const dest = dests[i]
         if (r.status === 'fulfilled') return r.value
         return {
           destination: dest.type,
@@ -117,6 +121,21 @@ export class WorkflowEngine {
     getMainWindow()?.webContents.send('workflow:result', result)
 
     return result
+  }
+
+  async runInlineAction(actionType: 'clipboard' | 'save', imageData: string): Promise<void> {
+    if (actionType === 'clipboard') {
+      const img = nativeImage.createFromDataURL(imageData)
+      clipboard.writeImage(img)
+    } else if (actionType === 'save') {
+      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const filename = `capture-${ts}.png`
+      const dir = getSettings().defaultSavePath || join(homedir(), 'Pictures', 'Lumia')
+      await mkdir(dir, { recursive: true })
+      const filePath = join(dir, filename)
+      const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
+      await writeFile(filePath, Buffer.from(base64, 'base64'))
+    }
   }
 
   private async upload(dest: UploadDestination, imageData: string): Promise<UploadResult> {

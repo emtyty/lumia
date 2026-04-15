@@ -25,7 +25,8 @@ declare global {
       hideForRecording: () => Promise<void>
       showAfterRecording: () => Promise<void>
 
-      runWorkflow: (templateId: string, imageData: string) => Promise<import('./types').WorkflowResult>
+      runWorkflow: (templateId: string, imageData: string, destinationIndex?: number) => Promise<import('./types').WorkflowResult>
+      runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) => Promise<void>
       getTemplates: () => Promise<import('./types').WorkflowTemplate[]>
       saveTemplate: (template: import('./types').WorkflowTemplate) => Promise<import('./types').WorkflowTemplate>
       deleteTemplate: (id: string) => Promise<boolean>

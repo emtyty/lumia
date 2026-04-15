@@ -26,7 +26,7 @@ const store = new Store<AppSettings>({
     customUploadHeaders: {},
     customUploadFieldName: 'file',
     theme: 'dark',
-    activeWorkflowId: '',
+    activeWorkflowId: 'builtin-r2',
     lastSeenReleaseVersion: '',
     googleDriveRefreshToken: '',
     googleDriveAccessToken: '',

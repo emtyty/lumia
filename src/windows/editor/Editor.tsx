@@ -1,12 +1,59 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import AnnotationCanvas, {
   type CanvasHandle,
   Tool,
 } from '../../components/AnnotationCanvas/Canvas'
-import ShareDialog from '../../components/ShareDialog'
-import { WorkflowSelector } from '../../components/WorkflowSelector'
-import type { WorkflowTemplate, HistoryItem } from '../../types'
+import type { WorkflowTemplate, HistoryItem, AfterCaptureStep, UploadDestination } from '../../types'
+
+/** Map each step in the active workflow to a one-click action button */
+interface ActionBtn {
+  key: string               // unique id for React key & busy tracking
+  icon: string              // material icon
+  label: string             // button text
+  templateId: string        // which builtin/workflow to run
+  destinationIndex?: number // when set, only upload to this destination
+  primary?: boolean         // gradient style for upload destinations
+  actionType?: 'clipboard' | 'save' // inline action — skip runWorkflow
+}
+
+const DEST_META: Record<string, { icon: string; label: string }> = {
+  imgur:          { icon: 'link',         label: 'Imgur' },
+  'google-drive': { icon: 'add_to_drive', label: 'Google Drive' },
+  r2:            { icon: 'cloud_upload',  label: 'R2' },
+  custom:        { icon: 'upload',        label: 'Upload' },
+}
+
+function deriveActions(tpl: WorkflowTemplate | undefined): ActionBtn[] {
+  if (!tpl) return []
+  const btns: ActionBtn[] = []
+
+  // afterCapture steps → standalone quick actions
+  for (const step of tpl.afterCapture) {
+    if (step.type === 'clipboard') {
+      btns.push({ key: 'clipboard', icon: 'content_paste', label: 'Copy', templateId: tpl.id, actionType: 'clipboard' })
+    } else if (step.type === 'save') {
+      btns.push({ key: 'save', icon: 'save', label: 'Save', templateId: tpl.id, actionType: 'save' })
+    }
+    // 'annotate' is implicit in the editor — not a button
+  }
+
+  // destinations → each gets its own button, uploads only to that destination
+  for (let i = 0; i < tpl.destinations.length; i++) {
+    const dest = tpl.destinations[i]
+    const meta = DEST_META[dest.type] ?? { icon: 'cloud_upload', label: dest.type }
+    btns.push({
+      key: `dest-${i}-${dest.type}`,
+      icon: meta.icon,
+      label: meta.label,
+      templateId: tpl.id,
+      destinationIndex: i,
+      primary: true,
+    })
+  }
+
+  return btns
+}
 
 const TOOLS: { id: Tool; icon: string; label: string; key: string }[] = [
   { id: 'select',  icon: 'arrow_selector_tool', label: 'Select',    key: 'V' },
@@ -46,11 +93,11 @@ export default function Editor() {
   const [strokeWidth, setStrokeWidth] = useState(3)
   const [exportTrigger, setExportTrigger] = useState(0)
   const [exportedDataUrl, setExportedDataUrl] = useState<string>('')
-  const [showShareDialog, setShowShareDialog] = useState(false)
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
-  const [shareAction, setShareAction] = useState<'workflow' | 'direct'>('direct')
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string>('')
-  const [copyToast, setCopyToast] = useState(false)
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string>('')
+  const [toast, setToast] = useState<{ message: string; icon: string; type: 'success' | 'error' } | null>(null)
+  const [actionBusy, setActionBusy] = useState<string | null>(null)
+  const pendingAction = useRef<string | null>(null)
   const canvasRef = useRef<CanvasHandle>(null)
   const [canUndo, setCanUndo] = useState(false)
   const [canRedo, setCanRedo] = useState(false)
@@ -59,6 +106,13 @@ export default function Editor() {
     { id: string; dataUrl: string; name: string; timestamp: number }[]
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
+
+  const activeTemplate = useMemo(() => {
+    const found = templates.find(t => t.id === activeWorkflowId)
+    if (found) return found
+    return templates.find(t => t.id === 'builtin-r2') ?? templates[0]
+  }, [templates, activeWorkflowId])
+  const actionBtns = useMemo(() => deriveActions(activeTemplate), [activeTemplate])
 
   useEffect(() => {
     const state = location.state as { dataUrl?: string } | null
@@ -74,11 +128,8 @@ export default function Editor() {
       window.electronAPI?.getTemplates(),
       window.electronAPI?.getSettings(),
     ]).then(([t, s]) => {
-      if (!t) return
-      setTemplates(t)
-      const activeId = s?.activeWorkflowId
-      const defaultId = (activeId && t.find(x => x.id === activeId)) ? activeId : t[0]?.id
-      if (defaultId) setSelectedTemplateId(defaultId)
+      if (t) setTemplates(t)
+      if (s?.activeWorkflowId) setActiveWorkflowId(s.activeWorkflowId)
     })
     return () => { window.electronAPI?.removeAllListeners('capture:ready') }
   }, [])
@@ -113,13 +164,54 @@ export default function Editor() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  const handleExport = useCallback((dataUrl: string) => {
-    setExportedDataUrl(dataUrl)
-    setShowShareDialog(true)
-    setExportTrigger(0)
+  const showToast = useCallback((message: string, icon: string, type: 'success' | 'error' = 'success') => {
+    setToast({ message, icon, type })
+    setTimeout(() => setToast(null), 2500)
   }, [])
 
-  const triggerExport = () => setExportTrigger((n) => n + 1)
+  const handleExport = useCallback((dataUrl: string) => {
+    setExportedDataUrl(dataUrl)
+    setExportTrigger(0)
+    const pending = pendingAction.current
+    pendingAction.current = null
+    if (!pending) return
+
+    const { key, templateId, destinationIndex, actionType } = JSON.parse(pending) as {
+      key: string; templateId: string; destinationIndex?: number; actionType?: 'clipboard' | 'save'
+    }
+    setActionBusy(key)
+
+    if (actionType) {
+      // Inline action — run only clipboard or save via a minimal template call
+      window.electronAPI?.runInlineAction(actionType, dataUrl)
+        .then(() => {
+          showToast(actionType === 'clipboard' ? 'Copied to clipboard' : 'Saved to file', 'check_circle')
+        })
+        .catch(() => showToast('Action failed', 'error', 'error'))
+        .finally(() => setActionBusy(null))
+      return
+    }
+
+    window.electronAPI?.runWorkflow(templateId, dataUrl, destinationIndex)
+      .then((r) => {
+        if (r?.uploads?.some(u => u.url)) {
+          showToast('Uploaded — link copied', 'check_circle')
+        } else if (r?.copiedToClipboard) {
+          showToast('Copied to clipboard', 'check_circle')
+        } else if (r?.savedPath) {
+          showToast('Saved to file', 'check_circle')
+        } else {
+          showToast('Done', 'check_circle')
+        }
+      })
+      .catch(() => showToast('Action failed', 'error', 'error'))
+      .finally(() => setActionBusy(null))
+  }, [showToast])
+
+  const triggerAction = (key: string, templateId: string, destinationIndex?: number, actionType?: 'clipboard' | 'save') => {
+    pendingAction.current = JSON.stringify({ key, templateId, destinationIndex, actionType })
+    setExportTrigger((n) => n + 1)
+  }
 
   const handleHistoryChange = useCallback((u: boolean, r: boolean) => {
     setCanUndo(u)
@@ -171,10 +263,14 @@ export default function Editor() {
   return (
     <div className="h-full flex flex-col overflow-hidden">
       {/* ── Toast ── */}
-      {copyToast && (
-        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2.5 bg-secondary/20 backdrop-blur-xl border border-secondary/30 rounded-xl shadow-lg animate-slide-up">
-          <span className="material-symbols-outlined text-secondary text-sm">check_circle</span>
-          <span className="text-xs font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Copied to clipboard</span>
+      {toast && (
+        <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2.5 backdrop-blur-xl border rounded-xl shadow-lg animate-slide-up ${
+          toast.type === 'error'
+            ? 'bg-tertiary/20 border-tertiary/30'
+            : 'bg-secondary/20 border-secondary/30'
+        }`}>
+          <span className={`material-symbols-outlined text-sm ${toast.type === 'error' ? 'text-tertiary' : 'text-secondary'}`}>{toast.icon}</span>
+          <span className="text-xs font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>{toast.message}</span>
         </div>
       )}
 
@@ -183,10 +279,11 @@ export default function Editor() {
         {/* Back */}
         <button
           onClick={() => navigate('/dashboard')}
-          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all flex-shrink-0"
+          className="h-7 px-2 rounded-lg bg-white/5 hover:bg-white/10 flex items-center gap-1.5 text-slate-400 hover:text-white transition-all flex-shrink-0"
           title="Back to Dashboard"
         >
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
+          <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>Back</span>
         </button>
 
         <div className="w-px h-5 bg-white/10" />
@@ -315,23 +412,29 @@ export default function Editor() {
           <span className="material-symbols-outlined text-[16px]">photo_library</span>
         </button>
 
-        {/* Workflow selector */}
-        <WorkflowSelector
-          templates={templates}
-          selectedId={selectedTemplateId}
-          onSelect={setSelectedTemplateId}
-        />
+        {actionBtns.length > 0 && <div className="w-px h-5 bg-white/10" />}
 
-        {/* Run button */}
-        <button
-          onClick={() => { triggerExport(); setShareAction('workflow') }}
-          className="flex items-center gap-1.5 h-8 px-3.5 primary-gradient rounded-xl text-slate-900 font-bold text-[12px] hover:brightness-110 active:scale-95 transition-all shadow-[0_0_14px_rgba(182,160,255,0.25)] flex-shrink-0"
-          title="Run workflow"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          <span className="material-symbols-outlined text-[15px]" style={{ fontVariationSettings: "'FILL' 1" }}>play_arrow</span>
-          Run
-        </button>
+        {/* One-click action buttons derived from active workflow steps */}
+        {actionBtns.map((btn) => (
+          <button
+            key={btn.key}
+            onClick={() => triggerAction(btn.key, btn.templateId, btn.destinationIndex, btn.actionType)}
+            disabled={!!actionBusy}
+            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 ${
+              actionBusy === btn.key
+                ? 'bg-primary/20 text-primary'
+                : btn.primary
+                  ? 'bg-primary/10 hover:bg-primary/20 text-primary hover:text-white'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+            }`}
+            title={btn.label}
+          >
+            {actionBusy === btn.key
+              ? <div className="w-3.5 h-3.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
+              : <span className="material-symbols-outlined text-[16px]">{btn.icon}</span>
+            }
+          </button>
+        ))}
       </header>
 
       {/* ── Main area: canvas + clip panel ── */}
@@ -419,8 +522,7 @@ export default function Editor() {
                       onClick={(e) => {
                         e.stopPropagation()
                         window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)
-                        setCopyToast(true)
-                        setTimeout(() => setCopyToast(false), 2000)
+                        showToast('Copied to clipboard', 'check_circle')
                       }}
                       className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
                       title="Copy to clipboard"
@@ -435,14 +537,6 @@ export default function Editor() {
         )}
       </div>
 
-      {/* ── Share dialog ── */}
-      {showShareDialog && exportedDataUrl && (
-        <ShareDialog
-          imageDataUrl={exportedDataUrl}
-          templateId={shareAction === 'workflow' ? selectedTemplateId : undefined}
-          onClose={() => setShowShareDialog(false)}
-        />
-      )}
     </div>
   )
 }

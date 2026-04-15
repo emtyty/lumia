@@ -308,8 +308,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('workflow:getTemplates', () => templateStore.getAll())
   ipcMain.handle('workflow:saveTemplate', (_e, template) => templateStore.save(template))
   ipcMain.handle('workflow:deleteTemplate', (_e, id: string) => templateStore.delete(id))
-  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string) => {
-    return workflowEngine.run(templateId, imageData)
+  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string, destinationIndex?: number) => {
+    return workflowEngine.run(templateId, imageData, destinationIndex)
+  })
+  ipcMain.handle('workflow:inlineAction', async (_e, actionType: 'clipboard' | 'save', imageData: string) => {
+    return workflowEngine.runInlineAction(actionType, imageData)
   })
 
   // IPC: History

@@ -93,12 +93,15 @@ export function setupHotkeys() {
       createOverlayWindows()
     }),
     PrintScreen: withLock(async () => {
-      await hideMain()
       const { desktopCapturer, screen } = await import('electron')
+      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
       const cursorPoint = screen.getCursorScreenPoint()
       const allDisplays = screen.getAllDisplays()
       const d = screen.getDisplayNearestPoint(cursorPoint)
       const sf = d.scaleFactor
+
+      await hideMain()
+
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
@@ -123,13 +126,15 @@ export function setupHotkeys() {
       if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
     }),
     ActiveMonitor: withLock(async () => {
-      await hideMain()
       const { desktopCapturer, screen } = await import('electron')
+      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
       const cursorPoint = screen.getCursorScreenPoint()
       const allDisplays = screen.getAllDisplays()
       const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
       const { width, height } = activeDisplay.size
       const sf = activeDisplay.scaleFactor
+
+      await hideMain()
 
       const sources = await desktopCapturer.getSources({
         types: ['screen'],

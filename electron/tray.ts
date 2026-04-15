@@ -71,15 +71,25 @@ function buildMenu() {
       label: 'Capture Fullscreen',
       accelerator: 'Ctrl+Shift+3',
       click: async () => {
-        await hideMain()
         const { desktopCapturer, screen } = await import('electron')
-        const d = screen.getPrimaryDisplay()
+        // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
+        const cursorPoint = screen.getCursorScreenPoint()
+        const allDisplays = screen.getAllDisplays()
+        const d = screen.getDisplayNearestPoint(cursorPoint)
         const sf = d.scaleFactor
+
+        await hideMain()
+
         const sources = await desktopCapturer.getSources({
           types: ['screen'],
           thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
         })
-        sendCaptureToEditor(sources[0].thumbnail.toDataURL(), 'fullscreen')
+        let source = sources.find(s => s.display_id === String(d.id))
+        if (!source) {
+          const idx = allDisplays.findIndex(disp => disp.id === d.id)
+          source = (idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
+        }
+        sendCaptureToEditor(source.thumbnail.toDataURL(), 'fullscreen')
       }
     },
     {

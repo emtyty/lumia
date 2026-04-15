@@ -55,10 +55,12 @@ export function setupCapture() {
 
   // Overlay sends confirmed rect back to main process
   ipcMain.handle('region:confirm', async (_e, rect: { x: number; y: number; width: number; height: number }) => {
+    // Save display ID BEFORE closing overlays — closeAllOverlays() resets it to null
+    const displayId = getOverlayDisplayId()
     const { resetOverlayMode } = await import('./scroll-capture')
     resetOverlayMode()
     closeAllOverlays()
-    return captureRect(rect)
+    return captureRect(rect, displayId)
   })
 
   ipcMain.handle('region:cancel', () => {
@@ -69,14 +71,14 @@ export function setupCapture() {
 }
 
 async function captureFullscreen(): Promise<string> {
-  await hideMainWindow()
-
-  // Capture the display containing the cursor so multi-monitor users get the expected screen
+  // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
   const cursorPoint = screen.getCursorScreenPoint()
   const allDisplays = screen.getAllDisplays()
   const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
   const { width, height } = targetDisplay.size
   const scaleFactor = targetDisplay.scaleFactor
+
+  await hideMainWindow()
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
@@ -118,10 +120,10 @@ async function captureRegion(): Promise<void> {
   // Capture happens after overlay fires region:confirm
 }
 
-async function captureRect(rect: { x: number; y: number; width: number; height: number }): Promise<string> {
+async function captureRect(rect: { x: number; y: number; width: number; height: number }, displayId?: number | null): Promise<string> {
   // Use the display that the overlay was shown on — not always the primary display
   const allDisplays = screen.getAllDisplays()
-  const overlayId = getOverlayDisplayId()
+  const overlayId = displayId ?? getOverlayDisplayId()
   const targetDisplay = allDisplays.find(d => d.id === overlayId) ?? screen.getPrimaryDisplay()
   const { width, height } = targetDisplay.size
   const scaleFactor = targetDisplay.scaleFactor
@@ -148,13 +150,14 @@ async function captureRect(rect: { x: number; y: number; width: number; height: 
 
 
 async function captureActiveMonitor(): Promise<string> {
-  await hideMainWindow()
-
+  // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
   const cursorPoint = screen.getCursorScreenPoint()
   const allDisplays = screen.getAllDisplays()
   const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
   const { width, height } = activeDisplay.size
   const scaleFactor = activeDisplay.scaleFactor
+
+  await hideMainWindow()
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],

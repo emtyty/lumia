@@ -4,12 +4,12 @@ import type { WorkflowTemplate } from './types'
 import { homedir } from 'os'
 import { join } from 'path'
 
-const defaultSavePath = join(homedir(), 'Pictures', 'ShareAnywhere')
+const defaultSavePath = join(homedir(), 'Pictures', 'Lumia')
 
 const BUILT_IN: WorkflowTemplate[] = [
   {
     id: 'builtin-clipboard',
-    name: 'Quick Clipboard',
+    name: 'Copy to Clipboard',
     icon: 'content_paste',
     builtIn: true,
     afterCapture: [{ type: 'clipboard' }],
@@ -17,42 +17,18 @@ const BUILT_IN: WorkflowTemplate[] = [
     afterUpload: [{ type: 'notify' }]
   },
   {
-    id: 'builtin-save',
-    name: 'Save to Disk',
-    icon: 'save',
+    id: 'builtin-r2',
+    name: 'Save & Share Link',
+    icon: 'cloud_upload',
     builtIn: true,
     afterCapture: [
       { type: 'annotate' },
-      { type: 'save', path: defaultSavePath }
+      { type: 'save', path: defaultSavePath },
+      { type: 'clipboard' }
     ],
-    destinations: [],
-    afterUpload: [{ type: 'notify' }]
-  },
-  {
-    id: 'builtin-imgur',
-    name: 'Upload & Copy Link',
-    icon: 'link',
-    builtIn: true,
-    afterCapture: [{ type: 'annotate' }],
-    destinations: [{ type: 'imgur', clientId: '' }],
+    destinations: [{ type: 'r2' }, { type: 'google-drive' }],
     afterUpload: [
       { type: 'copyUrl', which: 'first' },
-      { type: 'notify' }
-    ]
-  },
-  {
-    id: 'builtin-fullshare',
-    name: 'Full Share',
-    icon: 'rocket_launch',
-    builtIn: true,
-    afterCapture: [
-      { type: 'annotate' },
-      { type: 'save', path: defaultSavePath }
-    ],
-    destinations: [{ type: 'imgur', clientId: '' }],
-    afterUpload: [
-      { type: 'copyUrl', which: 'first' },
-      { type: 'osShare' },
       { type: 'notify' }
     ]
   }
