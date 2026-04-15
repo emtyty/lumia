@@ -33,11 +33,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate icons
-        run: npm run icons
-
       - name: Build (electron-vite)
         run: npm run build
+        env:
+          MAIN_VITE_R2_ACCOUNT_ID: ${{ secrets.MAIN_VITE_R2_ACCOUNT_ID }}
+          MAIN_VITE_R2_ACCESS_KEY_ID: ${{ secrets.MAIN_VITE_R2_ACCESS_KEY_ID }}
+          MAIN_VITE_R2_SECRET_ACCESS_KEY: ${{ secrets.MAIN_VITE_R2_SECRET_ACCESS_KEY }}
+          MAIN_VITE_R2_BUCKET: ${{ secrets.MAIN_VITE_R2_BUCKET }}
+          MAIN_VITE_R2_PUBLIC_URL: ${{ secrets.MAIN_VITE_R2_PUBLIC_URL }}
+          MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
+          MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
       - name: Package & publish to GitHub Releases
         run: npx electron-builder --mac --publish always
@@ -59,7 +64,7 @@ jobs:
   # ── Windows ──────────────────────────────────────────────────────────────────
   release-win:
     environment: Production
-    
+
     name: Release · Windows
     runs-on: windows-latest
 
@@ -76,11 +81,16 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Generate icons
-        run: npm run icons
-
       - name: Build (electron-vite)
         run: npm run build
+        env:
+          MAIN_VITE_R2_ACCOUNT_ID: ${{ secrets.MAIN_VITE_R2_ACCOUNT_ID }}
+          MAIN_VITE_R2_ACCESS_KEY_ID: ${{ secrets.MAIN_VITE_R2_ACCESS_KEY_ID }}
+          MAIN_VITE_R2_SECRET_ACCESS_KEY: ${{ secrets.MAIN_VITE_R2_SECRET_ACCESS_KEY }}
+          MAIN_VITE_R2_BUCKET: ${{ secrets.MAIN_VITE_R2_BUCKET }}
+          MAIN_VITE_R2_PUBLIC_URL: ${{ secrets.MAIN_VITE_R2_PUBLIC_URL }}
+          MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
+          MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
       - name: Package & publish to GitHub Releases
         run: npx electron-builder --win --publish always
