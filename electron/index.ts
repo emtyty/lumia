@@ -98,11 +98,10 @@ export function createOverlayWindow(): BrowserWindow {
   const { width, height, x, y } = targetDisplay.bounds
   overlayDisplayId = targetDisplay.id
 
+  const displayBounds = { x, y, width, height }
+
   const win = new BrowserWindow({
-    x,
-    y,
-    width,
-    height,
+    ...displayBounds,
     transparent: true,
     backgroundColor: '#00000000',
     frame: false,
@@ -111,12 +110,20 @@ export function createOverlayWindow(): BrowserWindow {
     hasShadow: false,
     resizable: false,
     movable: false,
+    enableLargerThanScreen: true,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false
     }
   })
+
+  // On Windows, per-monitor DPI awareness can distort bounds when the overlay
+  // is created on a secondary display with a different scale factor.
+  // Force-setting bounds after construction corrects for DPI mis-conversion.
+  if (process.platform === 'win32') {
+    win.setBounds(displayBounds)
+  }
 
   win.setIgnoreMouseEvents(false)
   // 'pop-up-menu' is above all application windows but below macOS system UI
@@ -132,6 +139,12 @@ export function createOverlayWindow(): BrowserWindow {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
   }
+
+  // Re-apply bounds once the window is ready — handles edge cases where the
+  // compositor adjusts the frame between creation and first paint.
+  win.once('ready-to-show', () => {
+    if (!win.isDestroyed()) win.setBounds(displayBounds)
+  })
 
   win.on('closed', () => { overlayWindow = null })
   overlayWindow = win
