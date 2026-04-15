@@ -5,14 +5,12 @@
   "description": "A cross-platform screen capture, annotation, and sharing tool for Windows and macOS",
   "main": "out/main/index.js",
   "scripts": {
+    "icons": "node build/generate-icons.cjs",
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "pack": "npm run build && electron-builder --dir",
-    "pack:mac": "node scripts/unlock-keychain.js && npm run build && electron-builder --mac",
-    "pack:win": "npm run build && electron-builder --win",
-    "release:mac": "export GH_TOKEN=$(gh auth token) && node scripts/unlock-keychain.js && npm run build && electron-builder --mac --publish always -c.afterSign=scripts/notarize.js",
-    "release:win": "export GH_TOKEN=$(gh auth token) && npm run build && electron-builder --win --publish always",
+    "build:win": "electron-vite build && set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win",
+    "build:mac": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
     "postinstall": "electron-builder install-app-deps"
   },
   "dependencies": {
@@ -30,6 +28,7 @@
     ]
   },
   "devDependencies": {
+    "@electron/notarize": "^2.5.0",
     "@tailwindcss/vite": "^4.1.4",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",
@@ -41,6 +40,7 @@
     "electron-builder": "^25.0.0",
     "electron-vite": "^2.3.0",
     "konva": "^9.3.0",
+    "png2icons": "^2.0.1",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
     "react-konva": "^18.2.10",
