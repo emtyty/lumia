@@ -1,5 +1,5 @@
 import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard } from 'electron'
-import { getMainWindow, createOverlayWindow, getOverlayWindow, getHistoryStore, getOverlayDisplayId } from './index'
+import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId } from './index'
 
 export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
 
@@ -57,13 +57,13 @@ export function setupCapture() {
   ipcMain.handle('region:confirm', async (_e, rect: { x: number; y: number; width: number; height: number }) => {
     const { resetOverlayMode } = await import('./scroll-capture')
     resetOverlayMode()
-    getOverlayWindow()?.close()
+    closeAllOverlays()
     return captureRect(rect)
   })
 
   ipcMain.handle('region:cancel', () => {
     import('./scroll-capture').then(m => m.resetOverlayMode())
-    getOverlayWindow()?.close()
+    closeAllOverlays()
     showMainWindow()
   })
 }
@@ -114,7 +114,7 @@ async function captureWindow(): Promise<void> {
 
 async function captureRegion(): Promise<void> {
   await hideMainWindow()
-  createOverlayWindow()
+  createOverlayWindows()
   // Capture happens after overlay fires region:confirm
 }
 

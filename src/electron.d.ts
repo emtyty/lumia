@@ -62,6 +62,8 @@ declare global {
 
       confirmRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
       cancelRegion: () => Promise<void>
+      onOverlaySetActive: (cb: (active: boolean) => void) => void
+      overlayDrawing: (drawing: boolean) => void
 
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<void>

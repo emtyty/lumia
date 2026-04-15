@@ -1,7 +1,7 @@
 import { globalShortcut, app } from 'electron'
 import Store from 'electron-store'
 import { sendCaptureToEditor } from './capture'
-import { createOverlayWindow, getMainWindow, getOverlayWindow } from './index'
+import { createOverlayWindows, getMainWindow, getOverlayWindow } from './index'
 
 interface HotkeyConfig {
   [action: string]: string
@@ -90,7 +90,7 @@ export function setupHotkeys() {
   const handlers: Record<string, () => void> = {
     RectangleRegion: withLock(async () => {
       await hideMain()
-      createOverlayWindow()
+      createOverlayWindows()
     }),
     PrintScreen: withLock(async () => {
       await hideMain()
@@ -147,7 +147,7 @@ export function setupHotkeys() {
       await hideMain()
       const { setOverlayMode } = await import('./scroll-capture')
       setOverlayMode('scroll-region')
-      createOverlayWindow()
+      createOverlayWindows()
     }),
     ScreenRecorder: () => {
       const win = getMainWindow()

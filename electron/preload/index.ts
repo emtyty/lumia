@@ -102,6 +102,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   confirmRegion: (rect: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('region:confirm', rect),
   cancelRegion: () => ipcRenderer.invoke('region:cancel'),
+  onOverlaySetActive: (cb: (active: boolean) => void) => {
+    ipcRenderer.on('overlay:set-active', (_e, active) => cb(active))
+  },
+  overlayDrawing: (drawing: boolean) => ipcRenderer.send('overlay:drawing', drawing),
 
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

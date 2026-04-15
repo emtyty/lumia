@@ -1,6 +1,6 @@
 import { Tray, Menu, nativeImage, app } from 'electron'
 import { join } from 'path'
-import { getMainWindow, createOverlayWindow } from './index'
+import { getMainWindow, createOverlayWindows } from './index'
 import { sendCaptureToEditor } from './capture'
 import fs from 'fs'
 
@@ -64,7 +64,7 @@ function buildMenu() {
       accelerator: 'Ctrl+Shift+4',
       click: async () => {
         await hideMain()
-        createOverlayWindow()
+        createOverlayWindows()
       }
     },
     {
