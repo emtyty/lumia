@@ -1,0 +1,105 @@
+name: Release
+
+# Triggered by pushing a version tag, e.g.:
+#   git tag v1.0.0 && git push origin v1.0.0
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+# Allow the workflow to create a GitHub Release and upload assets
+permissions:
+  contents: write
+
+jobs:
+
+  # ── macOS ────────────────────────────────────────────────────────────────────
+  release-mac:
+    environment: Production
+
+    name: Release · macOS
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (electron-vite)
+        run: npm run build
+        env:
+          MAIN_VITE_R2_ACCOUNT_ID: ${{ secrets.MAIN_VITE_R2_ACCOUNT_ID }}
+          MAIN_VITE_R2_ACCESS_KEY_ID: ${{ secrets.MAIN_VITE_R2_ACCESS_KEY_ID }}
+          MAIN_VITE_R2_SECRET_ACCESS_KEY: ${{ secrets.MAIN_VITE_R2_SECRET_ACCESS_KEY }}
+          MAIN_VITE_R2_BUCKET: ${{ secrets.MAIN_VITE_R2_BUCKET }}
+          MAIN_VITE_R2_PUBLIC_URL: ${{ secrets.MAIN_VITE_R2_PUBLIC_URL }}
+          MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
+          MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
+
+      - name: Package & publish to GitHub Releases
+        run: npx electron-builder --mac --publish always
+        env:
+          # ── Publishing ──────────────────────────────────────────────────────
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # ── Code signing — Developer ID Application ─────────────────────────
+          # Export from Keychain as .p12, then: base64 -i cert.p12
+          # Store the output as the CSC_LINK secret.
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+
+          # ── Notarization ────────────────────────────────────────────────────
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+
+  # ── Windows ──────────────────────────────────────────────────────────────────
+  release-win:
+    environment: Production
+
+    name: Release · Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (electron-vite)
+        run: npm run build
+        env:
+          MAIN_VITE_R2_ACCOUNT_ID: ${{ secrets.MAIN_VITE_R2_ACCOUNT_ID }}
+          MAIN_VITE_R2_ACCESS_KEY_ID: ${{ secrets.MAIN_VITE_R2_ACCESS_KEY_ID }}
+          MAIN_VITE_R2_SECRET_ACCESS_KEY: ${{ secrets.MAIN_VITE_R2_SECRET_ACCESS_KEY }}
+          MAIN_VITE_R2_BUCKET: ${{ secrets.MAIN_VITE_R2_BUCKET }}
+          MAIN_VITE_R2_PUBLIC_URL: ${{ secrets.MAIN_VITE_R2_PUBLIC_URL }}
+          MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
+          MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
+
+      - name: Package & publish to GitHub Releases
+        run: npx electron-builder --win --publish always
+        env:
+          # ── Publishing ──────────────────────────────────────────────────────
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+          # ── Code signing — Windows certificate (.pfx) ───────────────────────
+          # Export cert as .pfx → base64-encode → store as WIN_CSC_LINK secret.
+          # If secrets are absent electron-builder produces an unsigned binary.
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}

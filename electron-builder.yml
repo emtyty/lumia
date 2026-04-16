@@ -1,16 +1,18 @@
-appId: com.lumia.app
+appId: com.creativeforce.lumia
 productName: Lumia
 copyright: Copyright © 2026 Lumia
 
-directories:
-  buildResources: resources
-  output: dist
+# ── Publish (GitHub Releases) ─────────────────────────────────────────────────
+# Requires GH_TOKEN env var (a GitHub personal-access token with repo scope).
+# Use --publish always  → upload on every build
+#     --publish onTag   → upload only when HEAD is a git tag (recommended for CI)
+publish:
+  provider: github
+  owner: emtyty
+  repo: lumia
 
 files:
   - out/**/*
-
-asarUnpack:
-  - "node_modules/koffi/**"
 
 extraResources:
   - from: resources/tray
@@ -19,26 +21,42 @@ extraResources:
       - "**/*.png"
       - "**/*.ico"
 
+directories:
+  buildResources: resources
+  output: release
+
+asarUnpack:
+  - "node_modules/koffi/**"
+
+# ── Windows ──────────────────────────────────────────────────────────────────
+# Code-signing — Standard (OV) or EV code signing certificate
+#
+#   Certificate types:
+#     OV (Organization Validated) — issued immediately; SmartScreen shows a
+#     warning until the app accumulates enough download reputation.
+#     EV (Extended Validation)    — requires a hardware USB token; SmartScreen
+#     warning is suppressed from the very first download.
+#
+#   Local build (build:win):
+#     electron-builder silently skips signing when WIN_CSC_LINK is absent.
+#     No env var or flag needed.
+#
+#   CI / GitHub Actions (release-win job):
+#     1. Export your certificate as a .pfx file.
+#     2. Base64-encode it:
+#          Windows: certutil -encode cert.pfx cert.b64  (then paste contents)
+#          macOS:   base64 -i cert.pfx | pbcopy
+#     3. Store as repository secrets:
+#          WIN_CSC_LINK:          base64-encoded .pfx content
+#          WIN_CSC_KEY_PASSWORD:  password set when exporting the .pfx
+
 win:
+  icon: resources/icons/win/icon.ico
+  signingHashAlgorithms: [sha256]
+  signDlls: false
   target:
     - target: nsis
-      arch: [x64]
-  icon: resources/icons/win/icon.ico
-
-mac:
-  target:
-    - target: dmg
-      arch: [universal]
-    - target: zip
-      arch: [universal]
-  artifactName: "${productName}-${version}-mac.${ext}"
-  icon: resources/icons/mac/icon.icns
-  category: public.app-category.graphics-design
-  darkModeSupport: true
-  hardenedRuntime: true
-  gatekeeperAssess: false
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+      arch: [x64, arm64]
 
 nsis:
   oneClick: false
@@ -46,13 +64,44 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
 
+# ── macOS ─────────────────────────────────────────────────────────────────────
+# Code-signing — Developer ID Application certificate
+#
+#   Local build (build:mac / build:all):
+#     CSC_IDENTITY_AUTO_DISCOVERY=false is set in the npm script, so
+#     electron-builder skips Keychain lookup and produces an unsigned .app.
+#     notarize.cjs detects the missing signature and exits cleanly.
+#
+#   CI / publish (publish:mac / publish:all):
+#     1. Export the "Developer ID Application" cert from Keychain as a .p12.
+#     2. Base64-encode it:  base64 -i cert.p12 | pbcopy
+#     3. Store as repo secrets, then set in the workflow:
+#          CSC_LINK:          ${{ secrets.CSC_LINK }}          # base64 .p12
+#          CSC_KEY_PASSWORD:  ${{ secrets.CSC_KEY_PASSWORD }}  # .p12 password
+#
+# afterSign runs after code-signing; build/notarize.cjs skips gracefully when
+# APPLE_* vars are absent (e.g. local builds without notarization credentials).
+afterSign: build/notarize.cjs
+
+mac:
+  icon: resources/icons/mac/icon.icns
+  category: public.app-category.graphics-design
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  darkModeSupport: true
+  target:
+    - target: dmg
+      arch: [x64, arm64]
+    - target: zip
+      arch: [x64, arm64]
+
+
+
 dmg:
-  artifactName: "${productName}.${ext}"
   window:
     width: 540
     height: 380
 
-publish:
-  provider: github
-  owner: haht-dev
-  repo: lumia-releases
+
