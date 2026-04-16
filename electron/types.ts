@@ -50,3 +50,44 @@ export interface HistoryItem {
   type: 'screenshot' | 'recording'
   uploads: UploadResult[]
 }
+
+// ── OCR & Auto-Blur ──────────────────────────────────────────────
+
+export interface OcrWord {
+  text: string
+  bbox: { x: number; y: number; width: number; height: number }
+  confidence: number
+}
+
+export type SensitiveCategory =
+  | 'email'
+  | 'phone'
+  | 'credit-card'
+  | 'ssn'
+  | 'api-key'
+  | 'jwt'
+  | 'private-key'
+  | 'password'
+  | 'bearer-token'
+  | 'ip-address'
+  | 'url-credentials'
+
+export interface SensitiveRegion {
+  id: string
+  category: SensitiveCategory
+  text: string
+  bbox: { x: number; y: number; width: number; height: number }
+}
+
+export interface AutoBlurResult {
+  regions: SensitiveRegion[]
+  ocrTimeMs: number
+  detectTimeMs: number
+}
+
+export interface AutoBlurSettings {
+  enabled: boolean
+  autoBlurOnCapture: 'off' | 'suggest' | 'auto-apply'
+  categories: Record<SensitiveCategory, boolean>
+  blurIntensity: number // 1-20 pixelation block size
+}

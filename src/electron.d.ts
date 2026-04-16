@@ -66,6 +66,10 @@ declare global {
       onOverlaySetActive: (cb: (active: boolean) => void) => void
       overlayDrawing: (drawing: boolean) => void
 
+      // OCR & Auto-Blur
+      ocrScan: (dataUrl: string) => Promise<import('@/types').AutoBlurResult>
+      ocrApplyBlur: (dataUrl: string, regions: import('@/types').SensitiveRegion[], blockSize?: number) => Promise<string>
+
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<void>
       showSaveDialog: (opts: unknown) => Promise<{ filePath?: string; canceled: boolean }>
