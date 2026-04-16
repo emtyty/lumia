@@ -865,78 +865,123 @@ footer a { color: var(--primary); text-decoration: none; }
 </div>
 
 <script>
-// Fetch latest release from GitHub and update all download links + version badge
+// Fetch latest release + detect OS/arch → wire up download buttons
 (function() {
   const REPO = 'emtyty/lumia';
   const API_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
 
-  fetch(API_URL)
-    .then(function(r) { if (!r.ok) throw new Error('no release'); return r.json(); })
-    .then(function(release) {
-      const tag = release.tag_name || '';
-      const version = tag.replace(/^v/, '');
-      const assets = release.assets || [];
+  const ua = navigator.userAgent;
+  const isMac     = /Mac|iPhone|iPad|iPod/i.test(ua);
+  const isWindows = /Win/i.test(ua);
 
-      const dmgAsset = assets.find(function(a) { return a.name.endsWith('.dmg'); });
-      const exeAsset = assets.find(function(a) { return a.name.endsWith('.exe'); });
+  // Hide all platform buttons immediately to avoid showing wrong OS buttons
+  document.querySelectorAll('[data-platform]').forEach(function(el) {
+    el.style.display = 'none';
+  });
 
-      const dmgUrl = dmgAsset ? dmgAsset.browser_download_url
-        : 'https://github.com/' + REPO + '/releases/latest/download/Lumia.dmg';
-      const exeUrl = exeAsset ? exeAsset.browser_download_url
-        : 'https://github.com/' + REPO + '/releases/latest/download/Lumia-Setup.exe';
+  // Detect CPU architecture. userAgentData is async but most accurate.
+  // Falls back to x64 — arm64 users on x64 build still works via Rosetta/emulation.
+  function detectArch() {
+    if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
+      return navigator.userAgentData
+        .getHighEntropyValues(['architecture'])
+        .then(function(hi) { return hi.architecture === 'arm' ? 'arm64' : 'x64'; })
+        .catch(function() { return 'x64'; });
+    }
+    // Heuristic fallback for browsers without userAgentData
+    if (/arm|aarch64/i.test(ua)) return Promise.resolve('arm64');
+    return Promise.resolve('x64');
+  }
 
-      // Update version badge
-      const badge = document.getElementById('version-badge');
-      if (badge && version) badge.textContent = 'Version ' + version + ' — Now Available';
-
-      // Update all mac/win download buttons
-      document.querySelectorAll('[data-platform="mac"]').forEach(function(el) {
-        el.href = dmgUrl;
+  // Pick the best matching asset. arm64 assets have "arm64" in the name;
+  // x64 assets typically do not.
+  function pickAsset(assets, ext, arch) {
+    if (arch === 'arm64') {
+      var hit = assets.find(function(a) {
+        return a.name.toLowerCase().indexOf('arm64') !== -1 && a.name.endsWith(ext);
       });
-      document.querySelectorAll('[data-platform="win"]').forEach(function(el) {
-        el.href = exeUrl;
-      });
+      if (hit) return hit;
+    }
+    // Default: first asset of this type without an arm64 suffix
+    return assets.find(function(a) {
+      return a.name.toLowerCase().indexOf('arm64') === -1 && a.name.endsWith(ext);
+    });
+  }
 
-      // Update nav CTA based on platform
-      applyPlatform(dmgUrl, exeUrl);
-    })
-    .catch(function() {
-      // API failed — fall back to platform detection with /latest/ URLs
-      applyPlatform(
-        'https://github.com/' + REPO + '/releases/latest/download/Lumia.dmg',
-        'https://github.com/' + REPO + '/releases/latest/download/Lumia-Setup.exe'
-      );
+  function fallbackUrl(ext, arch) {
+    var base = 'https://github.com/' + REPO + '/releases/latest/download/';
+    if (ext === '.dmg') return base + (arch === 'arm64' ? 'Lumia-arm64.dmg' : 'Lumia.dmg');
+    return base + (arch === 'arm64' ? 'Lumia-Setup-arm64.exe' : 'Lumia-Setup.exe');
+  }
+
+  function archLabel(arch) {
+    return arch === 'arm64' ? ' (Apple Silicon)' : ' (Intel)';
+  }
+
+  Promise.all([
+    fetch(API_URL).then(function(r) { if (!r.ok) throw new Error('no release'); return r.json(); }),
+    detectArch()
+  ]).then(function(results) {
+    var release = results[0];
+    var arch    = results[1];
+    var assets  = release.assets || [];
+    var version = (release.tag_name || '').replace(/^v/, '');
+
+    var dmgAsset = pickAsset(assets, '.dmg', arch);
+    var exeAsset = pickAsset(assets, '.exe', arch);
+    var dmgUrl   = dmgAsset ? dmgAsset.browser_download_url : fallbackUrl('.dmg', arch);
+    var exeUrl   = exeAsset ? exeAsset.browser_download_url : fallbackUrl('.exe', arch);
+
+    // Version badge
+    var badge = document.getElementById('version-badge');
+    if (badge && version) badge.textContent = 'Version ' + version + ' — Now Available';
+
+    // Update button hrefs + labels
+    document.querySelectorAll('[data-platform="mac"]').forEach(function(el) {
+      el.href = dmgUrl;
+      var txt = el.querySelector('span, strong');
+      if (!txt) txt = el.lastChild;
+      if (txt && txt.nodeType === 3) txt.textContent = 'macOS' + archLabel(arch) + ' (.dmg)';
+    });
+    document.querySelectorAll('[data-platform="win"]').forEach(function(el) {
+      el.href = exeUrl;
     });
 
-  function applyPlatform(dmgUrl, exeUrl) {
-    const ua = navigator.userAgent;
-    const isMac = /Mac|iPhone|iPad|iPod/i.test(ua);
-    const isWindows = /Win/i.test(ua);
-    const navLabel = document.querySelector('.nav-cta-label');
-    const navCta = document.getElementById('nav-cta');
+    applyPlatform(arch, dmgUrl, exeUrl);
+  }).catch(function() {
+    detectArch().then(function(arch) {
+      applyPlatform(arch, fallbackUrl('.dmg', arch), fallbackUrl('.exe', arch));
+    });
+  });
 
-    if (isWindows) {
-      ['hero-actions', 'cta-buttons'].forEach(function(id) { promoteButton(id, 'win'); });
+  function applyPlatform(arch, dmgUrl, exeUrl) {
+    var navLabel   = document.querySelector('.nav-cta-label');
+    var navCta     = document.getElementById('nav-cta');
+    var platformKey = isMac ? 'mac' : isWindows ? 'win' : null;
+
+    if (!platformKey) {
+      // Unknown OS — show all buttons as fallback
+      document.querySelectorAll('[data-platform]').forEach(function(el) {
+        el.style.display = '';
+      });
+      return;
+    }
+
+    // Show only the button matching the current OS
+    document.querySelectorAll('[data-platform="' + platformKey + '"]').forEach(function(el) {
+      el.style.display = '';
+      el.className = el.className.replace('btn-secondary', 'btn-primary');
+    });
+
+    if (isMac) {
+      if (navLabel) navLabel.textContent = 'Download for macOS' + archLabel(arch);
+      if (navCta)   navCta.href = dmgUrl;
+    } else {
       if (navLabel) navLabel.textContent = 'Download for Windows';
-      if (navCta) navCta.href = exeUrl;
-    } else if (isMac) {
-      if (navLabel) navLabel.textContent = 'Download for macOS';
-      if (navCta) navCta.href = dmgUrl;
+      if (navCta)   navCta.href = exeUrl;
     }
   }
 
-  function promoteButton(containerId, platformKey) {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    container.querySelectorAll('[data-platform]').forEach(function(btn) {
-      btn.className = btn.className.replace('btn-primary', 'btn-secondary');
-    });
-    const target = container.querySelector('[data-platform="' + platformKey + '"]');
-    if (target) {
-      target.className = target.className.replace('btn-secondary', 'btn-primary');
-      container.insertBefore(target, container.firstElementChild);
-    }
-  }
 })();
 
 // Scroll reveal
