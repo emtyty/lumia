@@ -488,7 +488,7 @@ footer a { color: var(--primary); text-decoration: none; }
       <li><a href="#workflow">Workflow</a></li>
       <li><a href="#tech">Tech Stack</a></li>
     </ul>
-    <a href="https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia.dmg" target="_blank" rel="noopener" class="nav-cta" id="nav-cta">
+    <a href="https://github.com/emtyty/lumia/releases/latest/download/Lumia.dmg" target="_blank" rel="noopener" class="nav-cta" id="nav-cta">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       <span class="nav-cta-label">Download for macOS</span>
     </a>
@@ -500,18 +500,18 @@ footer a { color: var(--primary); text-decoration: none; }
   <div class="hero-content">
     <div class="hero-badge">
       <span class="dot"></span>
-      Version 1.0.2 — Now Available
+      <span id="version-badge">Latest Version — Now Available</span>
     </div>
     <h1>Capture. Annotate.<br><span class="gradient">Share Anywhere.</span></h1>
     <p class="hero-sub">
       A blazing-fast screen capture tool with built-in annotation editor, video recorder, and workflow engine. One app for screenshots, recordings, and instant sharing.
     </p>
     <div class="hero-actions" id="hero-actions">
-      <a href="https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia.dmg" target="_blank" rel="noopener" class="btn-primary" data-platform="mac">
+      <a href="https://github.com/emtyty/lumia/releases/latest/download/Lumia.dmg" target="_blank" rel="noopener" class="btn-primary" data-platform="mac">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z"/><path d="M12 7c-1.4 0-2.5.9-3 2-.5-1.1-1.6-2-3-2"/><path d="M9 22c1.1-3 1.5-5.5 1.5-9"/></svg>
         macOS (.dmg)
       </a>
-      <a href="https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia-Setup-1.0.2.exe" target="_blank" rel="noopener" class="btn-secondary" data-platform="win">
+      <a href="https://github.com/emtyty/lumia/releases/latest/download/Lumia-Setup.exe" target="_blank" rel="noopener" class="btn-secondary" data-platform="win">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 3 0 18"/><path d="m3 9 18 0"/></svg>
         Windows (.exe)
       </a>
@@ -842,11 +842,11 @@ footer a { color: var(--primary); text-decoration: none; }
       <h2>Ready to capture<br><span class="gradient">everything?</span></h2>
       <p>Free, open-source, and built for speed. Download Lumia and take control of your screen.</p>
       <div class="cta-buttons" id="cta-buttons">
-        <a href="https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia.dmg" target="_blank" rel="noopener" class="btn-primary" data-platform="mac">
+        <a href="https://github.com/emtyty/lumia/releases/latest/download/Lumia.dmg" target="_blank" rel="noopener" class="btn-primary" data-platform="mac">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           macOS (.dmg)
         </a>
-        <a href="https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia-Setup-1.0.2.exe" target="_blank" rel="noopener" class="btn-secondary" data-platform="win">
+        <a href="https://github.com/emtyty/lumia/releases/latest/download/Lumia-Setup.exe" target="_blank" rel="noopener" class="btn-secondary" data-platform="win">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           Windows (.exe)
         </a>
@@ -858,26 +858,77 @@ footer a { color: var(--primary); text-decoration: none; }
 <!-- Footer -->
 <footer>
   <div class="container">
-    <p>Built with Electron, React &amp; TypeScript &nbsp;&bull;&nbsp; <a href="https://github.com/haht-dev/lumia-releases" target="_blank" rel="noopener">GitHub</a> &nbsp;&bull;&nbsp; Free &amp; Open Source</p>
+    <p>Built with Electron, React &amp; TypeScript &nbsp;&bull;&nbsp; <a href="https://github.com/emtyty/lumia" target="_blank" rel="noopener">GitHub</a> &nbsp;&bull;&nbsp; Free &amp; Open Source</p>
   </div>
 </footer>
 
 </div>
 
 <script>
-// Platform detection — promote the matching OS button to primary
+// Fetch latest release from GitHub and update all download links + version badge
 (function() {
-  const ua = navigator.userAgent;
-  const isMac = /Mac|iPhone|iPad|iPod/i.test(ua);
-  const isWindows = /Win/i.test(ua);
+  const REPO = 'emtyty/lumia';
+  const API_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
 
-  const navLabel = document.querySelector('.nav-cta-label');
+  fetch(API_URL)
+    .then(function(r) { if (!r.ok) throw new Error('no release'); return r.json(); })
+    .then(function(release) {
+      const tag = release.tag_name || '';
+      const version = tag.replace(/^v/, '');
+      const assets = release.assets || [];
+
+      const dmgAsset = assets.find(function(a) { return a.name.endsWith('.dmg'); });
+      const exeAsset = assets.find(function(a) { return a.name.endsWith('.exe'); });
+
+      const dmgUrl = dmgAsset ? dmgAsset.browser_download_url
+        : 'https://github.com/' + REPO + '/releases/latest/download/Lumia.dmg';
+      const exeUrl = exeAsset ? exeAsset.browser_download_url
+        : 'https://github.com/' + REPO + '/releases/latest/download/Lumia-Setup.exe';
+
+      // Update version badge
+      const badge = document.getElementById('version-badge');
+      if (badge && version) badge.textContent = 'Version ' + version + ' — Now Available';
+
+      // Update all mac/win download buttons
+      document.querySelectorAll('[data-platform="mac"]').forEach(function(el) {
+        el.href = dmgUrl;
+      });
+      document.querySelectorAll('[data-platform="win"]').forEach(function(el) {
+        el.href = exeUrl;
+      });
+
+      // Update nav CTA based on platform
+      applyPlatform(dmgUrl, exeUrl);
+    })
+    .catch(function() {
+      // API failed — fall back to platform detection with /latest/ URLs
+      applyPlatform(
+        'https://github.com/' + REPO + '/releases/latest/download/Lumia.dmg',
+        'https://github.com/' + REPO + '/releases/latest/download/Lumia-Setup.exe'
+      );
+    });
+
+  function applyPlatform(dmgUrl, exeUrl) {
+    const ua = navigator.userAgent;
+    const isMac = /Mac|iPhone|iPad|iPod/i.test(ua);
+    const isWindows = /Win/i.test(ua);
+    const navLabel = document.querySelector('.nav-cta-label');
+    const navCta = document.getElementById('nav-cta');
+
+    if (isWindows) {
+      ['hero-actions', 'cta-buttons'].forEach(function(id) { promoteButton(id, 'win'); });
+      if (navLabel) navLabel.textContent = 'Download for Windows';
+      if (navCta) navCta.href = exeUrl;
+    } else if (isMac) {
+      if (navLabel) navLabel.textContent = 'Download for macOS';
+      if (navCta) navCta.href = dmgUrl;
+    }
+  }
 
   function promoteButton(containerId, platformKey) {
     const container = document.getElementById(containerId);
     if (!container) return;
-    const allBtns = container.querySelectorAll('[data-platform]');
-    allBtns.forEach(btn => {
+    container.querySelectorAll('[data-platform]').forEach(function(btn) {
       btn.className = btn.className.replace('btn-primary', 'btn-secondary');
     });
     const target = container.querySelector('[data-platform="' + platformKey + '"]');
@@ -886,17 +937,6 @@ footer a { color: var(--primary); text-decoration: none; }
       container.insertBefore(target, container.firstElementChild);
     }
   }
-
-  const navCta = document.getElementById('nav-cta');
-  if (isWindows) {
-    ['hero-actions', 'cta-buttons'].forEach(id => promoteButton(id, 'win'));
-    if (navLabel) navLabel.textContent = 'Download for Windows';
-    if (navCta) navCta.href = 'https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia-Setup-1.0.2.exe';
-  } else if (isMac) {
-    if (navLabel) navLabel.textContent = 'Download for macOS';
-    if (navCta) navCta.href = 'https://github.com/haht-dev/lumia-releases/releases/download/v1.0.2/Lumia.dmg';
-  }
-  // Default (unknown/other): macOS stays primary
 })();
 
 // Scroll reveal
