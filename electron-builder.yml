@@ -1,4 +1,4 @@
-appId: com.creativeforce.lumia
+appId: com.lumia.app
 productName: Lumia
 copyright: Copyright © 2026 Lumia
 
@@ -10,6 +10,7 @@ publish:
   provider: github
   owner: emtyty
   repo: lumia
+  releaseType: release
 
 files:
   - out/**/*
