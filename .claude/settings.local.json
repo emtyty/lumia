@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(mempalace:mine)",
+      "Skill(mempalace:mine:*)",
+      "mcp__plugin_mempalace_mempalace__mempalace_status",
+      "mcp__plugin_mempalace_mempalace__mempalace_get_taxonomy",
+      "mcp__plugin_mempalace_mempalace__mempalace_get_aaak_spec",
+      "mcp__plugin_mempalace_mempalace__mempalace_add_drawer",
+      "mcp__plugin_mempalace_mempalace__mempalace_diary_write"
+    ]
+  }
+}
