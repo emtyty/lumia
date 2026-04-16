@@ -1,6 +1,8 @@
 import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 
+type ThemeMode = 'dark' | 'light' | 'system'
+
 const NAV_ITEMS = [
   { to: '/dashboard', icon: 'space_dashboard', label: 'Dashboard' },
   { to: '/history',   icon: 'history',          label: 'History' },
@@ -8,31 +10,57 @@ const NAV_ITEMS = [
   { to: '/settings',  icon: 'settings',         label: 'Settings' },
 ]
 
+function resolveTheme(mode: ThemeMode): 'dark' | 'light' {
+  if (mode === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+  }
+  return mode
+}
+
 export function Sidebar() {
-  const [theme, setTheme] = useState<'dark' | 'light'>('dark')
+  const [themeMode, setThemeMode] = useState<ThemeMode>('system')
 
-  useEffect(() => {
-    window.electronAPI?.getSettings().then(s => {
-      applyTheme(s.theme ?? 'dark')
-      setTheme(s.theme ?? 'dark')
-    })
-  }, [])
-
-  const applyTheme = (t: 'dark' | 'light') => {
-    if (t === 'light') {
+  const applyTheme = (resolved: 'dark' | 'light') => {
+    if (resolved === 'light') {
       document.documentElement.classList.add('light')
     } else {
       document.documentElement.classList.remove('light')
     }
   }
 
-  const toggleTheme = async () => {
-    const next = theme === 'dark' ? 'light' : 'dark'
-    applyTheme(next)
-    setTheme(next)
+  useEffect(() => {
+    window.electronAPI?.getSettings().then(s => {
+      const mode = s.theme ?? 'system'
+      setThemeMode(mode)
+      applyTheme(resolveTheme(mode))
+      window.electronAPI?.setTitleBarTheme(mode)
+    })
+  }, [])
+
+  // Listen for OS theme changes when mode is 'system'
+  useEffect(() => {
+    if (themeMode !== 'system') return
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => {
+      applyTheme(e.matches ? 'dark' : 'light')
+      window.electronAPI?.setTitleBarTheme('system')
+    }
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [themeMode])
+
+  const cycleTheme = async () => {
+    const order: ThemeMode[] = ['dark', 'light', 'system']
+    const idx = order.indexOf(themeMode)
+    const next = order[(idx + 1) % order.length]
+    setThemeMode(next)
+    applyTheme(resolveTheme(next))
     await window.electronAPI?.setSetting('theme', next)
     window.electronAPI?.setTitleBarTheme(next)
   }
+
+  const themeIcon = themeMode === 'dark' ? 'dark_mode' : themeMode === 'light' ? 'light_mode' : 'contrast'
+  const themeLabel = themeMode === 'dark' ? 'Dark' : themeMode === 'light' ? 'Light' : 'System'
 
   const handleCapture = async () => {
     await window.electronAPI?.captureScreenshot('region')
@@ -92,12 +120,12 @@ export function Sidebar() {
             <p className="text-[9px] text-slate-500 uppercase tracking-widest font-bold">Ready</p>
           </div>
           <button
-            onClick={toggleTheme}
+            onClick={cycleTheme}
             className="w-8 h-8 rounded-xl bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all flex-shrink-0"
-            title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+            title={`Theme: ${themeLabel}`}
           >
             <span className="material-symbols-outlined text-[18px]">
-              {theme === 'dark' ? 'light_mode' : 'dark_mode'}
+              {themeIcon}
             </span>
           </button>
         </div>

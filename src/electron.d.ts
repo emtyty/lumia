@@ -6,7 +6,7 @@ interface AppSettings {
   customUploadUrl: string
   customUploadHeaders: Record<string, string>
   customUploadFieldName: string
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'system'
   activeWorkflowId: string
   googleDriveRefreshToken: string
   googleDriveAccessToken: string
@@ -51,7 +51,7 @@ declare global {
       toggleDevTools: () => Promise<void>
       reloadWindow: () => Promise<void>
       forceReloadWindow: () => Promise<void>
-      setTitleBarTheme: (theme: 'dark' | 'light') => Promise<void>
+      setTitleBarTheme: (theme: 'dark' | 'light' | 'system') => Promise<void>
       navigate: (route: string) => void
       onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => void
       onNavigate: (cb: (route: string, state?: Record<string, unknown>) => void) => void

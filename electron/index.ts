@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
@@ -621,11 +621,14 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Update titleBarOverlay colors when theme changes (Windows only)
-  ipcMain.handle('titlebar:setTheme', (_e, theme: 'dark' | 'light') => {
+  ipcMain.handle('titlebar:setTheme', (_e, theme: 'dark' | 'light' | 'system') => {
     if (process.platform !== 'win32' || !mainWindow) return
+    const resolved = theme === 'system'
+      ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+      : theme
     mainWindow.setTitleBarOverlay({
-      color: theme === 'light' ? '#f6f6fb' : '#050810',
-      symbolColor: theme === 'light' ? '#2d2f33' : '#94a3b8',
+      color: resolved === 'light' ? '#f6f6fb' : '#050810',
+      symbolColor: resolved === 'light' ? '#2d2f33' : '#94a3b8',
       height: 40
     })
   })

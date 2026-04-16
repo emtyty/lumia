@@ -6,7 +6,7 @@ interface AppSettings {
   customUploadUrl: string
   customUploadHeaders: Record<string, string>
   customUploadFieldName: string
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'system'
   googleDriveRefreshToken: string
   googleDriveAccessToken: string
   googleDriveTokenExpiresAt: number
@@ -19,7 +19,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   customUploadUrl: '',
   customUploadHeaders: {},
   customUploadFieldName: 'file',
-  theme: 'dark',
+  theme: 'system',
   googleDriveRefreshToken: '',
   googleDriveAccessToken: '',
   googleDriveTokenExpiresAt: 0,
@@ -98,6 +98,7 @@ export default function Settings() {
   }
 
   const NAV_ITEMS = [
+    { id: 'appearance', icon: 'palette', label: 'Appearance' },
     { id: 'capture', icon: 'add_a_photo', label: 'Capture' },
     { id: 'imgur', icon: 'image', label: 'Imgur' },
     { id: 'gdrive', icon: 'add_to_drive', label: 'Google Drive' },
@@ -173,6 +174,36 @@ export default function Settings() {
           }}
         >
           <div className="max-w-xl space-y-6">
+
+            {/* Appearance */}
+            <Section id="appearance" title="Appearance" icon="palette">
+              <Field
+                label="Theme"
+                description="Choose how Lumia looks. System will automatically match your OS preference."
+              >
+                <div className="flex gap-2">
+                  {([
+                    { value: 'light' as const, icon: 'light_mode', label: 'Light' },
+                    { value: 'dark' as const, icon: 'dark_mode', label: 'Dark' },
+                    { value: 'system' as const, icon: 'contrast', label: 'System' },
+                  ]).map(opt => (
+                    <button
+                      key={opt.value}
+                      onClick={() => update('theme', opt.value)}
+                      className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
+                        settings.theme === opt.value
+                          ? 'bg-primary/15 text-primary border border-primary/30'
+                          : 'bg-white/5 text-slate-400 border border-white/10 hover:bg-white/10 hover:text-white'
+                      }`}
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      <span className="material-symbols-outlined text-sm">{opt.icon}</span>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </Field>
+            </Section>
 
             {/* Capture */}
             <Section id="capture" title="Capture" icon="add_a_photo">
