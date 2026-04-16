@@ -53,3 +53,6 @@ electron/gdrive-credentials.ts
 
 # electron-store data (user data, not source)
 # (stored in app.getPath('userData'), not in repo)
+
+# Claude Code local user settings (machine-specific, not shared)
+.claude/settings.local.json
