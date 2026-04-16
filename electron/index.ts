@@ -281,15 +281,21 @@ app.whenReady().then(async () => {
   })
 
   // Auto-update
+  autoUpdater.on('error', (err) => {
+    console.error('[autoUpdater] error:', err)
+  })
+  autoUpdater.on('checking-for-update', () => console.log('[autoUpdater] checking...'))
+  autoUpdater.on('update-available', (info) => console.log('[autoUpdater] update available:', info.version))
+  autoUpdater.on('update-not-available', () => console.log('[autoUpdater] up to date'))
+  autoUpdater.on('update-downloaded', (info) => {
+    mainWindow?.webContents.send('update:downloaded', info.version)
+  })
+
   if (!isDev) {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     autoUpdater.checkForUpdates()
   }
-
-  autoUpdater.on('update-downloaded', (info) => {
-    mainWindow?.webContents.send('update:downloaded', info.version)
-  })
   ipcMain.handle('update:install', () => {
     autoUpdater.quitAndInstall()
   })
