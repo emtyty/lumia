@@ -8,7 +8,7 @@ export interface AppSettings {
   customUploadUrl: string
   customUploadHeaders: Record<string, string>
   customUploadFieldName: string
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'system'
   activeWorkflowId: string
   lastSeenReleaseVersion: string
   googleDriveRefreshToken: string
@@ -25,8 +25,8 @@ const store = new Store<AppSettings>({
     customUploadUrl: '',
     customUploadHeaders: {},
     customUploadFieldName: 'file',
-    theme: 'dark',
-    activeWorkflowId: '',
+    theme: 'system',
+    activeWorkflowId: 'builtin-r2',
     lastSeenReleaseVersion: '',
     googleDriveRefreshToken: '',
     googleDriveAccessToken: '',

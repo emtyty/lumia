@@ -16,8 +16,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showAfterRecording: () => ipcRenderer.invoke('record:show'),
 
   // Workflow
-  runWorkflow: (templateId: string, imageData: string) =>
-    ipcRenderer.invoke('workflow:run', templateId, imageData),
+  runWorkflow: (templateId: string, imageData: string, destinationIndex?: number) =>
+    ipcRenderer.invoke('workflow:run', templateId, imageData, destinationIndex),
+  runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) =>
+    ipcRenderer.invoke('workflow:inlineAction', actionType, imageData),
   getTemplates: () => ipcRenderer.invoke('workflow:getTemplates'),
   saveTemplate: (template: unknown) => ipcRenderer.invoke('workflow:saveTemplate', template),
   deleteTemplate: (id: string) => ipcRenderer.invoke('workflow:deleteTemplate', id),
@@ -102,6 +104,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   confirmRegion: (rect: { x: number; y: number; width: number; height: number }) =>
     ipcRenderer.invoke('region:confirm', rect),
   cancelRegion: () => ipcRenderer.invoke('region:cancel'),
+  onOverlaySetActive: (cb: (active: boolean) => void) => {
+    ipcRenderer.on('overlay:set-active', (_e, active) => cb(active))
+  },
+  overlayDrawing: (drawing: boolean) => ipcRenderer.send('overlay:drawing', drawing),
 
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

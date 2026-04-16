@@ -17,11 +17,22 @@ export default function Overlay() {
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null)
   const [currentPos, setCurrentPos] = useState<{ x: number; y: number } | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
+  const [isActive, setIsActive] = useState(true)
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // Fetch the overlay mode from main process on mount
   useEffect(() => {
     window.electronAPI?.getOverlayMode().then(m => setMode(m))
+  }, [])
+
+  // Listen for active/inactive state from main process (multi-display support)
+  useEffect(() => {
+    window.electronAPI?.onOverlaySetActive((active: boolean) => {
+      setIsActive(active)
+    })
+    return () => {
+      window.electronAPI?.removeAllListeners('overlay:set-active')
+    }
   }, [])
 
   const getRect = (): Rect | null => {
@@ -49,9 +60,11 @@ export default function Overlay() {
   }, [handleKeyDown])
 
   const handleMouseDown = (e: React.MouseEvent) => {
+    if (!isActive) return
     setStartPos({ x: e.clientX, y: e.clientY })
     setCurrentPos({ x: e.clientX, y: e.clientY })
     setIsDrawing(true)
+    window.electronAPI?.overlayDrawing(true)
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
@@ -62,6 +75,7 @@ export default function Overlay() {
   const handleMouseUp = async () => {
     if (!isDrawing) return
     setIsDrawing(false)
+    window.electronAPI?.overlayDrawing(false)
     const rect = getRect()
     if (!rect || rect.width < 10 || rect.height < 10) return
     if (mode === 'scroll-region') {
@@ -81,7 +95,11 @@ export default function Overlay() {
     <div
       ref={overlayRef}
       className="fixed inset-0 select-none"
-      style={{ cursor: 'crosshair', background: 'rgba(0,0,0,0.35)' }}
+      style={{
+        cursor: isActive ? 'crosshair' : 'default',
+        background: isActive ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.55)',
+        transition: 'background 0.15s ease'
+      }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
@@ -96,8 +114,8 @@ export default function Overlay() {
           animation: scroll-region-border-pulse 1.5s ease-in-out infinite;
         }
       `}</style>
-      {/* Instruction hint */}
-      {!isDrawing && (
+      {/* Instruction hint — only on active overlay */}
+      {!isDrawing && isActive && (
         <div
           className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
           style={{ fontFamily: 'Manrope, sans-serif' }}

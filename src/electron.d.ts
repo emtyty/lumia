@@ -6,7 +6,7 @@ interface AppSettings {
   customUploadUrl: string
   customUploadHeaders: Record<string, string>
   customUploadFieldName: string
-  theme: 'dark' | 'light'
+  theme: 'dark' | 'light' | 'system'
   activeWorkflowId: string
   googleDriveRefreshToken: string
   googleDriveAccessToken: string
@@ -25,7 +25,8 @@ declare global {
       hideForRecording: () => Promise<void>
       showAfterRecording: () => Promise<void>
 
-      runWorkflow: (templateId: string, imageData: string) => Promise<import('./types').WorkflowResult>
+      runWorkflow: (templateId: string, imageData: string, destinationIndex?: number) => Promise<import('./types').WorkflowResult>
+      runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) => Promise<void>
       getTemplates: () => Promise<import('./types').WorkflowTemplate[]>
       saveTemplate: (template: import('./types').WorkflowTemplate) => Promise<import('./types').WorkflowTemplate>
       deleteTemplate: (id: string) => Promise<boolean>
@@ -50,7 +51,7 @@ declare global {
       toggleDevTools: () => Promise<void>
       reloadWindow: () => Promise<void>
       forceReloadWindow: () => Promise<void>
-      setTitleBarTheme: (theme: 'dark' | 'light') => Promise<void>
+      setTitleBarTheme: (theme: 'dark' | 'light' | 'system') => Promise<void>
       navigate: (route: string) => void
       onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => void
       onNavigate: (cb: (route: string, state?: Record<string, unknown>) => void) => void
@@ -62,6 +63,8 @@ declare global {
 
       confirmRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
       cancelRegion: () => Promise<void>
+      onOverlaySetActive: (cb: (active: boolean) => void) => void
+      overlayDrawing: (drawing: boolean) => void
 
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<void>

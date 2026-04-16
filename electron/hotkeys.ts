@@ -1,7 +1,7 @@
 import { globalShortcut, app } from 'electron'
 import Store from 'electron-store'
 import { sendCaptureToEditor } from './capture'
-import { createOverlayWindow, getMainWindow, getOverlayWindow } from './index'
+import { createOverlayWindows, getMainWindow, getOverlayWindow } from './index'
 
 interface HotkeyConfig {
   [action: string]: string
@@ -90,15 +90,18 @@ export function setupHotkeys() {
   const handlers: Record<string, () => void> = {
     RectangleRegion: withLock(async () => {
       await hideMain()
-      createOverlayWindow()
+      createOverlayWindows()
     }),
     PrintScreen: withLock(async () => {
-      await hideMain()
       const { desktopCapturer, screen } = await import('electron')
+      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
       const cursorPoint = screen.getCursorScreenPoint()
       const allDisplays = screen.getAllDisplays()
       const d = screen.getDisplayNearestPoint(cursorPoint)
       const sf = d.scaleFactor
+
+      await hideMain()
+
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
         thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
@@ -123,13 +126,15 @@ export function setupHotkeys() {
       if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
     }),
     ActiveMonitor: withLock(async () => {
-      await hideMain()
       const { desktopCapturer, screen } = await import('electron')
+      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
       const cursorPoint = screen.getCursorScreenPoint()
       const allDisplays = screen.getAllDisplays()
       const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
       const { width, height } = activeDisplay.size
       const sf = activeDisplay.scaleFactor
+
+      await hideMain()
 
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
@@ -147,7 +152,7 @@ export function setupHotkeys() {
       await hideMain()
       const { setOverlayMode } = await import('./scroll-capture')
       setOverlayMode('scroll-region')
-      createOverlayWindow()
+      createOverlayWindows()
     }),
     ScreenRecorder: () => {
       const win = getMainWindow()

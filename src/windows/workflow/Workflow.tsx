@@ -30,8 +30,15 @@ export default function Workflow() {
   const originalRef = useRef<WorkflowTemplate | null>(null)
 
   useEffect(() => {
-    window.electronAPI?.getTemplates().then(setTemplates)
-    window.electronAPI?.getSettings().then(s => setActiveId(s.activeWorkflowId ?? ''))
+    Promise.all([
+      window.electronAPI?.getTemplates(),
+      window.electronAPI?.getSettings(),
+    ]).then(([t, s]) => {
+      if (t) setTemplates(t)
+      const savedId = s?.activeWorkflowId ?? ''
+      const valid = t?.some(tmpl => tmpl.id === savedId)
+      setActiveId(valid ? savedId : 'builtin-r2')
+    })
   }, [])
 
   const isDirty = selected && !selected.builtIn &&

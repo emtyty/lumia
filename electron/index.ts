@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
@@ -26,13 +26,31 @@ const isDev = !app.isPackaged
 
 let mainWindow: BrowserWindow | null = null
 let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
-let overlayWindow: BrowserWindow | null = null
-let overlayDisplayId: number | null = null
+const overlayWindows: Map<number, BrowserWindow> = new Map()
+let activeOverlayDisplayId: number | null = null
+let overlayPollTimer: ReturnType<typeof setInterval> | null = null
+let overlayDrawingInProgress = false
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
-export function getOverlayWindow() { return overlayWindow }
-export function getOverlayDisplayId() { return overlayDisplayId }
+export function getOverlayWindow() {
+  if (activeOverlayDisplayId == null) return null
+  return overlayWindows.get(activeOverlayDisplayId) ?? null
+}
+export function getOverlayDisplayId() { return activeOverlayDisplayId }
+
+export function closeAllOverlays() {
+  if (overlayPollTimer) {
+    clearInterval(overlayPollTimer)
+    overlayPollTimer = null
+  }
+  overlayDrawingInProgress = false
+  for (const [, win] of overlayWindows) {
+    if (!win.isDestroyed()) win.close()
+  }
+  overlayWindows.clear()
+  activeOverlayDisplayId = null
+}
 
 const ICON_PATH = process.platform === 'win32'
   ? join(__dirname, '../../resources/icons/win/icon.ico')
@@ -86,69 +104,101 @@ function createMainWindow(): BrowserWindow {
   return win
 }
 
-export function createOverlayWindow(): BrowserWindow {
-  if (overlayWindow) {
-    overlayWindow.close()
-    overlayWindow = null
-  }
+export function createOverlayWindows(): void {
+  closeAllOverlays()
 
-  // Use the display containing the cursor — not always the primary display
+  const allDisplays = screen.getAllDisplays()
   const cursorPoint = screen.getCursorScreenPoint()
-  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
-  const { width, height, x, y } = targetDisplay.bounds
-  overlayDisplayId = targetDisplay.id
+  const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint)
+  activeOverlayDisplayId = cursorDisplay.id
 
-  const displayBounds = { x, y, width, height }
+  for (const display of allDisplays) {
+    const { x, y, width, height } = display.bounds
+    const displayBounds = { x, y, width, height }
+    const isActive = display.id === activeOverlayDisplayId
 
-  const win = new BrowserWindow({
-    ...displayBounds,
-    transparent: true,
-    backgroundColor: '#00000000',
-    frame: false,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    hasShadow: false,
-    resizable: false,
-    movable: false,
-    enableLargerThanScreen: true,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false
+    const win = new BrowserWindow({
+      ...displayBounds,
+      transparent: true,
+      backgroundColor: '#00000000',
+      frame: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+      hasShadow: false,
+      resizable: false,
+      movable: false,
+      enableLargerThanScreen: true,
+      webPreferences: {
+        preload: join(__dirname, '../preload/index.js'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+
+    // On Windows, per-monitor DPI awareness can distort bounds when the overlay
+    // is created on a secondary display with a different scale factor.
+    if (process.platform === 'win32') {
+      win.setBounds(displayBounds)
     }
-  })
 
-  // On Windows, per-monitor DPI awareness can distort bounds when the overlay
-  // is created on a secondary display with a different scale factor.
-  // Force-setting bounds after construction corrects for DPI mis-conversion.
-  if (process.platform === 'win32') {
-    win.setBounds(displayBounds)
+    // Inactive overlays pass mouse events through so cursor can reach active display
+    if (!isActive) {
+      win.setIgnoreMouseEvents(true, { forward: true })
+    } else {
+      win.setIgnoreMouseEvents(false)
+    }
+
+    win.setAlwaysOnTop(true, 'pop-up-menu')
+    win.setVisibleOnAllWorkspaces(true)
+
+    if (isDev) {
+      win.loadURL('http://localhost:5173/#/overlay')
+    } else {
+      win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
+    }
+
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed()) {
+        win.setBounds(displayBounds)
+        // Tell this overlay whether it's the active one
+        win.webContents.send('overlay:set-active', display.id === activeOverlayDisplayId)
+      }
+    })
+
+    win.on('closed', () => {
+      overlayWindows.delete(display.id)
+    })
+
+    overlayWindows.set(display.id, win)
   }
 
-  win.setIgnoreMouseEvents(false)
-  // 'pop-up-menu' is above all application windows but below macOS system UI
-  // (Stage Manager, Dock, menubar). Using 'screen-saver' (the old value) sits
-  // above ALL system UI, which forces macOS to hide Stage Manager while the
-  // overlay is visible and then snap it back in when the overlay closes —
-  // that "snap back" is the sidebar-appearing bug users see on macOS.
-  win.setAlwaysOnTop(true, 'pop-up-menu')
-  win.setVisibleOnAllWorkspaces(true)
+  // Poll cursor position to switch active overlay when mouse moves between displays
+  overlayPollTimer = setInterval(() => {
+    if (overlayDrawingInProgress) return // don't switch while user is drawing
 
-  if (isDev) {
-    win.loadURL('http://localhost:5173/#/overlay')
-  } else {
-    win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
-  }
+    const cursor = screen.getCursorScreenPoint()
+    const display = screen.getDisplayNearestPoint(cursor)
+    if (display.id !== activeOverlayDisplayId) {
+      const oldId = activeOverlayDisplayId
+      activeOverlayDisplayId = display.id
 
-  // Re-apply bounds once the window is ready — handles edge cases where the
-  // compositor adjusts the frame between creation and first paint.
-  win.once('ready-to-show', () => {
-    if (!win.isDestroyed()) win.setBounds(displayBounds)
-  })
+      // Deactivate old overlay
+      if (oldId != null) {
+        const oldWin = overlayWindows.get(oldId)
+        if (oldWin && !oldWin.isDestroyed()) {
+          oldWin.webContents.send('overlay:set-active', false)
+          oldWin.setIgnoreMouseEvents(true, { forward: true })
+        }
+      }
 
-  win.on('closed', () => { overlayWindow = null })
-  overlayWindow = win
-  return win
+      // Activate new overlay
+      const newWin = overlayWindows.get(display.id)
+      if (newWin && !newWin.isDestroyed()) {
+        newWin.webContents.send('overlay:set-active', true)
+        newWin.setIgnoreMouseEvents(false)
+      }
+    }
+  }, 100)
 }
 
 function navigateTo(route: string) {
@@ -223,7 +273,12 @@ app.whenReady().then(async () => {
   setupCapture()
   setupHotkeys()
   setupTray()
-  setupScrollCapture(mainWindow, createOverlayWindow, getOverlayWindow, getOverlayDisplayId)
+  setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
+
+  // IPC: Overlay drawing state — lock active display while user is drawing
+  ipcMain.on('overlay:drawing', (_e, drawing: boolean) => {
+    overlayDrawingInProgress = drawing
+  })
 
   // Auto-update
   if (!isDev) {
@@ -253,8 +308,11 @@ app.whenReady().then(async () => {
   ipcMain.handle('workflow:getTemplates', () => templateStore.getAll())
   ipcMain.handle('workflow:saveTemplate', (_e, template) => templateStore.save(template))
   ipcMain.handle('workflow:deleteTemplate', (_e, id: string) => templateStore.delete(id))
-  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string) => {
-    return workflowEngine.run(templateId, imageData)
+  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string, destinationIndex?: number) => {
+    return workflowEngine.run(templateId, imageData, destinationIndex)
+  })
+  ipcMain.handle('workflow:inlineAction', async (_e, actionType: 'clipboard' | 'save', imageData: string) => {
+    return workflowEngine.runInlineAction(actionType, imageData)
   })
 
   // IPC: History
@@ -563,11 +621,14 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Update titleBarOverlay colors when theme changes (Windows only)
-  ipcMain.handle('titlebar:setTheme', (_e, theme: 'dark' | 'light') => {
+  ipcMain.handle('titlebar:setTheme', (_e, theme: 'dark' | 'light' | 'system') => {
     if (process.platform !== 'win32' || !mainWindow) return
+    const resolved = theme === 'system'
+      ? (nativeTheme.shouldUseDarkColors ? 'dark' : 'light')
+      : theme
     mainWindow.setTitleBarOverlay({
-      color: theme === 'light' ? '#f6f6fb' : '#050810',
-      symbolColor: theme === 'light' ? '#2d2f33' : '#94a3b8',
+      color: resolved === 'light' ? '#f6f6fb' : '#050810',
+      symbolColor: resolved === 'light' ? '#2d2f33' : '#94a3b8',
       height: 40
     })
   })

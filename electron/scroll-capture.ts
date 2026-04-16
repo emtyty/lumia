@@ -1387,8 +1387,8 @@ export function setOverlayMode(mode: 'region' | 'scroll-region') {
 
 export function setupScrollCapture(
   mainWindow: BrowserWindow,
-  createOverlayWindow: () => void,
-  getOverlayWindow: () => BrowserWindow | null,
+  createOverlayWindows: () => void,
+  closeAllOverlays: () => void,
   getOverlayDisplayId: () => number | null
 ) {
   let cancelled = false
@@ -1415,7 +1415,7 @@ export function setupScrollCapture(
 
     // Tell overlay to use 'scroll-region' mode before creating it
     overlayMode = 'scroll-region'
-    createOverlayWindow()
+    createOverlayWindows()
     return { ok: true }
   })
 
@@ -1423,7 +1423,7 @@ export function setupScrollCapture(
   ipcMain.handle('scroll-region:confirm', async (_e, rect: { x: number; y: number; width: number; height: number }) => {
     const captureDisplayId = getOverlayDisplayId()
     resetOverlayMode()
-    getOverlayWindow()?.close()
+    closeAllOverlays()
 
     try {
       await sleep(150) // brief delay after overlay closes
@@ -1464,7 +1464,7 @@ export function setupScrollCapture(
   // Cancel from overlay (ESC key)
   ipcMain.handle('scroll-region:cancel', () => {
     resetOverlayMode()
-    getOverlayWindow()?.close()
+    closeAllOverlays()
     cancelled = true
     if (!mainWindow.isDestroyed()) {
       mainWindow.show()
