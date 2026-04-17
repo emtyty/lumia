@@ -18,6 +18,7 @@
     "electron-updater": "^6.6.2",
     "fft.js": "^4.0.4",
     "koffi": "^2.16.0",
+    "tesseract.js": "^7.0.0",
     "uuid": "^10.0.0"
   },
   "pnpm": {

@@ -4,7 +4,8 @@ import AnnotationCanvas, {
   type CanvasHandle,
   Tool,
 } from '../../components/AnnotationCanvas/Canvas'
-import type { WorkflowTemplate, HistoryItem, AfterCaptureStep, UploadDestination } from '../../types'
+import type { WorkflowTemplate, HistoryItem, AfterCaptureStep, UploadDestination, SensitiveRegion } from '../../types'
+import { AutoBlurPanel } from '../../components/AutoBlurPanel'
 
 /** Map each step in the active workflow to a one-click action button */
 interface ActionBtn {
@@ -107,6 +108,29 @@ export default function Editor() {
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
 
+  // Auto-blur state
+  const [showAutoBlur, setShowAutoBlur] = useState(false)
+  const [autoBlurScanning, setAutoBlurScanning] = useState(false)
+  const [autoBlurRegions, setAutoBlurRegions] = useState<SensitiveRegion[]>([])
+  const [autoBlurSelected, setAutoBlurSelected] = useState<Set<string>>(new Set())
+  const [autoBlurOcrTime, setAutoBlurOcrTime] = useState<number>()
+  const [autoBlurDetectTime, setAutoBlurDetectTime] = useState<number>()
+  const [autoBlurHistory, setAutoBlurHistory] = useState<string[]>([]) // stack of previous dataUrls for undo
+
+  const resetForNewImage = useCallback((dataUrl: string) => {
+    setImageDataUrl(dataUrl)
+    setExportTrigger(0)
+    canvasRef.current?.clear()
+    // Reset auto-blur state
+    setAutoBlurRegions([])
+    setAutoBlurSelected(new Set())
+    setAutoBlurHistory([])
+    setAutoBlurScanning(false)
+    setAutoBlurOcrTime(undefined)
+    setAutoBlurDetectTime(undefined)
+    setShowAutoBlur(false)
+  }, [])
+
   const activeTemplate = useMemo(() => {
     const found = templates.find(t => t.id === activeWorkflowId)
     if (found) return found
@@ -117,13 +141,12 @@ export default function Editor() {
   useEffect(() => {
     const state = location.state as { dataUrl?: string } | null
     if (state?.dataUrl) {
-      setImageDataUrl(state.dataUrl)
-      setExportTrigger(0)
+      resetForNewImage(state.dataUrl)
     }
   }, [location.state])
 
   useEffect(() => {
-    window.electronAPI?.onCaptureReady(({ dataUrl }) => { setExportTrigger(0); setImageDataUrl(dataUrl) })
+    window.electronAPI?.onCaptureReady(({ dataUrl }) => { resetForNewImage(dataUrl) })
     Promise.all([
       window.electronAPI?.getTemplates(),
       window.electronAPI?.getSettings(),
@@ -217,6 +240,60 @@ export default function Editor() {
     setCanUndo(u)
     setCanRedo(r)
   }, [])
+
+  // Auto-blur handlers
+  const handleAutoBlurScan = useCallback(async () => {
+    if (!imageDataUrl || autoBlurScanning) return
+    setAutoBlurScanning(true)
+    setShowAutoBlur(true)
+    try {
+      const result = await window.electronAPI?.ocrScan(imageDataUrl)
+      if (result) {
+        setAutoBlurRegions(result.regions)
+        setAutoBlurSelected(new Set(result.regions.map(r => r.id)))
+        setAutoBlurOcrTime(result.ocrTimeMs)
+        setAutoBlurDetectTime(result.detectTimeMs)
+        if (result.regions.length === 0) {
+          showToast('No sensitive info detected', 'verified_user')
+        }
+      }
+    } catch (err) {
+      showToast('OCR scan failed', 'error', 'error')
+    } finally {
+      setAutoBlurScanning(false)
+    }
+  }, [imageDataUrl, autoBlurScanning, showToast])
+
+  const handleApplyAutoBlur = useCallback(async () => {
+    const selected = autoBlurRegions.filter(r => autoBlurSelected.has(r.id))
+    if (selected.length === 0) return
+    try {
+      const blurred = await window.electronAPI?.ocrApplyBlur(imageDataUrl, selected, 10)
+      if (blurred) {
+        // Save current image for undo
+        setAutoBlurHistory(prev => [...prev, imageDataUrl])
+        setImageDataUrl(blurred)
+        setAutoBlurRegions([])
+        setAutoBlurSelected(new Set())
+        showToast(`Blurred ${selected.length} region${selected.length > 1 ? 's' : ''}`, 'blur_on')
+      }
+    } catch {
+      showToast('Failed to apply blur', 'error', 'error')
+    }
+  }, [autoBlurRegions, autoBlurSelected, imageDataUrl, showToast])
+
+  const handleAutoBlurUndo = useCallback(() => {
+    setAutoBlurHistory(prev => {
+      if (prev.length === 0) return prev
+      const next = [...prev]
+      const restored = next.pop()!
+      setImageDataUrl(restored)
+      setAutoBlurRegions([])
+      setAutoBlurSelected(new Set())
+      showToast('Blur undone', 'undo')
+      return next
+    })
+  }, [showToast])
 
   /* ── Empty state ── */
   if (!imageDataUrl) {
@@ -401,6 +478,18 @@ export default function Editor() {
         </button>
 
         <button
+          onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
+            showAutoBlur
+              ? 'bg-red-500/20 text-red-400'
+              : 'bg-white/5 text-slate-400 hover:text-red-400 hover:bg-red-500/10'
+          }`}
+          title="Auto-blur sensitive info"
+        >
+          <span className="material-symbols-outlined text-[16px]">security</span>
+        </button>
+
+        <button
           onClick={() => setShowClipPanel(p => !p)}
           className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
             showClipPanel
@@ -472,6 +561,30 @@ export default function Editor() {
 
         </div>
 
+        {/* ── Auto-blur panel ── */}
+        {showAutoBlur && (
+          <aside className="w-60 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
+            <AutoBlurPanel
+              regions={autoBlurRegions}
+              selectedIds={autoBlurSelected}
+              scanning={autoBlurScanning}
+              canUndo={autoBlurHistory.length > 0}
+              ocrTimeMs={autoBlurOcrTime}
+              onToggleRegion={(id) => setAutoBlurSelected(prev => {
+                const next = new Set(prev)
+                next.has(id) ? next.delete(id) : next.add(id)
+                return next
+              })}
+              onSelectAll={() => setAutoBlurSelected(new Set(autoBlurRegions.map(r => r.id)))}
+              onDeselectAll={() => setAutoBlurSelected(new Set())}
+              onApplyBlur={handleApplyAutoBlur}
+              onScan={handleAutoBlurScan}
+              onUndo={handleAutoBlurUndo}
+              onClose={() => setShowAutoBlur(false)}
+            />
+          </aside>
+        )}
+
         {/* ── Clipboard history panel ── */}
         {showClipPanel && (
           <aside className="w-60 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
@@ -507,7 +620,7 @@ export default function Editor() {
                         ? 'bg-primary/10 border border-primary/20'
                         : 'bg-white/[0.02] hover:bg-white/[0.06] border border-transparent'
                     }`}
-                    onClick={() => { setExportTrigger(0); setImageDataUrl(item.dataUrl) }}
+                    onClick={() => { resetForNewImage(item.dataUrl) }}
                   >
                     <img
                       src={item.dataUrl}

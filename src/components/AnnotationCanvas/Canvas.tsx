@@ -286,12 +286,13 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             y={obj.y}
             width={obj.width}
             height={obj.height}
-            fill={obj.type === 'blur' ? 'rgba(0,0,0,0.5)' : 'transparent'}
-            stroke={obj.type === 'blur' ? undefined : obj.color}
-            strokeWidth={obj.type === 'blur' ? 0 : obj.strokeWidth}
+            fill={obj.type === 'blur' ? 'rgba(128,128,128,0.65)' : 'transparent'}
+            stroke={obj.type === 'blur' ? 'rgba(255,255,255,0.3)' : obj.color}
+            strokeWidth={obj.type === 'blur' ? 1 : obj.strokeWidth}
+            dash={obj.type === 'blur' ? [4, 4] : undefined}
+            cornerRadius={obj.type === 'blur' ? 2 : 0}
             draggable={tool === 'select'}
             onClick={() => !isPreview && setSelectedId(obj.id)}
-            filters={obj.type === 'blur' ? [] : undefined}
           />
         )
       }

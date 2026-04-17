@@ -7,6 +7,9 @@ export default defineConfig({
   main: {
     plugins: [externalizeDepsPlugin()],
     build: {
+      rollupOptions: {
+        external: ['node-windows-ocr']
+      },
       lib: {
         entry: resolve(__dirname, 'electron/index.ts')
       }

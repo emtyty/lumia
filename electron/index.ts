@@ -350,6 +350,16 @@ app.whenReady().then(async () => {
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => setSetting(key, value as AppSettings[typeof key]))
 
+  // IPC: OCR & Auto-Blur
+  ipcMain.handle('ocr:scan', async (_e, dataUrl: string) => {
+    const { scanForSensitiveData } = await import('./auto-blur')
+    return scanForSensitiveData(dataUrl)
+  })
+  ipcMain.handle('ocr:apply-blur', async (_e, dataUrl: string, regions: import('./types').SensitiveRegion[], blockSize?: number) => {
+    const { applyBlurToImage } = await import('./auto-blur')
+    return applyBlurToImage(dataUrl, regions, blockSize)
+  })
+
   // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
   ipcMain.handle('gdrive:startAuth', async () => {
     const { createServer } = await import('http')
