@@ -99,6 +99,18 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+      - name: Check Azure env presence
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:AZURE_TENANT_ID)) { throw "AZURE_TENANT_ID missing" }
+          if ([string]::IsNullOrWhiteSpace($env:AZURE_CLIENT_ID)) { throw "AZURE_CLIENT_ID missing" }
+          if ([string]::IsNullOrWhiteSpace($env:AZURE_CLIENT_SECRET)) { throw "AZURE_CLIENT_SECRET missing" }
+          Write-Host "Azure signing env vars are present."
+
       - name: Package, sign with Azure, and publish
         run: npx electron-builder --win --publish always
         env:
