@@ -9,7 +9,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "build:win": "electron-vite build && set CSC_IDENTITY_AUTO_DISCOVERY=false && electron-builder --win",
+    "build:win": "electron-vite build && electron-builder --win",
     "build:mac": "electron-vite build && CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --mac",
     "postinstall": "electron-builder install-app-deps"
   },
@@ -38,7 +38,7 @@
     "@vitejs/plugin-react": "^4.3.0",
     "dotenv": "^17.4.0",
     "electron": "^33.4.0",
-    "electron-builder": "^25.0.0",
+    "electron-builder": "^26.8.1",
     "electron-vite": "^2.3.0",
     "konva": "^9.3.0",
     "png2icons": "^2.0.1",

@@ -10,7 +10,7 @@ on:
 # Allow the workflow to create a GitHub Release and upload assets
 permissions:
   contents: write
-
+  id-token: write
 jobs:
 
   # ── macOS ────────────────────────────────────────────────────────────────────
@@ -92,17 +92,20 @@ jobs:
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
-      - name: Package & publish to GitHub Releases
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Package, sign with Azure, and publish
         run: npx electron-builder --win --publish always
         env:
-          # ── Publishing ──────────────────────────────────────────────────────
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-          # ── Code signing — Windows certificate (.pfx) ───────────────────────
-          # Export cert as .pfx → base64-encode → store as WIN_CSC_LINK secret.
-          # If secrets are absent electron-builder produces an unsigned binary.
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
   # ── Mark as latest ───────────────────────────────────────────────────────────
   mark-latest:

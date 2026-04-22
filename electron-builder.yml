@@ -53,11 +53,15 @@ asarUnpack:
 
 win:
   icon: resources/icons/win/icon.ico
-  signingHashAlgorithms: [sha256]
-  signDlls: false
   target:
     - target: nsis
       arch: [x64, arm64]
+
+  azureSignOptions:
+    publisherName: "CN=CreativeForce inc"
+    endpoint: "https://eus.codesigning.azure.net/"
+    codeSigningAccountName: "CreativeForce"
+    certificateProfileName: "sign-tools"
 
 nsis:
   oneClick: false
