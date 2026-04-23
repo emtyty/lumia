@@ -101,9 +101,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeAllListeners: (channel: string) => ipcRenderer.removeAllListeners(channel),
 
   // Overlay-specific
-  confirmRegion: (rect: { x: number; y: number; width: number; height: number }) =>
-    ipcRenderer.invoke('region:confirm', rect),
+  confirmRegion: (payload: { dataUrl: string; rect: { x: number; y: number; width: number; height: number } }) =>
+    ipcRenderer.invoke('region:confirm', payload),
   cancelRegion: () => ipcRenderer.invoke('region:cancel'),
+  getWindowAt: (x: number, y: number) => ipcRenderer.invoke('window-pick:get-window-at', x, y),
+  confirmWindowPick: (rect: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('window-pick:confirm', rect),
+  cancelWindowPick: () => ipcRenderer.invoke('window-pick:cancel'),
   onOverlaySetActive: (cb: (active: boolean) => void) => {
     ipcRenderer.on('overlay:set-active', (_e, active) => cb(active))
   },

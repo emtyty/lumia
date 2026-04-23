@@ -76,7 +76,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const containerRef = useRef<HTMLDivElement>(null)
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentObj, setCurrentObj] = useState<DrawObject | null>(null)
-    const [selectedId, setSelectedId] = useState<string | null>(null)
+    const [, setSelectedId] = useState<string | null>(null)
     const [textInput, setTextInput] = useState<{
       x: number; y: number; screenX: number; screenY: number
     } | null>(null)
@@ -220,7 +220,6 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     // ── Export ────────────────────────────────────────────────────────────────
     useEffect(() => {
       if (exportTrigger > 0 && stageRef.current) {
-        // Always export at full natural resolution regardless of zoom level
         const dataUrl = stageRef.current.toDataURL({
           mimeType: 'image/png',
           pixelRatio: 1 / scale,

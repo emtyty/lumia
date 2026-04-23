@@ -61,8 +61,11 @@ declare global {
       onRecorderStop: (cb: () => void) => void
       removeAllListeners: (channel: string) => void
 
-      confirmRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<string>
+      confirmRegion: (payload: { dataUrl: string; rect: { x: number; y: number; width: number; height: number } }) => Promise<void>
       cancelRegion: () => Promise<void>
+      getWindowAt: (x: number, y: number) => Promise<{ x: number; y: number; width: number; height: number } | null>
+      confirmWindowPick: (rect: { x: number; y: number; width: number; height: number }) => Promise<void>
+      cancelWindowPick: () => Promise<void>
       onOverlaySetActive: (cb: (active: boolean) => void) => void
       overlayDrawing: (drawing: boolean) => void
 

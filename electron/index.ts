@@ -1,9 +1,10 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
+import { registerOverlayHwnd, unregisterOverlayHwnd } from './native-input'
 import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
-import { setupScrollCapture, getOverlayMode, resetOverlayMode } from './scroll-capture'
+import { setupScrollCapture, getOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
@@ -16,16 +17,9 @@ log.transports.console.level = 'info'
 autoUpdater.logger = log
 Object.assign(console, log.functions)
 
-// Force legacy DXGI/GDI capturer instead of WGC on Windows.
-// appendSwitch with duplicate keys can be ignored; appendArgument always appends.
-// Covers: desktopCapturer (screenshots) + getUserMedia streams (video recording).
+// Enable WGC (Windows Graphics Capture) for pixel-perfect, high-quality screenshots on Windows.
 if (process.platform === 'win32') {
-  app.commandLine.appendArgument(
-    '--disable-features=WindowsNativeGraphicsCapture,' +
-    'WebRtcAllowWgcScreenCapturer,' +
-    'WebRtcAllowWgcWindowCapturer,' +
-    'WebRtcAllowWgcDesktopCapturer'
-  )
+  app.commandLine.appendSwitch('enable-features', 'WindowsNativeGraphicsCapture')
 }
 
 const isDev = !app.isPackaged
@@ -118,7 +112,7 @@ function createMainWindow(): BrowserWindow {
   return win
 }
 
-export function createOverlayWindows(): void {
+export function createOverlayWindows(): Map<number, BrowserWindow> {
   closeAllOverlays()
 
   const allDisplays = screen.getAllDisplays()
@@ -145,7 +139,7 @@ export function createOverlayWindows(): void {
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         contextIsolation: true,
-        nodeIntegration: false
+        nodeIntegration: false,
       }
     })
 
@@ -179,10 +173,29 @@ export function createOverlayWindows(): void {
       }
     })
 
+    win.once('ready-to-show', () => {
+      if (process.platform === 'win32') {
+        const hwnd = win.getNativeWindowHandle().readInt32LE(0)
+        registerOverlayHwnd(hwnd)
+      }
+    })
+
     win.on('closed', () => {
+      if (process.platform === 'win32') {
+        try {
+          const hwnd = win.getNativeWindowHandle().readInt32LE(0)
+          unregisterOverlayHwnd(hwnd)
+        } catch { /* window already destroyed */ }
+      }
       overlayWindows.delete(display.id)
     })
 
+    win.webContents.on('console-message', (_e, _level, msg) => {
+      if (msg.startsWith('[overlay]')) console.log(msg)
+    })
+    win.webContents.on('console-message', (_e, _level, msg) => {
+      if (msg.startsWith('[overlay]')) console.log(msg)
+    })
     overlayWindows.set(display.id, win)
   }
 
@@ -213,6 +226,8 @@ export function createOverlayWindows(): void {
       }
     }
   }, 100)
+
+  return overlayWindows
 }
 
 function navigateTo(route: string) {
@@ -282,6 +297,13 @@ if (process.platform === 'win32') {
 }
 
 app.whenReady().then(async () => {
+  // Allow getUserMedia desktop capture in all windows (needed for overlay region capture)
+  const { session } = await import('electron')
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === 'media') return callback(true)
+    callback(false)
+  })
+
   mainWindow = createMainWindow()
 
   setupCapture()

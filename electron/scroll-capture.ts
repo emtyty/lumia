@@ -1369,7 +1369,7 @@ async function captureScrollingInRect(
 
 // ── Overlay mode tracking ──────────────────────────────────────────────────
 
-let overlayMode: 'region' | 'scroll-region' = 'region'
+let overlayMode: 'region' | 'scroll-region' | 'window-pick' = 'region'
 
 export function getOverlayMode() {
   return overlayMode
@@ -1379,7 +1379,7 @@ export function resetOverlayMode() {
   overlayMode = 'region'
 }
 
-export function setOverlayMode(mode: 'region' | 'scroll-region') {
+export function setOverlayMode(mode: 'region' | 'scroll-region' | 'window-pick') {
   overlayMode = mode
 }
 

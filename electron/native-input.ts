@@ -32,6 +32,12 @@ let _WindowFromPoint: (pt: { x: number; y: number }) => any
 let _ScreenToClient: (hwnd: any, pt: { x: number; y: number }) => boolean
 let _ChildWindowFromPointEx: (hwnd: any, pt: { x: number; y: number }, flags: number) => any
 let _SetForegroundWindow: (hwnd: any) => boolean
+let _GetWindowRect: (hwnd: any, rect: any) => boolean
+let _GetAncestor: (hwnd: any, flags: number) => any
+let _IsWindowVisible: (hwnd: any) => boolean
+let _GetWindowLongW: (hwnd: any, index: number) => number
+let _EnumWindows: (callback: any, lParam: any) => boolean
+let _DwmGetWindowAttribute: (hwnd: any, attr: number, pvAttribute: any, cbAttribute: number) => number
 
 function ensureLoaded(): boolean {
   if (_loaded) return true
@@ -43,6 +49,7 @@ function ensureLoaded(): boolean {
 
     // Define POINT struct for WindowFromPoint / ScreenToClient
     const POINT = koffi.struct('POINT', { x: 'int', y: 'int' })
+    const RECT  = koffi.struct('RECT',  { left: 'int', top: 'int', right: 'int', bottom: 'int' })
 
     const user32 = koffi.load('user32.dll')
 
@@ -54,6 +61,15 @@ function ensureLoaded(): boolean {
     _ScreenToClient = user32.func('bool __stdcall ScreenToClient(intptr_t hWnd, _Inout_ POINT *pt)')
     _ChildWindowFromPointEx = user32.func('intptr_t __stdcall ChildWindowFromPointEx(intptr_t hWnd, POINT pt, uint32_t flags)')
     _SetForegroundWindow = user32.func('bool __stdcall SetForegroundWindow(intptr_t hWnd)')
+    _GetWindowRect   = user32.func('bool __stdcall GetWindowRect(intptr_t hWnd, _Out_ RECT *lpRect)')
+    _GetAncestor     = user32.func('intptr_t __stdcall GetAncestor(intptr_t hwnd, uint32_t gaFlags)')
+    _IsWindowVisible = user32.func('bool __stdcall IsWindowVisible(intptr_t hWnd)')
+    _GetWindowLongW  = user32.func('int32_t __stdcall GetWindowLongW(intptr_t hWnd, int nIndex)')
+    _EnumWindows     = user32.func('bool __stdcall EnumWindows(intptr_t lpEnumFunc, intptr_t lParam)')
+
+    const dwmapi = koffi.load('dwmapi.dll')
+    _DwmGetWindowAttribute = dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ RECT *pvAttribute, uint32_t cbAttribute)')
+    void RECT // suppress unused warning
 
     _loaded = true
     console.log('[native-input] koffi bindings loaded successfully')
@@ -139,6 +155,130 @@ export function scrollDownArrow(count: number): void {
 /** Send Page Down key press */
 export function scrollPageDown(): void {
   sendKeyPress(VK_NEXT)
+}
+
+// Set of overlay HWNDs to exclude from window picking
+const _overlayHwnds = new Set<number>()
+export function registerOverlayHwnd(hwnd: number) { _overlayHwnds.add(hwnd) }
+export function unregisterOverlayHwnd(hwnd: number) { _overlayHwnds.delete(hwnd) }
+
+/** Get window rect at physical screen coords (px, py). Returns physical pixel rect. */
+export function getWindowAtPointPhysical(
+  px: number,
+  py: number,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!ensureLoaded()) return null
+  try {
+    const GW_HWNDNEXT = 2
+    const WS_EX_TOOLWINDOW = 0x80
+    let hwnd = _WindowFromPoint({ x: Math.round(px), y: Math.round(py) })
+    if (!hwnd) return null
+    hwnd = _GetAncestor(hwnd, 2) // GA_ROOT
+
+    const koffi = require('koffi')
+    const user32 = koffi.load('user32.dll')
+    const _GetWindow = user32.func('intptr_t __stdcall GetWindow(intptr_t hWnd, uint32_t uCmd)')
+
+    let candidate = hwnd
+    let attempts = 0
+    while (candidate && attempts < 200) {
+      attempts++
+      if (!_overlayHwnds.has(candidate) && _IsWindowVisible(candidate)) {
+        const exStyle = _GetWindowLongW(candidate, -20)
+        if (!(exStyle & WS_EX_TOOLWINDOW)) {
+          const r = { left: 0, top: 0, right: 0, bottom: 0 }
+          if (_GetWindowRect(candidate, r)) {
+            if (px >= r.left && px < r.right && py >= r.top && py < r.bottom) {
+              // Prefer DWM extended frame bounds — excludes the ~8px invisible
+              // resize border that GetWindowRect includes.
+              const DWMWA_EXTENDED_FRAME_BOUNDS = 9
+              const fr = { left: 0, top: 0, right: 0, bottom: 0 }
+              try {
+                const hr = _DwmGetWindowAttribute(candidate, DWMWA_EXTENDED_FRAME_BOUNDS, fr, 16)
+                if (hr === 0 && fr.right > fr.left && fr.bottom > fr.top) {
+                  return { x: fr.left, y: fr.top, width: fr.right - fr.left, height: fr.bottom - fr.top }
+                }
+              } catch { /* fall through to GetWindowRect */ }
+              return { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top }
+            }
+          }
+        }
+      }
+      candidate = _GetWindow(candidate, GW_HWNDNEXT)
+    }
+    return null
+  } catch (err: any) {
+    console.error('[native-input] getWindowAtPointPhysical error:', err?.message)
+    return null
+  }
+}
+
+/** Get the bounding rect of the topmost visible non-overlay window at (x, y) logical pixels.
+ *  Uses WindowFromPoint with SetWindowsHookEx workaround — finds window below overlay
+ *  by temporarily making overlay windows click-through. */
+export function getWindowAtPoint(
+  x: number,
+  y: number,
+  scaleFactor: number = 1,
+): { x: number; y: number; width: number; height: number } | null {
+  if (!ensureLoaded()) return null
+  try {
+    const px = Math.round(x * scaleFactor)
+    const py = Math.round(y * scaleFactor)
+
+    // Walk through overlay HWNDs starting from WindowFromPoint,
+    // using ChildWindowFromPointEx is not needed — instead use GetWindow(GW_HWNDNEXT=2)
+    // to walk Z-order and find the first non-overlay window containing the point.
+    const GW_HWNDNEXT = 2
+    const GW_CHILD    = 5
+    const WS_EX_TOOLWINDOW = 0x80
+
+    // Get the desktop window and iterate its children (top-level windows) in Z-order
+    const GetDesktopWindow = _SendMessageW  // we don't have it — use alternative
+
+    // Use WindowFromPoint to get initial hwnd, then walk up and sideways
+    let hwnd = _WindowFromPoint({ x: px, y: py })
+    if (!hwnd) return null
+
+    // Walk up to root
+    hwnd = _GetAncestor(hwnd, 2) // GA_ROOT
+
+    // If it's an overlay, try siblings in Z-order
+    const koffi = require('koffi')
+    const user32 = koffi.load('user32.dll')
+    const _GetWindow = user32.func('intptr_t __stdcall GetWindow(intptr_t hWnd, uint32_t uCmd)')
+
+    let candidate = hwnd
+    let attempts = 0
+    while (candidate && attempts < 200) {
+      attempts++
+      if (!_overlayHwnds.has(candidate) && _IsWindowVisible(candidate)) {
+        const exStyle = _GetWindowLongW(candidate, -20)
+        if (!(exStyle & WS_EX_TOOLWINDOW)) {
+          const r = { left: 0, top: 0, right: 0, bottom: 0 }
+          if (_GetWindowRect(candidate, r)) {
+            if (px >= r.left && px < r.right && py >= r.top && py < r.bottom) {
+              const left   = Math.round(r.left   / scaleFactor)
+              const top    = Math.round(r.top    / scaleFactor)
+              const right  = Math.round(r.right  / scaleFactor)
+              const bottom = Math.round(r.bottom / scaleFactor)
+              return {
+                x: Math.max(0, left),
+                y: Math.max(0, top),
+                width: right - Math.max(0, left),
+                height: bottom - Math.max(0, top),
+              }
+            }
+          }
+        }
+      }
+      candidate = _GetWindow(candidate, GW_HWNDNEXT)
+    }
+    return null
+  } catch (err: any) {
+    console.error('[native-input] getWindowAtPoint error:', err?.message)
+    return null
+  }
 }
 
 /** Scroll to top: Ctrl+Home key + WM_VSCROLL SB_TOP to window under cursor */

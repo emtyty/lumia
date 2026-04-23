@@ -38,7 +38,8 @@ export class WorkflowEngine {
 
       if (step.type === 'save') {
         const ts = new Date().toISOString().replace(/[:.]/g, '-')
-        const filename = `capture-${ts}.png`
+        const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+        const filename = `capture-${ts}.${ext}`
         const dir = step.path && step.path.trim()
           ? step.path
           : getSettings().defaultSavePath || join(homedir(), 'Pictures', 'ShareAnywhere')
@@ -129,7 +130,8 @@ export class WorkflowEngine {
       clipboard.writeImage(img)
     } else if (actionType === 'save') {
       const ts = new Date().toISOString().replace(/[:.]/g, '-')
-      const filename = `capture-${ts}.png`
+      const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+      const filename = `capture-${ts}.${ext}`
       const dir = getSettings().defaultSavePath || join(homedir(), 'Pictures', 'Lumia')
       await mkdir(dir, { recursive: true })
       const filePath = join(dir, filename)
