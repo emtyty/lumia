@@ -352,10 +352,28 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       [isDrawing, currentObj, scale],
     )
 
+    const MIN_SHAPE_SIZE = 4
+    const isTrivialShape = (obj: DrawObject) => {
+      if (obj.type === 'pen') return (obj.points?.length ?? 0) < 4
+      if (obj.type === 'arrow') {
+        const p = obj.points ?? []
+        return p.length < 4 || (Math.abs(p[2] - p[0]) < MIN_SHAPE_SIZE && Math.abs(p[3] - p[1]) < MIN_SHAPE_SIZE)
+      }
+      if (obj.type === 'rect' || obj.type === 'blur') {
+        return Math.abs(obj.width ?? 0) < MIN_SHAPE_SIZE || Math.abs(obj.height ?? 0) < MIN_SHAPE_SIZE
+      }
+      if (obj.type === 'ellipse') {
+        return (obj.radiusX ?? 0) < MIN_SHAPE_SIZE / 2 || (obj.radiusY ?? 0) < MIN_SHAPE_SIZE / 2
+      }
+      return false
+    }
+
     const handleMouseUp = useCallback(() => {
       if (!isDrawing || !currentObj) return
       setIsDrawing(false)
-      // Commit the completed object into history
+      // Skip committing shapes that are too small — these come from accidental
+      // clicks (e.g. double-click to reset zoom while in a shape tool).
+      if (isTrivialShape(currentObj)) { setCurrentObj(null); return }
       commitObjects(prev => [...prev, currentObj])
       setCurrentObj(null)
     }, [isDrawing, currentObj, commitObjects])
@@ -374,6 +392,9 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     // ── Rendering ─────────────────────────────────────────────────────────────
     const renderObj = (obj: DrawObject, isPreview = false) => {
+      // Hide preview for trivially-small shapes so accidental clicks (e.g. the
+      // double-click-to-reset-zoom gesture) don't flash an arrowhead/rect on-screen.
+      if (isPreview && isTrivialShape(obj)) return null
       const key = isPreview ? 'preview' : obj.id
 
       if (obj.type === 'pen') {

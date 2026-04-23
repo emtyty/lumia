@@ -146,6 +146,33 @@ export default function Editor() {
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
   const [showAutoBlur, setShowAutoBlur] = useState(false)
+  const [showColorPopover, setShowColorPopover] = useState(false)
+  const [colorPopoverPos, setColorPopoverPos] = useState<{ left: number; top: number } | null>(null)
+  const colorPopoverRef = useRef<HTMLDivElement>(null)
+  const colorBtnRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    if (!showColorPopover) return
+    const onDown = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (colorPopoverRef.current?.contains(target)) return
+      if (colorBtnRef.current?.contains(target)) return
+      setShowColorPopover(false)
+    }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowColorPopover(false) }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [showColorPopover])
+
+  const openColorPopover = () => {
+    const r = colorBtnRef.current?.getBoundingClientRect()
+    if (r) setColorPopoverPos({ left: r.left + r.width / 2, top: r.top - 8 })
+    setShowColorPopover(p => !p)
+  }
   const [autoBlurScanning, setAutoBlurScanning] = useState(false)
   const [autoBlurRegions, setAutoBlurRegions] = useState<SensitiveRegion[]>([])
   const [autoBlurSelected, setAutoBlurSelected] = useState<Set<string>>(new Set())
@@ -384,7 +411,7 @@ export default function Editor() {
           <button
             onClick={() => canvasRef.current?.zoomReset()}
             className="h-7 px-2 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 transition-all tabular-nums min-w-[44px] text-center"
-            title="Reset zoom (Ctrl+0)"
+            title="Reset zoom (Ctrl+0 / Double click)"
             style={{ fontFamily: 'Manrope, sans-serif' }}
           >
             {Math.round(zoomLevel * 100)}%
@@ -552,121 +579,135 @@ export default function Editor() {
       {/* ── Bottom toolbar (Snipping Tool style) ── */}
       <div className="liquid-glass border-t border-white/5 flex-shrink-0 flex flex-col">
 
-        {/* Tool groups */}
+        {/* Three-zone layout: left (tools) + middle (color/stroke, flex & overflow-hidden)
+             + right (undo/redo/clear). Right zone stays pinned; middle shrinks first. */}
         <div className="flex items-stretch h-14 px-3 gap-1">
 
-          {/* Auto-blur (primary action, placed first for quick access) */}
-          <div className="flex items-center gap-0.5 px-1">
-            <button
-              title="AI blur sensitive info"
-              onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
-              className={`flex flex-col items-center justify-center gap-0.5 w-14 h-10 rounded-lg transition-all ${
-                showAutoBlur
-                  ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
-                  : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[18px]">security</span>
-              <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
-            </button>
-          </div>
-          <div className="w-px h-8 bg-white/[0.06] self-center mx-1" />
-
-          {/* Tool group tabs */}
-          {TOOL_GROUPS.map((group) => {
-            const isGroupActive = group.tools.some(t => t.id === tool)
-            return (
-              <div key={group.group} className="flex items-center">
-                {/* Group label */}
-                <div className={`flex items-center gap-0.5 rounded-xl p-1 ${isGroupActive ? 'bg-white/[0.06]' : ''}`}>
-                  {group.tools.map(({ id, icon, label, key }) => (
-                    <button
-                      key={id}
-                      title={`${label} (${key})`}
-                      onClick={() => setTool(id)}
-                      className={`relative flex flex-col items-center justify-center gap-0.5 w-12 h-10 rounded-lg transition-all ${
-                        tool === id
-                          ? 'bg-primary/20 text-primary shadow-[0_0_12px_rgba(182,160,255,0.15)]'
-                          : 'text-slate-400 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      <span className="material-symbols-outlined text-[18px]">{icon}</span>
-                      <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
-                    </button>
-                  ))}
-                </div>
-                <div className="w-px h-8 bg-white/[0.06] mx-1" />
-              </div>
-            )
-          })}
-
-          {/* Color swatches */}
-          <div className="flex items-center gap-1 px-1">
-            {COLORS.map((c) => (
+          {/* ── Left: AI Blur + tool groups ─────────────────────────────── */}
+          <div className="flex items-stretch gap-1 flex-shrink-0">
+            <div className="flex items-center gap-0.5 px-1">
               <button
-                key={c}
-                onClick={() => setColor(c)}
-                className="relative flex-shrink-0 transition-all hover:scale-110"
-                title={c}
+                title="AI blur sensitive info"
+                onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
+                className={`flex flex-col items-center justify-center gap-0.5 w-14 h-10 rounded-lg transition-all ${
+                  showAutoBlur
+                    ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
+                    : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
+                }`}
               >
-                <div
-                  className={`w-5 h-5 rounded-full border-2 transition-all ${
-                    color === c ? 'border-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border-transparent hover:border-white/30'
-                  }`}
-                  style={{ background: c }}
-                />
+                <span className="material-symbols-outlined text-[18px]">security</span>
+                <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
               </button>
-            ))}
-            {/* Custom color */}
-            <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group" title="Custom color">
-              <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/50 transition-colors flex items-center justify-center overflow-hidden">
-                <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
-              </div>
-              <input
-                type="color"
-                value={color}
-                onChange={(e) => setColor(e.target.value)}
-                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-              />
-            </label>
+            </div>
+            <div className="w-px h-8 bg-white/[0.06] self-center mx-1" />
+
+            {TOOL_GROUPS.map((group) => {
+              const isGroupActive = group.tools.some(t => t.id === tool)
+              return (
+                <div key={group.group} className="flex items-center">
+                  <div className={`flex items-center gap-0.5 rounded-xl p-1 ${isGroupActive ? 'bg-white/[0.06]' : ''}`}>
+                    {group.tools.map(({ id, icon, label, key }) => (
+                      <button
+                        key={id}
+                        title={`${label} (${key})`}
+                        onClick={() => setTool(id)}
+                        className={`relative flex flex-col items-center justify-center gap-0.5 w-12 h-10 rounded-lg transition-all ${
+                          tool === id
+                            ? 'bg-primary/20 text-primary shadow-[0_0_12px_rgba(182,160,255,0.15)]'
+                            : 'text-slate-400 hover:text-white hover:bg-white/10'
+                        }`}
+                      >
+                        <span className="material-symbols-outlined text-[18px]">{icon}</span>
+                        <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="w-px h-8 bg-white/[0.06] mx-1" />
+                </div>
+              )
+            })}
           </div>
 
-          <div className="w-px h-8 bg-white/[0.06] self-center" />
-
-          {/* Stroke width */}
-          <div className="flex items-center gap-2 px-2">
-            <div className="flex items-center gap-1">
-              {[2, 4, 8].map((w) => (
+          {/* ── Middle: color + stroke (shrinks, hides overflow) ─────────── */}
+          <div className="flex-1 flex items-center gap-2 min-w-0 overflow-hidden">
+            <div className="flex items-center gap-1 px-1 flex-shrink min-w-0">
+              {COLORS.map((c) => (
                 <button
-                  key={w}
-                  onClick={() => setStrokeWidth(w)}
-                  className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
-                    strokeWidth === w ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-white hover:bg-white/10'
-                  }`}
-                  title={`Stroke ${w}px`}
+                  key={c}
+                  onClick={() => setColor(c)}
+                  className="relative flex-shrink-0 transition-all hover:scale-110 hidden lg:flex"
+                  title={c}
                 >
                   <div
-                    className="rounded-full flex-shrink-0"
-                    style={{ background: 'currentColor', width: w + 4, height: w + 4 }}
+                    className={`w-5 h-5 rounded-full border-2 transition-all ${
+                      color === c ? 'border-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border-transparent hover:border-white/30'
+                    }`}
+                    style={{ background: c }}
                   />
                 </button>
               ))}
+              {/* Compact trigger — only when preset palette is hidden (<lg). Opens
+                   a popover that includes the preset swatches + native picker. */}
+              <button
+                ref={colorBtnRef}
+                type="button"
+                title="Pick a color"
+                onClick={openColorPopover}
+                className="relative w-5 h-5 flex-shrink-0 cursor-pointer group block lg:hidden"
+              >
+                <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/50 transition-colors flex items-center justify-center overflow-hidden">
+                  <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
+                </div>
+              </button>
+              {/* Native OS color picker — only shown at lg+ when preset swatches are already visible */}
+              <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group hidden lg:block" title="Custom color">
+                <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/50 transition-colors flex items-center justify-center overflow-hidden">
+                  <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
+                </div>
+                <input
+                  type="color"
+                  value={color}
+                  onChange={(e) => setColor(e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                />
+              </label>
             </div>
-            <input
-              type="range"
-              min={1}
-              max={20}
-              value={strokeWidth}
-              onChange={(e) => setStrokeWidth(Number(e.target.value))}
-              className="w-20 accent-primary h-1"
-            />
-            <span className="text-[10px] text-slate-500 font-mono w-5 tabular-nums">{strokeWidth}</span>
+
+            <div className="w-px h-8 bg-white/[0.06] self-center flex-shrink-0 hidden min-[950px]:block" />
+
+            <div className="hidden min-[950px]:flex items-center gap-2 px-2 min-w-0 flex-1">
+              <div className="hidden xl:flex items-center gap-1 flex-shrink-0">
+                {[2, 4, 8].map((w) => (
+                  <button
+                    key={w}
+                    onClick={() => setStrokeWidth(w)}
+                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                      strokeWidth === w ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-white hover:bg-white/10'
+                    }`}
+                    title={`Stroke ${w}px`}
+                  >
+                    <div
+                      className="rounded-full flex-shrink-0"
+                      style={{ background: 'currentColor', width: w + 4, height: w + 4 }}
+                    />
+                  </button>
+                ))}
+              </div>
+              <input
+                type="range"
+                min={1}
+                max={20}
+                value={strokeWidth}
+                onChange={(e) => setStrokeWidth(Number(e.target.value))}
+                className="flex-1 min-w-0 max-w-[120px] accent-primary h-1"
+              />
+              <span className="text-[10px] text-slate-500 font-mono w-5 tabular-nums flex-shrink-0">{strokeWidth}</span>
+            </div>
           </div>
 
-          <div className="w-px h-8 bg-white/[0.06] self-center" />
-
-          {/* Undo / Redo / Clear */}
-          <div className="flex items-center gap-0.5 px-1">
+          {/* ── Right: Undo / Redo / Clear ───────────────────────────────── */}
+          <div className="flex items-center gap-0.5 px-1 flex-shrink-0">
+            <div className="w-px h-8 bg-white/[0.06] self-center mr-1" />
             <BottomBtn icon="undo" label="Undo" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
             <BottomBtn icon="redo" label="Redo" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
             <BottomBtn icon="delete_sweep" label="Clear" onClick={() => canvasRef.current?.clear()} variant="danger" />
@@ -674,6 +715,50 @@ export default function Editor() {
 
         </div>
       </div>
+
+      {/* Color popover — rendered at root & positioned fixed so overflow-hidden
+           parents (middle toolbar zone, canvas region) can't clip it. */}
+      {showColorPopover && colorPopoverPos && (
+        <div
+          ref={colorPopoverRef}
+          className="fixed z-[100] glass-refractive rounded-xl p-2 flex items-center gap-1.5"
+          style={{
+            left: colorPopoverPos.left,
+            top: colorPopoverPos.top,
+            transform: 'translate(-50%, -100%)',
+            fontFamily: 'Manrope, sans-serif',
+          }}
+        >
+          {COLORS.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => { setColor(c); setShowColorPopover(false) }}
+              className="relative flex-shrink-0 transition-all hover:scale-110"
+              title={c}
+            >
+              <div
+                className={`w-5 h-5 rounded-full border-2 transition-all ${
+                  color === c ? 'border-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border-transparent hover:border-white/30'
+                }`}
+                style={{ background: c }}
+              />
+            </button>
+          ))}
+          <div className="w-px h-5 bg-white/10 mx-0.5" />
+          <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group" title="Custom color">
+            <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/30 group-hover:border-white/60 transition-colors flex items-center justify-center overflow-hidden">
+              <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
+            </div>
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+            />
+          </label>
+        </div>
+      )}
 
     </div>
   )
