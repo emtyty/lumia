@@ -45,15 +45,17 @@ function findSourceForDisplay(
 // Map webContentsId → source payload for overlay pull
 const overlaySourcePayloads = new Map<number, { sourceId: string; scaleFactor: number }>()
 
+export function dispatchCapture(mode: CaptureMode) {
+  switch (mode) {
+    case 'fullscreen':      return captureFullscreen()
+    case 'region':          return captureRegion()
+    case 'window':          return captureWindow()
+    case 'active-monitor':  return captureActiveMonitor()
+  }
+}
+
 export function setupCapture() {
-  ipcMain.handle('capture:screenshot', async (_e, mode: CaptureMode) => {
-    switch (mode) {
-      case 'fullscreen':      return captureFullscreen()
-      case 'region':         return captureRegion()
-      case 'window':         return captureWindow()
-      case 'active-monitor': return captureActiveMonitor()
-    }
-  })
+  ipcMain.handle('capture:screenshot', async (_e, mode: CaptureMode) => dispatchCapture(mode))
 
   ipcMain.handle('region:confirm', async (_e, payload: { dataUrl: string; rect: { x: number; y: number; width: number; height: number } }) => {
     const displayId = getOverlayDisplayId()

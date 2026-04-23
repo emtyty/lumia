@@ -39,6 +39,9 @@ let activeOverlayDisplayId: number | null = null
 let overlayPollTimer: ReturnType<typeof setInterval> | null = null
 let overlayDrawingInProgress = false
 let currentRoute = '/dashboard'
+let isQuitting = false
+
+export function markQuitting() { isQuitting = true }
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
@@ -109,14 +112,18 @@ function createMainWindow(): BrowserWindow {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
 
-  // Intercept close on the editor: redirect to dashboard instead of quitting.
-  // Guards against accidental X-clicks during annotation work.
+  // Intercept close: keep the app alive in the tray instead of exiting. Only
+  // actually close when we're explicitly quitting (tray Quit / hotkey / IPC).
+  // Editor route additionally redirects to dashboard before hiding, so the next
+  // time the user opens the window they don't land back in a stale editor.
   win.on('close', (e) => {
+    if (isQuitting) return
+    e.preventDefault()
     if (currentRoute === '/editor') {
-      e.preventDefault()
       currentRoute = '/dashboard'
       win.webContents.send('navigate', '/dashboard')
     }
+    win.hide()
   })
 
   win.on('closed', () => { mainWindow = null })
@@ -639,7 +646,7 @@ app.whenReady().then(async () => {
   })
 
   // IPC: App quit (for renderer menu)
-  ipcMain.handle('app:quit', () => app.quit())
+  ipcMain.handle('app:quit', () => { isQuitting = true; app.quit() })
 
   // IPC: Dev tools (for renderer menu)
   ipcMain.handle('devtools:toggle', () => mainWindow?.webContents.toggleDevTools())
@@ -731,7 +738,12 @@ app.whenReady().then(async () => {
   })
 })
 
+app.on('before-quit', () => { isQuitting = true })
+
 app.on('window-all-closed', () => {
+  // Keep app running in the tray instead of quitting when windows close.
+  // The user can still quit via tray menu, Cmd/Ctrl+Q, or app:quit IPC.
+  if (!isQuitting) return
   if (process.platform !== 'darwin') app.quit()
 })
 

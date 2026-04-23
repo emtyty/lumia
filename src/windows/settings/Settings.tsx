@@ -49,6 +49,32 @@ export default function Settings() {
     setSettings(prev => ({ ...prev, [key]: value }))
   }
 
+  const applyTheme = (mode: 'dark' | 'light' | 'system') => {
+    const resolved = mode === 'system'
+      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      : mode
+    document.documentElement.classList.toggle('light', resolved === 'light')
+  }
+
+  const handleThemeChange = async (next: 'dark' | 'light' | 'system') => {
+    update('theme', next)
+    applyTheme(next)
+    originalRef.current = { ...originalRef.current, theme: next }
+    await window.electronAPI?.setSetting('theme', next)
+    window.electronAPI?.setTitleBarTheme(next)
+    window.dispatchEvent(new CustomEvent('lumia:theme-changed', { detail: next }))
+  }
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent<'dark' | 'light' | 'system'>).detail
+      setSettings(prev => ({ ...prev, theme: next }))
+      originalRef.current = { ...originalRef.current, theme: next }
+    }
+    window.addEventListener('lumia:theme-changed', handler)
+    return () => window.removeEventListener('lumia:theme-changed', handler)
+  }, [])
+
   const handleSave = async () => {
     for (const [key, value] of Object.entries(settings)) {
       await window.electronAPI?.setSetting(key as keyof AppSettings, value)
@@ -189,7 +215,7 @@ export default function Settings() {
                   ]).map(opt => (
                     <button
                       key={opt.value}
-                      onClick={() => update('theme', opt.value)}
+                      onClick={() => handleThemeChange(opt.value)}
                       className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                         settings.theme === opt.value
                           ? 'bg-primary/15 text-primary border border-primary/30'

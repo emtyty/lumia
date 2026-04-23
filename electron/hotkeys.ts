@@ -1,7 +1,7 @@
 import { globalShortcut, app } from 'electron'
 import Store from 'electron-store'
 import { sendCaptureToEditor } from './capture'
-import { createOverlayWindows, getMainWindow, getOverlayWindow } from './index'
+import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
 
 interface HotkeyConfig {
   [action: string]: string
@@ -174,7 +174,7 @@ export function setupHotkeys() {
       win?.show()
       win?.focus()
     },
-    ExitShareAnywhere: () => app.quit()
+    ExitShareAnywhere: () => { markQuitting(); app.quit() }
   }
 
   for (const [action, shortcut] of Object.entries(hotkeys)) {

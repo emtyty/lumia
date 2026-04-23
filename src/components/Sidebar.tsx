@@ -1,5 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import { useEffect, useState } from 'react'
+import logo from '../assets/logo.png'
 
 type ThemeMode = 'dark' | 'light' | 'system'
 
@@ -57,7 +58,18 @@ export function Sidebar() {
     applyTheme(resolveTheme(next))
     await window.electronAPI?.setSetting('theme', next)
     window.electronAPI?.setTitleBarTheme(next)
+    window.dispatchEvent(new CustomEvent('lumia:theme-changed', { detail: next }))
   }
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent<ThemeMode>).detail
+      setThemeMode(next)
+      applyTheme(resolveTheme(next))
+    }
+    window.addEventListener('lumia:theme-changed', handler)
+    return () => window.removeEventListener('lumia:theme-changed', handler)
+  }, [])
 
   const themeIcon = themeMode === 'dark' ? 'dark_mode' : themeMode === 'light' ? 'light_mode' : 'contrast'
   const themeLabel = themeMode === 'dark' ? 'Dark' : themeMode === 'light' ? 'Light' : 'System'
@@ -107,9 +119,7 @@ export function Sidebar() {
         {/* User row + theme toggle */}
         <div className="flex items-center gap-3 p-2">
           <div className="relative">
-            <div className="w-9 h-9 rounded-full primary-gradient flex items-center justify-center text-slate-900 font-bold text-sm">
-              LM
-            </div>
+            <img src={logo} alt="Lumia" className="w-9 h-9 rounded-xl" draggable={false} />
             <div
               className="absolute -bottom-0.5 -right-0.5 w-3 h-3 bg-secondary rounded-full border-2"
               style={{ borderColor: '#0f172a', boxShadow: '0 0 8px rgba(0,227,253,0.6)' }}
