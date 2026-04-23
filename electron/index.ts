@@ -9,6 +9,12 @@ import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
 import { getSettings, setSetting, type AppSettings } from './settings'
 import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
+
+log.transports.file.level = 'info'
+log.transports.console.level = 'info'
+autoUpdater.logger = log
+Object.assign(console, log.functions)
 
 // Force legacy DXGI/GDI capturer instead of WGC on Windows.
 // appendSwitch with duplicate keys can be ignored; appendArgument always appends.
@@ -287,14 +293,21 @@ app.whenReady().then(async () => {
   autoUpdater.on('checking-for-update', () => console.log('[autoUpdater] checking...'))
   autoUpdater.on('update-available', (info) => console.log('[autoUpdater] update available:', info.version))
   autoUpdater.on('update-not-available', () => console.log('[autoUpdater] up to date'))
+  autoUpdater.on('download-progress', (p) => {
+    console.log(`[autoUpdater] downloading ${Math.round(p.percent)}% (${p.transferred}/${p.total})`)
+  })
   autoUpdater.on('update-downloaded', (info) => {
+    console.log('[autoUpdater] update downloaded:', info.version)
     mainWindow?.webContents.send('update:downloaded', info.version)
   })
 
   if (!isDev) {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
-    autoUpdater.checkForUpdates()
+    console.log(`[autoUpdater] current version ${app.getVersion()}, checking for updates...`)
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[autoUpdater] checkForUpdates failed:', err)
+    })
   }
   ipcMain.handle('update:install', () => {
     autoUpdater.quitAndInstall()
