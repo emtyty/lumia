@@ -8,7 +8,7 @@ const STEP_META: Record<string, { icon: string; label: string; color: string }> 
   clipboard: { icon: 'content_copy',  label: 'Copy to Clipboard',  color: 'primary' },
   imgur:          { icon: 'cloud_upload',   label: 'Imgur',              color: 'secondary' },
   'google-drive': { icon: 'add_to_drive',  label: 'Google Drive',       color: 'secondary' },
-  r2:             { icon: 'cloud',         label: 'Cloudflare R2',      color: 'secondary' },
+  r2:             { icon: 'share',         label: 'Lumia',              color: 'secondary' },
   custom:         { icon: 'api',           label: 'Custom Endpoint',    color: 'secondary' },
   copyUrl:   { icon: 'link',          label: 'Copy URL',           color: 'tertiary' },
   notify:    { icon: 'notifications', label: 'Notification',       color: 'tertiary' },
@@ -27,6 +27,9 @@ export default function Workflow() {
   const [selected, setSelected] = useState<WorkflowTemplate | null>(null)
   const [savedToast, setSavedToast] = useState(false)
   const [activeId, setActiveId] = useState('')
+  const [gdriveConnected, setGdriveConnected] = useState(false)
+  const [imgurConfigured, setImgurConfigured] = useState(false)
+  const [customConfigured, setCustomConfigured] = useState(false)
   const originalRef = useRef<WorkflowTemplate | null>(null)
 
   useEffect(() => {
@@ -38,6 +41,9 @@ export default function Workflow() {
       const savedId = s?.activeWorkflowId ?? ''
       const valid = t?.some(tmpl => tmpl.id === savedId)
       setActiveId(valid ? savedId : 'builtin-r2')
+      setGdriveConnected(!!s?.googleDriveRefreshToken)
+      setImgurConfigured(!!s?.imgurClientId)
+      setCustomConfigured(!!s?.customUploadUrl)
     })
   }, [])
 
@@ -434,10 +440,16 @@ export default function Workflow() {
                         )}
                         {field === 'destinations' && (
                           <>
-                            <AddChip label="Imgur" icon="cloud_upload" accent={phase.accent} onClick={() => addDestination('imgur')} />
-                            <AddChip label="Google Drive" icon="add_to_drive" accent={phase.accent} onClick={() => addDestination('google-drive')} />
-                            <AddChip label="Cloudflare R2" icon="cloud" accent={phase.accent} onClick={() => addDestination('r2')} />
-                            <AddChip label="Custom URL" icon="api" accent={phase.accent} onClick={() => addDestination('custom')} />
+                            {imgurConfigured && (
+                              <AddChip label="Imgur" icon="cloud_upload" accent={phase.accent} onClick={() => addDestination('imgur')} />
+                            )}
+                            {gdriveConnected && (
+                              <AddChip label="Google Drive" icon="add_to_drive" accent={phase.accent} onClick={() => addDestination('google-drive')} />
+                            )}
+                            <AddChip label="Lumia" icon="share" accent={phase.accent} onClick={() => addDestination('r2')} />
+                            {customConfigured && (
+                              <AddChip label="Custom URL" icon="api" accent={phase.accent} onClick={() => addDestination('custom')} />
+                            )}
                           </>
                         )}
                         {field === 'afterUpload' && (

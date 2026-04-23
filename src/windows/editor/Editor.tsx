@@ -20,22 +20,25 @@ interface ActionBtn {
 const DEST_META: Record<string, { icon: string; label: string }> = {
   imgur:          { icon: 'link',         label: 'Imgur' },
   'google-drive': { icon: 'add_to_drive', label: 'Google Drive' },
-  r2:            { icon: 'cloud_upload',  label: 'R2' },
+  r2:            { icon: 'share',         label: 'Lumia' },
   custom:        { icon: 'upload',        label: 'Upload' },
 }
 
-function deriveActions(tpl: WorkflowTemplate | undefined): ActionBtn[] {
+function deriveActions(tpl: WorkflowTemplate | undefined, gdriveConnected: boolean, imgurConfigured: boolean, customConfigured: boolean): ActionBtn[] {
   if (!tpl) return []
   const btns: ActionBtn[] = []
   for (const step of tpl.afterCapture) {
     if (step.type === 'clipboard') {
-      btns.push({ key: 'clipboard', icon: 'content_paste', label: 'Copy', templateId: tpl.id, actionType: 'clipboard' })
+      btns.push({ key: 'clipboard', icon: 'content_copy', label: 'Copy', templateId: tpl.id, actionType: 'clipboard' })
     } else if (step.type === 'save') {
       btns.push({ key: 'save', icon: 'save', label: 'Save', templateId: tpl.id, actionType: 'save' })
     }
   }
   for (let i = 0; i < tpl.destinations.length; i++) {
     const dest = tpl.destinations[i]
+    if (dest.type === 'google-drive' && !gdriveConnected) continue
+    if (dest.type === 'imgur' && !imgurConfigured) continue
+    if (dest.type === 'custom' && !customConfigured) continue
     const meta = DEST_META[dest.type] ?? { icon: 'cloud_upload', label: dest.type }
     btns.push({
       key: `dest-${i}-${dest.type}`,
@@ -104,6 +107,23 @@ export default function Editor() {
   const [imageDataUrl, setImageDataUrl] = useState<string>(
     (location.state as { dataUrl?: string })?.dataUrl ?? '',
   )
+
+  type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
+  const CAPTURE_MODES: CaptureMode[] = ['region', 'window', 'fullscreen', 'active-monitor']
+  const isCaptureMode = (s: unknown): s is CaptureMode =>
+    typeof s === 'string' && (CAPTURE_MODES as string[]).includes(s)
+
+  const [lastMode, setLastMode] = useState<CaptureMode>(() => {
+    const fromNav = (location.state as { source?: string } | null)?.source
+    if (isCaptureMode(fromNav)) return fromNav
+    const stored = localStorage.getItem('lumia:lastCaptureMode')
+    return isCaptureMode(stored) ? stored : 'region'
+  })
+  useEffect(() => { localStorage.setItem('lumia:lastCaptureMode', lastMode) }, [lastMode])
+
+  const triggerNewCapture = useCallback(() => {
+    window.electronAPI?.captureScreenshot(lastMode)
+  }, [lastMode])
   const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState('#f87171')
   const [strokeWidth, setStrokeWidth] = useState(3)
@@ -111,6 +131,9 @@ export default function Editor() {
   const [, setExportedDataUrl] = useState<string>('')
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
   const [activeWorkflowId, setActiveWorkflowId] = useState<string>('')
+  const [gdriveConnected, setGdriveConnected] = useState(false)
+  const [imgurConfigured, setImgurConfigured] = useState(false)
+  const [customConfigured, setCustomConfigured] = useState(false)
   const [toast, setToast] = useState<{ message: string; icon: string; type: 'success' | 'error' } | null>(null)
   const [actionBusy, setActionBusy] = useState<string | null>(null)
   const pendingAction = useRef<string | null>(null)
@@ -148,21 +171,28 @@ export default function Editor() {
     if (found) return found
     return templates.find(t => t.id === 'builtin-r2') ?? templates[0]
   }, [templates, activeWorkflowId])
-  const actionBtns = useMemo(() => deriveActions(activeTemplate), [activeTemplate])
+  const actionBtns = useMemo(() => deriveActions(activeTemplate, gdriveConnected, imgurConfigured, customConfigured), [activeTemplate, gdriveConnected, imgurConfigured, customConfigured])
 
   useEffect(() => {
-    const state = location.state as { dataUrl?: string } | null
+    const state = location.state as { dataUrl?: string; source?: string } | null
     if (state?.dataUrl) resetForNewImage(state.dataUrl)
+    if (isCaptureMode(state?.source)) setLastMode(state.source)
   }, [location.state])
 
   useEffect(() => {
-    window.electronAPI?.onCaptureReady(({ dataUrl }) => { resetForNewImage(dataUrl) })
+    window.electronAPI?.onCaptureReady(({ dataUrl, source }) => {
+      resetForNewImage(dataUrl)
+      if (isCaptureMode(source)) setLastMode(source)
+    })
     Promise.all([
       window.electronAPI?.getTemplates(),
       window.electronAPI?.getSettings(),
     ]).then(([t, s]) => {
       if (t) setTemplates(t)
       if (s?.activeWorkflowId) setActiveWorkflowId(s.activeWorkflowId)
+      setGdriveConnected(!!s?.googleDriveRefreshToken)
+      setImgurConfigured(!!s?.imgurClientId)
+      setCustomConfigured(!!s?.customUploadUrl)
     })
     return () => { window.electronAPI?.removeAllListeners('capture:ready') }
   }, [])
@@ -311,7 +341,7 @@ export default function Editor() {
             Dashboard
           </button>
           <button
-            onClick={() => window.electronAPI?.captureScreenshot('region')}
+            onClick={triggerNewCapture}
             className="primary-gradient text-slate-900 font-bold px-5 py-2.5 rounded-xl text-sm hover:scale-[1.02] active:scale-95 transition-transform flex items-center gap-2"
             style={{ fontFamily: 'Manrope, sans-serif' }}
           >
@@ -367,7 +397,7 @@ export default function Editor() {
 
         {/* New capture */}
         <button
-          onClick={() => window.electronAPI?.captureScreenshot('region')}
+          onClick={triggerNewCapture}
           className="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 flex items-center gap-1.5 text-slate-400 hover:text-white transition-all flex-shrink-0"
           title="New capture"
         >
@@ -375,27 +405,16 @@ export default function Editor() {
           <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>New</span>
         </button>
 
-        {/* Auto-blur */}
-        <button
-          onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
-          className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 transition-all flex-shrink-0 ${
-            showAutoBlur ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-white/5 text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
-          }`}
-          title="Auto-blur sensitive info"
-        >
-          <span className="material-symbols-outlined text-[15px]">security</span>
-          <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>Blur</span>
-        </button>
-
         {/* Recent captures */}
         <button
           onClick={() => setShowClipPanel(p => !p)}
-          className={`h-7 w-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
+          className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 transition-all flex-shrink-0 ${
             showClipPanel ? 'bg-primary/20 text-primary' : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
           }`}
           title="Recent captures"
         >
-          <span className="material-symbols-outlined text-[16px]">photo_library</span>
+          <span className="material-symbols-outlined text-[15px]">history</span>
+          <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>History</span>
         </button>
 
         {actionBtns.length > 0 && <div className="w-px h-5 bg-white/10" />}
@@ -536,6 +555,23 @@ export default function Editor() {
         {/* Tool groups */}
         <div className="flex items-stretch h-14 px-3 gap-1">
 
+          {/* Auto-blur (primary action, placed first for quick access) */}
+          <div className="flex items-center gap-0.5 px-1">
+            <button
+              title="AI blur sensitive info"
+              onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
+              className={`flex flex-col items-center justify-center gap-0.5 w-14 h-10 rounded-lg transition-all ${
+                showAutoBlur
+                  ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
+                  : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
+              }`}
+            >
+              <span className="material-symbols-outlined text-[18px]">security</span>
+              <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
+            </button>
+          </div>
+          <div className="w-px h-8 bg-white/[0.06] self-center mx-1" />
+
           {/* Tool group tabs */}
           {TOOL_GROUPS.map((group) => {
             const isGroupActive = group.tools.some(t => t.id === tool)
@@ -556,9 +592,6 @@ export default function Editor() {
                     >
                       <span className="material-symbols-outlined text-[18px]">{icon}</span>
                       <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
-                      {tool === id && (
-                        <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
-                      )}
                     </button>
                   ))}
                 </div>

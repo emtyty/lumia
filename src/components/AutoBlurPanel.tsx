@@ -88,7 +88,7 @@ export function AutoBlurPanel({
           className="text-[10px] font-bold uppercase tracking-widest text-slate-500"
           style={{ fontFamily: 'Manrope, sans-serif' }}
         >
-          Auto-Blur
+          AI Blur
         </span>
         <button
           onClick={onClose}
