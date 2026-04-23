@@ -72,10 +72,8 @@ function ensureLoaded(): boolean {
     void RECT // suppress unused warning
 
     _loaded = true
-    console.log('[native-input] koffi bindings loaded successfully')
     return true
   } catch (err) {
-    console.warn('[native-input] koffi failed to load, will fall back to PowerShell:', err)
     return false
   }
 }
@@ -208,7 +206,6 @@ export function getWindowAtPointPhysical(
     }
     return null
   } catch (err: any) {
-    console.error('[native-input] getWindowAtPointPhysical error:', err?.message)
     return null
   }
 }
@@ -276,7 +273,6 @@ export function getWindowAtPoint(
     }
     return null
   } catch (err: any) {
-    console.error('[native-input] getWindowAtPoint error:', err?.message)
     return null
   }
 }

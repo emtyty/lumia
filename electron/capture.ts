@@ -2,6 +2,7 @@ import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard 
 import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId } from './index'
 import { getWindowAtPointPhysical } from './native-input'
 import { setOverlayMode } from './scroll-capture'
+import { localTimestamp } from './utils'
 
 export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
 
@@ -181,24 +182,112 @@ export function setupCapture() {
     closeAllOverlays()
     showMainWindow()
   })
+
+  // Monitor-pick: user clicked an overlay → capture that display
+  ipcMain.handle('monitor-pick:confirm', async () => {
+    const displayId = getOverlayDisplayId()
+    const allDisplays = screen.getAllDisplays()
+    const target = allDisplays.find(d => d.id === displayId) ?? screen.getPrimaryDisplay()
+    const { resetOverlayMode } = await import('./scroll-capture')
+    resetOverlayMode()
+    closeAllOverlays()
+    await waitForOverlayGone()
+    const dataUrl = await captureDisplay(target, allDisplays)
+    await sendCaptureToEditor(dataUrl, 'active-monitor')
+    return dataUrl
+  })
+
+  ipcMain.handle('monitor-pick:cancel', () => {
+    import('./scroll-capture').then(m => m.resetOverlayMode())
+    closeAllOverlays()
+    showMainWindow()
+  })
+}
+
+interface CompositeItem { bitmap: Buffer; srcW: number; srcH: number; dx: number; dy: number }
+
+// Composite raw BGRA buffers directly in Node — no PNG encode/decode round-trip,
+// no BrowserWindow. Memory copies only, then a single PNG encode at the end.
+function compositeBGRA(items: CompositeItem[], totalW: number, totalH: number): string {
+  const out = Buffer.alloc(totalW * totalH * 4)
+  for (const it of items) {
+    const { bitmap, srcW, srcH, dx, dy } = it
+    const rowBytes = srcW * 4
+    for (let row = 0; row < srcH; row++) {
+      const destY = dy + row
+      if (destY < 0 || destY >= totalH) continue
+      const destOffset = (destY * totalW + dx) * 4
+      const srcOffset  = row * rowBytes
+      bitmap.copy(out, destOffset, srcOffset, srcOffset + rowBytes)
+    }
+  }
+  return nativeImage.createFromBuffer(out, { width: totalW, height: totalH }).toDataURL()
 }
 
 async function captureFullscreen(): Promise<string> {
-  const cursorPoint = screen.getCursorScreenPoint()
   const allDisplays = screen.getAllDisplays()
-  const targetDisplay = screen.getDisplayNearestPoint(cursorPoint)
-
   await hideMainWindow()
 
-  const sf = targetDisplay.scaleFactor || 1
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: {
-      width:  Math.max(1, Math.round(targetDisplay.size.width  * sf)),
-      height: Math.max(1, Math.round(targetDisplay.size.height * sf)),
+  // Single-display fast path
+  if (allDisplays.length <= 1) {
+    const d = allDisplays[0] ?? screen.getPrimaryDisplay()
+    const sf = d.scaleFactor || 1
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width:  Math.max(1, Math.round(d.size.width  * sf)),
+        height: Math.max(1, Math.round(d.size.height * sf)),
+      }
+    })
+    const dataUrl = findSourceForDisplay(sources, allDisplays, d.id).thumbnail.toDataURL()
+    await sendCaptureToEditor(dataUrl, 'fullscreen')
+    return dataUrl
+  }
+
+  // Keep each display at its native physical resolution. Position in physical-
+  // pixel space using DIP neighbor relationships: a display's physical X origin
+  // is the sum of the physical widths of displays whose DIP right edge is <= its
+  // DIP left edge (same rule for Y). Handles side-by-side, stacked, and mixed
+  // layouts without cumulating across independent rows/columns.
+  const grabs = await Promise.all(allDisplays.map(async d => {
+    const sf = d.scaleFactor || 1
+    const physW = Math.max(1, Math.round(d.size.width  * sf))
+    const physH = Math.max(1, Math.round(d.size.height * sf))
+    const srcs = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: physW, height: physH }
+    })
+    return { display: d, thumb: findSourceForDisplay(srcs, allDisplays, d.id).thumbnail, physW, physH }
+  }))
+
+  const phBounds = new Map<number, { x: number; y: number; w: number; h: number }>()
+  for (const { display: d, physW, physH } of grabs) {
+    let px = 0, py = 0
+    for (const { display: other, physW: ow, physH: oh } of grabs) {
+      if (other.id === d.id) continue
+      if (other.bounds.x + other.bounds.width  <= d.bounds.x) px += ow
+      if (other.bounds.y + other.bounds.height <= d.bounds.y) py += oh
     }
-  })
-  const dataUrl = findSourceForDisplay(sources, allDisplays, targetDisplay.id).thumbnail.toDataURL()
+    phBounds.set(d.id, { x: px, y: py, w: physW, h: physH })
+  }
+
+  const totalW = Math.max(...[...phBounds.values()].map(b => b.x + b.w))
+  const totalH = Math.max(...[...phBounds.values()].map(b => b.y + b.h))
+
+  const items: CompositeItem[] = []
+  for (const { display: d, thumb } of grabs) {
+    const pb = phBounds.get(d.id)!
+    const ts = thumb.getSize()
+    items.push({
+      bitmap: thumb.toBitmap(),
+      srcW: ts.width,
+      srcH: ts.height,
+      dx: pb.x,
+      dy: pb.y,
+    })
+  }
+
+  const dataUrl = compositeBGRA(items, totalW, totalH)
   await sendCaptureToEditor(dataUrl, 'fullscreen')
   return dataUrl
 }
@@ -243,24 +332,34 @@ async function captureRect(rect: { x: number; y: number; width: number; height: 
   return cropped.toDataURL()
 }
 
-async function captureActiveMonitor(): Promise<string> {
-  const cursorPoint = screen.getCursorScreenPoint()
-  const allDisplays = screen.getAllDisplays()
-  const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
-
-  await hideMainWindow()
-
-  const sf = activeDisplay.scaleFactor || 1
+async function captureDisplay(display: Electron.Display, allDisplays: Electron.Display[]): Promise<string> {
+  const sf = display.scaleFactor || 1
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
     thumbnailSize: {
-      width:  Math.max(1, Math.round(activeDisplay.size.width  * sf)),
-      height: Math.max(1, Math.round(activeDisplay.size.height * sf)),
+      width:  Math.max(1, Math.round(display.size.width  * sf)),
+      height: Math.max(1, Math.round(display.size.height * sf)),
     }
   })
-  const dataUrl = findSourceForDisplay(sources, allDisplays, activeDisplay.id).thumbnail.toDataURL()
-  await sendCaptureToEditor(dataUrl, 'active-monitor')
-  return dataUrl
+  return findSourceForDisplay(sources, allDisplays, display.id).thumbnail.toDataURL()
+}
+
+async function captureActiveMonitor(): Promise<string | void> {
+  const allDisplays = screen.getAllDisplays()
+
+  // Single display → capture immediately.
+  if (allDisplays.length <= 1) {
+    const activeDisplay = allDisplays[0] ?? screen.getPrimaryDisplay()
+    await hideMainWindow()
+    const dataUrl = await captureDisplay(activeDisplay, allDisplays)
+    await sendCaptureToEditor(dataUrl, 'active-monitor')
+    return dataUrl
+  }
+
+  // Multiple displays → show overlays, let the user click one.
+  setOverlayMode('monitor-pick')
+  await hideMainWindow()
+  createOverlayWindows()
 }
 
 export async function sendCaptureToEditor(dataUrl: string, source: string) {
@@ -275,7 +374,7 @@ export async function sendCaptureToEditor(dataUrl: string, source: string) {
   try {
     const historyStore = getHistoryStore()
     if (historyStore) {
-      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const ts = localTimestamp()
       historyStore.add({
         id: require('crypto').randomUUID(),
         timestamp: Date.now(),

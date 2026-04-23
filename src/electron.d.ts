@@ -66,8 +66,11 @@ declare global {
       getWindowAt: (x: number, y: number) => Promise<{ x: number; y: number; width: number; height: number } | null>
       confirmWindowPick: (rect: { x: number; y: number; width: number; height: number }) => Promise<void>
       cancelWindowPick: () => Promise<void>
+      confirmMonitorPick: () => Promise<void>
+      cancelMonitorPick: () => Promise<void>
       onOverlaySetActive: (cb: (active: boolean) => void) => void
       overlayDrawing: (drawing: boolean) => void
+      notifyRoute: (route: string) => void
 
       // OCR & Auto-Blur
       ocrScan: (dataUrl: string) => Promise<import('@/types').AutoBlurResult>
@@ -98,7 +101,7 @@ declare global {
       onScrollCaptureError(cb: (data: { error: string }) => void): void
       confirmScrollRegion(rect: { x: number; y: number; width: number; height: number }): Promise<void>
       cancelScrollRegion(): Promise<void>
-      getOverlayMode(): Promise<'region' | 'scroll-region'>
+      getOverlayMode(): Promise<'region' | 'scroll-region' | 'window-pick' | 'monitor-pick'>
     }
   }
 }

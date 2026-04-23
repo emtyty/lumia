@@ -37,6 +37,10 @@ export default function App() {
   const location = useLocation()
   const isEditor = location.pathname === '/editor'
 
+  useEffect(() => {
+    window.electronAPI?.notifyRoute?.(location.pathname)
+  }, [location.pathname])
+
   return (
     <div className="flex flex-col h-screen overflow-hidden">
       <TitleBar />

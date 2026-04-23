@@ -10,6 +10,7 @@ import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive
 import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
 import { getSettings } from './settings'
+import { localTimestamp } from './utils'
 import { getMainWindow } from './index'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -37,7 +38,7 @@ export class WorkflowEngine {
       }
 
       if (step.type === 'save') {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-')
+        const ts = localTimestamp()
         const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
         const filename = `capture-${ts}.${ext}`
         const dir = step.path && step.path.trim()
@@ -111,7 +112,7 @@ export class WorkflowEngine {
     this.historyStore.add({
       id: uuidv4(),
       timestamp: Date.now(),
-      name: `capture-${new Date().toLocaleString()}`,
+      name: `capture-${localTimestamp()}`,
       dataUrl: imageData,
       filePath: result.savedPath,
       type: 'screenshot',
@@ -129,7 +130,7 @@ export class WorkflowEngine {
       const img = nativeImage.createFromDataURL(imageData)
       clipboard.writeImage(img)
     } else if (actionType === 'save') {
-      const ts = new Date().toISOString().replace(/[:.]/g, '-')
+      const ts = localTimestamp()
       const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
       const filename = `capture-${ts}.${ext}`
       const dir = getSettings().defaultSavePath || join(homedir(), 'Pictures', 'Lumia')

@@ -107,10 +107,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWindowAt: (x: number, y: number) => ipcRenderer.invoke('window-pick:get-window-at', x, y),
   confirmWindowPick: (rect: { x: number; y: number; width: number; height: number }) => ipcRenderer.invoke('window-pick:confirm', rect),
   cancelWindowPick: () => ipcRenderer.invoke('window-pick:cancel'),
+  confirmMonitorPick: () => ipcRenderer.invoke('monitor-pick:confirm'),
+  cancelMonitorPick: () => ipcRenderer.invoke('monitor-pick:cancel'),
   onOverlaySetActive: (cb: (active: boolean) => void) => {
     ipcRenderer.on('overlay:set-active', (_e, active) => cb(active))
   },
   overlayDrawing: (drawing: boolean) => ipcRenderer.send('overlay:drawing', drawing),
+  notifyRoute: (route: string) => ipcRenderer.send('app:route-changed', route),
 
   // OCR & Auto-Blur
   ocrScan: (dataUrl: string) =>

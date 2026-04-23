@@ -20,7 +20,7 @@ const MODE_ACTION: Record<CaptureMode, string> = {
 const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
   { mode: 'region',         icon: 'crop',            label: 'Region' },
   { mode: 'window',         icon: 'web_asset',       label: 'Window' },
-  { mode: 'fullscreen',     icon: 'desktop_windows', label: 'Fullscreen' },
+  { mode: 'fullscreen',     icon: 'tv_displays',     label: 'Fullscreen' },
   { mode: 'active-monitor', icon: 'monitor',         label: 'Active Screen' },
 ]
 

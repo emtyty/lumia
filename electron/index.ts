@@ -38,6 +38,7 @@ const overlayWindows: Map<number, BrowserWindow> = new Map()
 let activeOverlayDisplayId: number | null = null
 let overlayPollTimer: ReturnType<typeof setInterval> | null = null
 let overlayDrawingInProgress = false
+let currentRoute = '/dashboard'
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
@@ -74,7 +75,7 @@ function createMainWindow(): BrowserWindow {
     height: 780,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#050810',
+    backgroundColor: '#07070b',
     icon: ICON_PATH,
     // VSCode-style: frameless on both platforms
     // macOS: traffic lights inset; Windows: native overlay controls
@@ -85,7 +86,7 @@ function createMainWindow(): BrowserWindow {
     } : isWin ? {
       titleBarStyle: 'hidden',
       titleBarOverlay: {
-        color: '#050810',
+        color: '#07070b',
         symbolColor: '#94a3b8',
         height: 40
       }
@@ -107,6 +108,16 @@ function createMainWindow(): BrowserWindow {
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
+
+  // Intercept close on the editor: redirect to dashboard instead of quitting.
+  // Guards against accidental X-clicks during annotation work.
+  win.on('close', (e) => {
+    if (currentRoute === '/editor') {
+      e.preventDefault()
+      currentRoute = '/dashboard'
+      win.webContents.send('navigate', '/dashboard')
+    }
+  })
 
   win.on('closed', () => { mainWindow = null })
   return win
@@ -190,12 +201,6 @@ export function createOverlayWindows(): Map<number, BrowserWindow> {
       overlayWindows.delete(display.id)
     })
 
-    win.webContents.on('console-message', (_e, _level, msg) => {
-      if (msg.startsWith('[overlay]')) console.log(msg)
-    })
-    win.webContents.on('console-message', (_e, _level, msg) => {
-      if (msg.startsWith('[overlay]')) console.log(msg)
-    })
     overlayWindows.set(display.id, win)
   }
 
@@ -316,6 +321,11 @@ app.whenReady().then(async () => {
     overlayDrawingInProgress = drawing
   })
 
+  // IPC: Renderer route tracking — used to intercept close on /editor
+  ipcMain.on('app:route-changed', (_e, route: string) => {
+    currentRoute = route
+  })
+
   // Auto-update
   autoUpdater.on('error', (err) => {
     console.error('[autoUpdater] error:', err)
@@ -384,7 +394,6 @@ app.whenReady().then(async () => {
   // Mode is reset in scroll-region:confirm / scroll-region:cancel / region:confirm / region:cancel.
   ipcMain.handle('overlay:get-mode', () => {
     const mode = getOverlayMode()
-    console.log('[overlay] get-mode →', mode)
     return mode
   })
 

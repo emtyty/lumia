@@ -1,4 +1,5 @@
 import type { UploadResult } from '../types'
+import { localTimestamp } from '../utils'
 
 const GOOGLE_DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
 
@@ -57,7 +58,7 @@ export async function uploadToGoogleDrive(
   }
 
   const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
-  const ts = new Date().toISOString().replace(/[:.]/g, '-')
+  const ts = localTimestamp()
   const filename = `capture-${ts}.png`
 
   // Build multipart/related body per Google Drive API v3

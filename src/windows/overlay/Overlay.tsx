@@ -2,6 +2,18 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface Rect { x: number; y: number; width: number; height: number }
 
+function HintCard({ icon, children }: { icon: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
+      style={{ fontFamily: 'Manrope, sans-serif' }}
+    >
+      <span className="material-symbols-outlined text-sm mr-2 align-middle">{icon}</span>
+      {children}
+    </div>
+  )
+}
+
 export default function Overlay() {
   useEffect(() => {
     document.body.style.background = 'transparent'
@@ -12,7 +24,7 @@ export default function Overlay() {
     }
   }, [])
 
-  const [mode, setMode] = useState<'region' | 'scroll-region' | 'window-pick'>('region')
+  const [mode, setMode] = useState<'region' | 'scroll-region' | 'window-pick' | 'monitor-pick'>('region')
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null)
   const [currentPos, setCurrentPos] = useState<{ x: number; y: number } | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -43,6 +55,7 @@ export default function Overlay() {
     if (e.key === 'Escape') {
       if (mode === 'scroll-region') window.electronAPI?.cancelScrollRegion()
       else if (mode === 'window-pick') window.electronAPI?.cancelWindowPick()
+      else if (mode === 'monitor-pick') window.electronAPI?.cancelMonitorPick()
       else window.electronAPI?.cancelRegion()
     }
   }, [mode])
@@ -69,9 +82,7 @@ export default function Overlay() {
       const x = e.clientX
       const y = e.clientY
       if (pollRef.current) clearTimeout(pollRef.current)
-      console.log('[overlay] click at', x, y, 'hasGetWindowAt=', typeof window.electronAPI?.getWindowAt)
       window.electronAPI?.getWindowAt(x, y).then(rect => {
-        console.log('[overlay] confirmWindowPick rect=', JSON.stringify(rect))
         if (rect) window.electronAPI?.confirmWindowPick(rect)
       })
       return
@@ -110,6 +121,34 @@ export default function Overlay() {
 
   const rect = getRect()
 
+  // ── Monitor-pick UI ───────────────────────────────────────────────────────
+  if (mode === 'monitor-pick') {
+    return (
+      <div
+        className="fixed inset-0 select-none"
+        style={{
+          cursor: isActive ? 'pointer' : 'default',
+          background: isActive ? 'rgba(59,130,246,0.15)' : 'rgba(0,0,0,0.4)',
+        }}
+        onClick={() => { if (isActive) window.electronAPI?.confirmMonitorPick() }}
+      >
+        {isActive && (
+          <>
+            <div
+              className="absolute inset-4 pointer-events-none"
+              style={{
+                border: '3px solid rgba(96,165,250,0.9)',
+                borderRadius: 8,
+                boxShadow: 'inset 0 0 0 1px rgba(96,165,250,0.3)',
+              }}
+            />
+            <HintCard icon="monitor">Click to capture this monitor · ESC to cancel</HintCard>
+          </>
+        )}
+      </div>
+    )
+  }
+
   // ── Window-pick UI ────────────────────────────────────────────────────────
   if (mode === 'window-pick') {
     return (
@@ -126,14 +165,8 @@ export default function Overlay() {
           <div className="fixed inset-0" style={{ background: 'rgba(0,0,0,0.4)' }} />
         )}
 
-        {isActive && !hoveredWindow && (
-          <div
-            className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
-          >
-            <span className="material-symbols-outlined text-sm mr-2 align-middle">window</span>
-            Move over a window · Click to capture · ESC to cancel
-          </div>
+        {isActive && (
+          <HintCard icon="window">Move over a window · Click to capture · ESC to cancel</HintCard>
         )}
 
         {hoveredWindow && isActive && (
@@ -196,16 +229,8 @@ export default function Overlay() {
         .scroll-region-pulse { animation: scroll-region-border-pulse 1.5s ease-in-out infinite; }
       `}</style>
 
-      {!isDrawing && isActive && (
-        <div
-          className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          <span className="material-symbols-outlined text-sm mr-2 align-middle">
-            {mode === 'scroll-region' ? 'swipe_down' : 'crop_free'}
-          </span>
-          {hint}
-        </div>
+      {isActive && (
+        <HintCard icon={mode === 'scroll-region' ? 'swipe_down' : 'crop_free'}>{hint}</HintCard>
       )}
 
       {rect && rect.width > 0 && rect.height > 0 && (
