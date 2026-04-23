@@ -57,12 +57,6 @@ win:
     - target: nsis
       arch: [x64, arm64]
 
-  azureSignOptions:
-    publisherName: "CN=CreativeForce inc"
-    endpoint: "https://eus.codesigning.azure.net/"
-    codeSigningAccountName: "CreativeForce"
-    certificateProfileName: "sign-tools"
-
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

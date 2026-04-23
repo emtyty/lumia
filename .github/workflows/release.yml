@@ -64,15 +64,26 @@ jobs:
   # ── Windows ──────────────────────────────────────────────────────────────────
   release-win:
     environment: Production
-
     name: Release · Windows
     runs-on: windows-latest
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Azure auth for Trusted Signing
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
       AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+      # Azure Trusted Signing config
+      AZURE_PUBLISHER_NAME: ${{ secrets.AZURE_PUBLISHER_NAME }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+      AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+
+      # Optional: reduce Azure CLI output in logs
+      AZURE_CORE_OUTPUT: none
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -97,6 +108,8 @@ jobs:
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
+      # Optional but useful if you also run az commands in this job.
+      # It does NOT replace the AZURE_* env required by electron-builder signing.
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
@@ -105,7 +118,14 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
       - name: Package, sign with Azure, and publish
-        run: npx electron-builder --win --publish always
+        shell: pwsh
+        run: |
+          npx electron-builder --win --publish always `
+            -c.win.azureSignOptions.publisherName="$env:AZURE_PUBLISHER_NAME" `
+            -c.win.azureSignOptions.endpoint="$env:AZURE_TRUSTED_SIGNING_ENDPOINT" `
+            -c.win.azureSignOptions.codeSigningAccountName="$env:AZURE_CODE_SIGNING_ACCOUNT_NAME" `
+            -c.win.azureSignOptions.certificateProfileName="$env:AZURE_CERT_PROFILE_NAME"
+
 
   # ── Mark as latest ───────────────────────────────────────────────────────────
   mark-latest:
