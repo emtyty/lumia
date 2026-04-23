@@ -90,7 +90,13 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const clampZoom = (z: number) => Math.max(0.1, Math.min(z, 5))
     const zoomIn  = useCallback(() => setUserZoom(z => clampZoom(z + 0.1)), [])
     const zoomOut = useCallback(() => setUserZoom(z => clampZoom(z - 0.1)), [])
-    const zoomReset = useCallback(() => setUserZoom(1), [])
+    const zoomReset = useCallback(() => { setUserZoom(1); setPanOffset({ x: 0, y: 0 }) }, [])
+
+    // ── Pan (right-click drag) ────────────────────────────────────────────────
+    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+    const [isPanningState, setIsPanningState] = useState(false)
+    const isPanning = useRef(false)
+    const panStart  = useRef({ x: 0, y: 0 })
 
     // ── History ───────────────────────────────────────────────────────────────
     const {
@@ -149,20 +155,64 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     useEffect(() => { onZoomChange?.(userZoom) }, [userZoom, onZoomChange])
 
-    // Ctrl+Wheel zoom
+    // Scroll to zoom
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
       const onWheel = (e: WheelEvent) => {
-        if (e.ctrlKey || e.metaKey) {
-          e.preventDefault()
-          const delta = e.deltaY > 0 ? -0.05 : 0.05
-          setUserZoom(z => clampZoom(z + delta))
-        }
+        e.preventDefault()
+        const delta = e.deltaY > 0 ? -0.05 : 0.05
+        setUserZoom(z => clampZoom(z + delta))
       }
       el.addEventListener('wheel', onWheel, { passive: false })
       return () => el.removeEventListener('wheel', onWheel)
     }, [])
+
+    // Double-click to reset zoom + pan to center
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const onDblClick = () => {
+        setUserZoom(1)
+        setPanOffset({ x: 0, y: 0 })
+      }
+      el.addEventListener('dblclick', onDblClick)
+      return () => el.removeEventListener('dblclick', onDblClick)
+    }, [])
+
+    // Right-click drag to pan
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const onMouseDown = (e: MouseEvent) => {
+        if (e.button !== 2) return
+        e.preventDefault()
+        isPanning.current = true
+        setIsPanningState(true)
+        panStart.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y }
+      }
+      const onMouseMove = (e: MouseEvent) => {
+        if (!isPanning.current) return
+        setPanOffset({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y })
+      }
+      const onMouseUp = (e: MouseEvent) => {
+        if (e.button !== 2) return
+        isPanning.current = false
+        setIsPanningState(false)
+      }
+      const onContextMenu = (e: MouseEvent) => e.preventDefault()
+
+      el.addEventListener('mousedown', onMouseDown)
+      window.addEventListener('mousemove', onMouseMove)
+      window.addEventListener('mouseup', onMouseUp)
+      el.addEventListener('contextmenu', onContextMenu)
+      return () => {
+        el.removeEventListener('mousedown', onMouseDown)
+        window.removeEventListener('mousemove', onMouseMove)
+        window.removeEventListener('mouseup', onMouseUp)
+        el.removeEventListener('contextmenu', onContextMenu)
+      }
+    }, [panOffset])
 
     const stageWidth  = Math.round(naturalW * scale)
     const stageHeight = Math.round(naturalH * scale)
@@ -182,6 +232,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     // ── Drawing handlers ──────────────────────────────────────────────────────
     const handleMouseDown = useCallback(
       (e: Konva.KonvaEventObject<MouseEvent>) => {
+        if (e.evt.button === 2) return
         if (tool === 'select') {
           if (e.target === e.target.getStage()) setSelectedId(null)
           return
@@ -368,17 +419,17 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     )
 
     return (
-      <div ref={containerRef} className="w-full h-full relative overflow-auto">
-        {/* Grid wrapper: centers stage when smaller than viewport,
-            grows to fit stage when larger → scrollable from top-left. */}
+      <div
+        ref={containerRef}
+        className="w-full h-full relative overflow-hidden"
+        style={{ cursor: isPanningState ? 'grabbing' : undefined }}
+      >
         <div style={{
           display: 'grid',
           placeItems: 'center',
-          minWidth: '100%',
-          minHeight: '100%',
-          width: Math.max(stageWidth, 0),
-          height: Math.max(stageHeight, 0),
-          padding: 16,
+          width: '100%',
+          height: '100%',
+          transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
         }}>
         <Stage
           ref={stageRef}
@@ -390,8 +441,10 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           style={{
-            cursor:
-              tool === 'pen' ? 'crosshair' : tool === 'text' ? 'text' : 'default',
+            cursor: isPanningState ? 'grabbing'
+              : tool === 'pen' ? 'crosshair'
+              : tool === 'text' ? 'text'
+              : 'default',
           }}
         >
           <Layer>

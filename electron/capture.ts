@@ -82,7 +82,7 @@ async function captureFullscreen(): Promise<string> {
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
+    thumbnailSize: { width: Math.max(1, Math.round(width * (scaleFactor || 1))), height: Math.max(1, Math.round(height * (scaleFactor || 1))) }
   })
 
   const source = findSourceForDisplay(sources, allDisplays, targetDisplay.id)
@@ -126,11 +126,15 @@ async function captureRect(rect: { x: number; y: number; width: number; height: 
   const overlayId = displayId ?? getOverlayDisplayId()
   const targetDisplay = allDisplays.find(d => d.id === overlayId) ?? screen.getPrimaryDisplay()
   const { width, height } = targetDisplay.size
-  const scaleFactor = targetDisplay.scaleFactor
+  const scaleFactor = targetDisplay.scaleFactor || 1
+
+  // thumbnailSize must be positive integers — guard against zero/NaN
+  const thumbW = Math.max(1, Math.round(width * scaleFactor))
+  const thumbH = Math.max(1, Math.round(height * scaleFactor))
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
+    thumbnailSize: { width: thumbW, height: thumbH }
   })
 
   // rect coords are clientX/clientY from the overlay window, which is positioned
@@ -161,7 +165,7 @@ async function captureActiveMonitor(): Promise<string> {
 
   const sources = await desktopCapturer.getSources({
     types: ['screen'],
-    thumbnailSize: { width: width * scaleFactor, height: height * scaleFactor }
+    thumbnailSize: { width: Math.max(1, Math.round(width * (scaleFactor || 1))), height: Math.max(1, Math.round(height * (scaleFactor || 1))) }
   })
 
   const source = findSourceForDisplay(sources, allDisplays, activeDisplay.id)

@@ -30,6 +30,14 @@ if (process.platform === 'win32') {
 
 const isDev = !app.isPackaged
 
+// Only allow a single running instance — prevents cache/lock conflicts
+// (cache_util_win.cc "Access is denied" errors) when the user relaunches
+// while the tray instance is still alive.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+  process.exit(0)
+}
+
 let mainWindow: BrowserWindow | null = null
 let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
 const overlayWindows: Map<number, BrowserWindow> = new Map()

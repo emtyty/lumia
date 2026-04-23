@@ -7,15 +7,14 @@ import AnnotationCanvas, {
 import type { WorkflowTemplate, HistoryItem, AfterCaptureStep, UploadDestination, SensitiveRegion } from '../../types'
 import { AutoBlurPanel } from '../../components/AutoBlurPanel'
 
-/** Map each step in the active workflow to a one-click action button */
 interface ActionBtn {
-  key: string               // unique id for React key & busy tracking
-  icon: string              // material icon
-  label: string             // button text
-  templateId: string        // which builtin/workflow to run
-  destinationIndex?: number // when set, only upload to this destination
-  primary?: boolean         // gradient style for upload destinations
-  actionType?: 'clipboard' | 'save' // inline action — skip runWorkflow
+  key: string
+  icon: string
+  label: string
+  templateId: string
+  destinationIndex?: number
+  primary?: boolean
+  actionType?: 'clipboard' | 'save'
 }
 
 const DEST_META: Record<string, { icon: string; label: string }> = {
@@ -28,18 +27,13 @@ const DEST_META: Record<string, { icon: string; label: string }> = {
 function deriveActions(tpl: WorkflowTemplate | undefined): ActionBtn[] {
   if (!tpl) return []
   const btns: ActionBtn[] = []
-
-  // afterCapture steps → standalone quick actions
   for (const step of tpl.afterCapture) {
     if (step.type === 'clipboard') {
       btns.push({ key: 'clipboard', icon: 'content_paste', label: 'Copy', templateId: tpl.id, actionType: 'clipboard' })
     } else if (step.type === 'save') {
       btns.push({ key: 'save', icon: 'save', label: 'Save', templateId: tpl.id, actionType: 'save' })
     }
-    // 'annotate' is implicit in the editor — not a button
   }
-
-  // destinations → each gets its own button, uploads only to that destination
   for (let i = 0; i < tpl.destinations.length; i++) {
     const dest = tpl.destinations[i]
     const meta = DEST_META[dest.type] ?? { icon: 'cloud_upload', label: dest.type }
@@ -52,23 +46,44 @@ function deriveActions(tpl: WorkflowTemplate | undefined): ActionBtn[] {
       primary: true,
     })
   }
-
   return btns
 }
 
-const TOOLS: { id: Tool; icon: string; label: string; key: string }[] = [
-  { id: 'select',  icon: 'arrow_selector_tool', label: 'Select',    key: 'V' },
-  { id: 'pen',     icon: 'draw',                label: 'Pen',       key: 'P' },
-  { id: 'rect',    icon: 'rectangle',           label: 'Rectangle', key: 'R' },
-  { id: 'ellipse', icon: 'circle',              label: 'Ellipse',   key: 'E' },
-  { id: 'arrow',   icon: 'north_east',          label: 'Arrow',     key: 'A' },
-  { id: 'text',    icon: 'text_fields',         label: 'Text',      key: 'T' },
-  { id: 'blur',    icon: 'blur_on',             label: 'Blur',      key: 'B' },
+type ToolGroup = 'draw' | 'shape' | 'select'
+
+const TOOL_GROUPS: { group: ToolGroup; label: string; tools: { id: Tool; icon: string; label: string; key: string }[] }[] = [
+  {
+    group: 'draw',
+    label: 'Draw',
+    tools: [
+      { id: 'pen',    icon: 'edit',       label: 'Pen',    key: 'P' },
+      { id: 'blur',   icon: 'blur_on',    label: 'Blur',   key: 'B' },
+      { id: 'text',   icon: 'title',      label: 'Text',   key: 'T' },
+    ],
+  },
+  {
+    group: 'shape',
+    label: 'Shape',
+    tools: [
+      { id: 'rect',    icon: 'crop_square',   label: 'Rectangle', key: 'R' },
+      { id: 'ellipse', icon: 'circle',        label: 'Ellipse',   key: 'E' },
+      { id: 'arrow',   icon: 'north_east',    label: 'Arrow',     key: 'A' },
+    ],
+  },
+  {
+    group: 'select',
+    label: 'Select',
+    tools: [
+      { id: 'select', icon: 'arrow_selector_tool', label: 'Select', key: 'V' },
+    ],
+  },
 ]
 
+const ALL_TOOLS = TOOL_GROUPS.flatMap(g => g.tools)
+
 const COLORS = [
-  '#b6a0ff', '#00e3fd', '#ff6c95', '#fbbf24',
-  '#34d399', '#f87171', '#ffffff', '#000000',
+  '#f87171', '#fb923c', '#fbbf24', '#34d399',
+  '#60a5fa', '#a78bfa', '#f472b6', '#ffffff', '#000000',
 ]
 
 function relativeTime(ts: number): string {
@@ -90,10 +105,10 @@ export default function Editor() {
     (location.state as { dataUrl?: string })?.dataUrl ?? '',
   )
   const [tool, setTool] = useState<Tool>('pen')
-  const [color, setColor] = useState('#b6a0ff')
+  const [color, setColor] = useState('#f87171')
   const [strokeWidth, setStrokeWidth] = useState(3)
   const [exportTrigger, setExportTrigger] = useState(0)
-  const [exportedDataUrl, setExportedDataUrl] = useState<string>('')
+  const [, setExportedDataUrl] = useState<string>('')
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
   const [activeWorkflowId, setActiveWorkflowId] = useState<string>('')
   const [toast, setToast] = useState<{ message: string; icon: string; type: 'success' | 'error' } | null>(null)
@@ -107,21 +122,18 @@ export default function Editor() {
     { id: string; dataUrl: string; name: string; timestamp: number }[]
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
-
-  // Auto-blur state
   const [showAutoBlur, setShowAutoBlur] = useState(false)
   const [autoBlurScanning, setAutoBlurScanning] = useState(false)
   const [autoBlurRegions, setAutoBlurRegions] = useState<SensitiveRegion[]>([])
   const [autoBlurSelected, setAutoBlurSelected] = useState<Set<string>>(new Set())
   const [autoBlurOcrTime, setAutoBlurOcrTime] = useState<number>()
-  const [autoBlurDetectTime, setAutoBlurDetectTime] = useState<number>()
-  const [autoBlurHistory, setAutoBlurHistory] = useState<string[]>([]) // stack of previous dataUrls for undo
+  const [, setAutoBlurDetectTime] = useState<number>()
+  const [autoBlurHistory, setAutoBlurHistory] = useState<string[]>([])
 
   const resetForNewImage = useCallback((dataUrl: string) => {
     setImageDataUrl(dataUrl)
     setExportTrigger(0)
     canvasRef.current?.clear()
-    // Reset auto-blur state
     setAutoBlurRegions([])
     setAutoBlurSelected(new Set())
     setAutoBlurHistory([])
@@ -140,9 +152,7 @@ export default function Editor() {
 
   useEffect(() => {
     const state = location.state as { dataUrl?: string } | null
-    if (state?.dataUrl) {
-      resetForNewImage(state.dataUrl)
-    }
+    if (state?.dataUrl) resetForNewImage(state.dataUrl)
   }, [location.state])
 
   useEffect(() => {
@@ -168,19 +178,15 @@ export default function Editor() {
     })
   }, [])
 
-  // Keyboard shortcuts for tools + zoom
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-
-      // Zoom: Ctrl/Cmd + / - / 0
       if (e.ctrlKey || e.metaKey) {
         if (e.key === '=' || e.key === '+') { e.preventDefault(); canvasRef.current?.zoomIn(); return }
         if (e.key === '-')                  { e.preventDefault(); canvasRef.current?.zoomOut(); return }
         if (e.key === '0')                  { e.preventDefault(); canvasRef.current?.zoomReset(); return }
       }
-
-      const t = TOOLS.find(t => t.key?.toLowerCase() === e.key.toLowerCase())
+      const t = ALL_TOOLS.find(t => t.key?.toLowerCase() === e.key.toLowerCase())
       if (t) setTool(t.id)
     }
     window.addEventListener('keydown', onKey)
@@ -198,34 +204,23 @@ export default function Editor() {
     const pending = pendingAction.current
     pendingAction.current = null
     if (!pending) return
-
     const { key, templateId, destinationIndex, actionType } = JSON.parse(pending) as {
       key: string; templateId: string; destinationIndex?: number; actionType?: 'clipboard' | 'save'
     }
     setActionBusy(key)
-
     if (actionType) {
-      // Inline action — run only clipboard or save via a minimal template call
       window.electronAPI?.runInlineAction(actionType, dataUrl)
-        .then(() => {
-          showToast(actionType === 'clipboard' ? 'Copied to clipboard' : 'Saved to file', 'check_circle')
-        })
+        .then(() => showToast(actionType === 'clipboard' ? 'Copied to clipboard' : 'Saved to file', 'check_circle'))
         .catch(() => showToast('Action failed', 'error', 'error'))
         .finally(() => setActionBusy(null))
       return
     }
-
     window.electronAPI?.runWorkflow(templateId, dataUrl, destinationIndex)
       .then((r) => {
-        if (r?.uploads?.some(u => u.url)) {
-          showToast('Uploaded — link copied', 'check_circle')
-        } else if (r?.copiedToClipboard) {
-          showToast('Copied to clipboard', 'check_circle')
-        } else if (r?.savedPath) {
-          showToast('Saved to file', 'check_circle')
-        } else {
-          showToast('Done', 'check_circle')
-        }
+        if (r?.uploads?.some(u => u.url))  showToast('Uploaded — link copied', 'check_circle')
+        else if (r?.copiedToClipboard)     showToast('Copied to clipboard', 'check_circle')
+        else if (r?.savedPath)             showToast('Saved to file', 'check_circle')
+        else                               showToast('Done', 'check_circle')
       })
       .catch(() => showToast('Action failed', 'error', 'error'))
       .finally(() => setActionBusy(null))
@@ -241,7 +236,6 @@ export default function Editor() {
     setCanRedo(r)
   }, [])
 
-  // Auto-blur handlers
   const handleAutoBlurScan = useCallback(async () => {
     if (!imageDataUrl || autoBlurScanning) return
     setAutoBlurScanning(true)
@@ -253,11 +247,9 @@ export default function Editor() {
         setAutoBlurSelected(new Set(result.regions.map(r => r.id)))
         setAutoBlurOcrTime(result.ocrTimeMs)
         setAutoBlurDetectTime(result.detectTimeMs)
-        if (result.regions.length === 0) {
-          showToast('No sensitive info detected', 'verified_user')
-        }
+        if (result.regions.length === 0) showToast('No sensitive info detected', 'verified_user')
       }
-    } catch (err) {
+    } catch {
       showToast('OCR scan failed', 'error', 'error')
     } finally {
       setAutoBlurScanning(false)
@@ -270,7 +262,6 @@ export default function Editor() {
     try {
       const blurred = await window.electronAPI?.ocrApplyBlur(imageDataUrl, selected, 10)
       if (blurred) {
-        // Save current image for undo
         setAutoBlurHistory(prev => [...prev, imageDataUrl])
         setImageDataUrl(blurred)
         setAutoBlurRegions([])
@@ -299,7 +290,6 @@ export default function Editor() {
   if (!imageDataUrl) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-6">
-        {/* Decorative gradient orb */}
         <div className="relative">
           <div className="absolute -inset-8 rounded-full bg-primary/10 blur-3xl" />
           <div className="relative p-7 rounded-3xl bg-white/[0.03] border border-white/[0.06] shadow-2xl">
@@ -309,12 +299,8 @@ export default function Editor() {
           </div>
         </div>
         <div className="text-center space-y-2">
-          <p className="text-lg font-bold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>
-            Ready to annotate
-          </p>
-          <p className="text-sm text-slate-500 max-w-[260px]">
-            Capture your screen or pick a recent screenshot to start editing
-          </p>
+          <p className="text-lg font-bold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Ready to annotate</p>
+          <p className="text-sm text-slate-500 max-w-[260px]">Capture your screen or pick a recent screenshot to start editing</p>
         </div>
         <div className="flex gap-3 mt-1">
           <button
@@ -341,160 +327,71 @@ export default function Editor() {
     <div className="h-full flex flex-col overflow-hidden">
       {/* ── Toast ── */}
       {toast && (
-        <div className={`fixed top-16 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2.5 backdrop-blur-xl border rounded-xl shadow-lg animate-slide-up ${
-          toast.type === 'error'
-            ? 'bg-tertiary/20 border-tertiary/30'
-            : 'bg-secondary/20 border-secondary/30'
+        <div className={`fixed top-12 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 backdrop-blur-xl border rounded-xl shadow-lg animate-slide-up ${
+          toast.type === 'error' ? 'bg-red-500/20 border-red-500/30' : 'bg-emerald-500/20 border-emerald-500/30'
         }`}>
-          <span className={`material-symbols-outlined text-sm ${toast.type === 'error' ? 'text-tertiary' : 'text-secondary'}`}>{toast.icon}</span>
+          <span className={`material-symbols-outlined text-sm ${toast.type === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>{toast.icon}</span>
           <span className="text-xs font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>{toast.message}</span>
         </div>
       )}
 
-      {/* ── Toolbar Header ── */}
-      <header className="h-11 liquid-glass flex items-center px-2.5 border-b border-white/5 flex-shrink-0 gap-1.5">
+      {/* ── Top bar: title + actions ── */}
+      <header className="h-10 liquid-glass flex items-center px-3 border-b border-white/5 flex-shrink-0 gap-2">
         {/* Back */}
         <button
           onClick={() => navigate('/dashboard')}
-          className="h-7 px-2 rounded-lg bg-white/5 hover:bg-white/10 flex items-center gap-1.5 text-slate-400 hover:text-white transition-all flex-shrink-0"
-          title="Back to Dashboard"
+          className="h-7 w-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-white transition-all flex-shrink-0"
+          title="Back"
         >
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
-          <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>Back</span>
         </button>
 
         <div className="w-px h-5 bg-white/10" />
 
-        {/* Tools */}
-        <div className="flex items-center gap-0.5 bg-white/[0.03] rounded-xl p-0.5 border border-white/5">
-          {TOOLS.map(({ id, icon, label, key }) => (
-            <button
-              key={id}
-              title={`${label} (${key})`}
-              onClick={() => setTool(id)}
-              className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
-                tool === id
-                  ? 'bg-primary/20 text-primary shadow-[0_0_10px_rgba(182,160,255,0.15)]'
-                  : 'text-slate-400 hover:text-white hover:bg-white/10'
-              }`}
-            >
-              <span className="material-symbols-outlined text-[16px]">{icon}</span>
-            </button>
-          ))}
-        </div>
-
-        <div className="w-px h-5 bg-white/10" />
-
-        {/* Colors */}
-        <div className="flex items-center gap-1 px-1">
-          {COLORS.map((c) => (
-            <button
-              key={c}
-              onClick={() => setColor(c)}
-              className={`w-5 h-5 rounded-full transition-all hover:scale-110 flex-shrink-0 border-2 ${
-                color === c
-                  ? 'border-white scale-110 shadow-[0_0_6px_rgba(255,255,255,0.2)]'
-                  : 'border-transparent hover:border-white/30'
-              }`}
-              style={{ background: c }}
-            />
-          ))}
-          {/* Custom color */}
-          <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group">
-            <div
-              className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/40 transition-colors flex items-center justify-center"
-            >
-              <span className="material-symbols-outlined text-[11px] text-slate-500 group-hover:text-slate-300">colorize</span>
-            </div>
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-            />
-          </label>
-        </div>
-
-        <div className="w-px h-5 bg-white/10" />
-
-        {/* Stroke width */}
-        <div className="flex items-center gap-1.5 px-1">
-          <div
-            className="rounded-full flex-shrink-0"
-            style={{
-              background: color,
-              width: Math.max(4, Math.min(strokeWidth, 12)),
-              height: Math.max(4, Math.min(strokeWidth, 12)),
-            }}
-          />
-          <input
-            type="range"
-            min={1}
-            max={20}
-            value={strokeWidth}
-            onChange={(e) => setStrokeWidth(Number(e.target.value))}
-            className="w-16 accent-primary h-1"
-          />
-          <span className="text-[10px] text-slate-500 font-mono w-4 text-right flex-shrink-0 tabular-nums">
-            {strokeWidth}
-          </span>
-        </div>
-
-        <div className="w-px h-5 bg-white/10" />
-
-        {/* Undo / Redo / Clear */}
+        {/* Zoom */}
         <div className="flex items-center gap-0.5">
-          <HeaderBtn icon="undo" label="Undo (Ctrl+Z)" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
-          <HeaderBtn icon="redo" label="Redo (Ctrl+Shift+Z)" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
-          <HeaderBtn icon="delete_sweep" label="Clear all" onClick={() => canvasRef.current?.clear()} variant="danger" />
-        </div>
-
-        <div className="w-px h-5 bg-white/10" />
-
-        {/* Zoom controls */}
-        <div className="flex items-center gap-0.5">
-          <HeaderBtn icon="remove" label="Zoom out (Ctrl+-)" onClick={() => canvasRef.current?.zoomOut()} />
+          <TinyBtn icon="remove" title="Zoom out (Ctrl+-)" onClick={() => canvasRef.current?.zoomOut()} />
           <button
             onClick={() => canvasRef.current?.zoomReset()}
-            className="h-7 px-1.5 rounded-lg text-[10px] font-bold text-slate-400 hover:text-white hover:bg-white/10 transition-all tabular-nums"
+            className="h-7 px-2 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 transition-all tabular-nums min-w-[44px] text-center"
             title="Reset zoom (Ctrl+0)"
             style={{ fontFamily: 'Manrope, sans-serif' }}
           >
             {Math.round(zoomLevel * 100)}%
           </button>
-          <HeaderBtn icon="add" label="Zoom in (Ctrl+=)" onClick={() => canvasRef.current?.zoomIn()} />
+          <TinyBtn icon="add" title="Zoom in (Ctrl+=)" onClick={() => canvasRef.current?.zoomIn()} />
         </div>
 
         {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right side actions */}
+        {/* New capture */}
         <button
           onClick={() => window.electronAPI?.captureScreenshot('region')}
-          className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center text-slate-400 hover:text-secondary transition-all flex-shrink-0"
+          className="h-7 px-2.5 rounded-lg bg-white/5 hover:bg-white/10 flex items-center gap-1.5 text-slate-400 hover:text-white transition-all flex-shrink-0"
           title="New capture"
         >
-          <span className="material-symbols-outlined text-[16px]">screenshot_region</span>
+          <span className="material-symbols-outlined text-[15px]">add_a_photo</span>
+          <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>New</span>
         </button>
 
+        {/* Auto-blur */}
         <button
           onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
-          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
-            showAutoBlur
-              ? 'bg-red-500/20 text-red-400'
-              : 'bg-white/5 text-slate-400 hover:text-red-400 hover:bg-red-500/10'
+          className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 transition-all flex-shrink-0 ${
+            showAutoBlur ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-white/5 text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
           }`}
           title="Auto-blur sensitive info"
         >
-          <span className="material-symbols-outlined text-[16px]">security</span>
+          <span className="material-symbols-outlined text-[15px]">security</span>
+          <span className="text-[11px] font-semibold" style={{ fontFamily: 'Manrope, sans-serif' }}>Blur</span>
         </button>
 
+        {/* Recent captures */}
         <button
           onClick={() => setShowClipPanel(p => !p)}
-          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
-            showClipPanel
-              ? 'bg-primary/20 text-primary'
-              : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
+          className={`h-7 w-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 ${
+            showClipPanel ? 'bg-primary/20 text-primary' : 'bg-white/5 text-slate-400 hover:text-white hover:bg-white/10'
           }`}
           title="Recent captures"
         >
@@ -503,49 +400,46 @@ export default function Editor() {
 
         {actionBtns.length > 0 && <div className="w-px h-5 bg-white/10" />}
 
-        {/* One-click action buttons derived from active workflow steps */}
+        {/* Action buttons */}
         {actionBtns.map((btn) => (
           <button
             key={btn.key}
             onClick={() => triggerAction(btn.key, btn.templateId, btn.destinationIndex, btn.actionType)}
             disabled={!!actionBusy}
-            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all flex-shrink-0 disabled:opacity-40 ${
+            title={btn.label}
+            className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 transition-all flex-shrink-0 disabled:opacity-40 text-[11px] font-semibold ${
               actionBusy === btn.key
                 ? 'bg-primary/20 text-primary'
                 : btn.primary
-                  ? 'bg-primary/10 hover:bg-primary/20 text-primary hover:text-white'
-                  : 'bg-white/5 hover:bg-white/10 text-slate-400 hover:text-white'
+                  ? 'primary-gradient text-slate-900 hover:brightness-110'
+                  : 'bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white'
             }`}
-            title={btn.label}
+            style={{ fontFamily: 'Manrope, sans-serif' }}
           >
             {actionBusy === btn.key
-              ? <div className="w-3.5 h-3.5 rounded-full border-2 border-primary border-t-transparent animate-spin" />
-              : <span className="material-symbols-outlined text-[16px]">{btn.icon}</span>
+              ? <div className="w-3 h-3 rounded-full border-2 border-current border-t-transparent animate-spin" />
+              : <span className="material-symbols-outlined text-[14px]">{btn.icon}</span>
             }
+            {btn.label}
           </button>
         ))}
       </header>
 
-      {/* ── Main area: canvas + clip panel ── */}
+      {/* ── Main area ── */}
       <div className="flex flex-1 overflow-hidden">
 
         {/* ── Canvas container ── */}
         <div
           className="flex-1 relative overflow-hidden"
-          style={{
-            background: 'radial-gradient(circle at 30% 40%, rgba(15, 23, 42, 0.8) 0%, #020617 100%)',
-          }}
+          style={{ background: 'radial-gradient(circle at 30% 40%, rgba(15,23,42,0.9) 0%, #020617 100%)' }}
         >
-          {/* Subtle grid pattern */}
           <div
-            className="absolute inset-0 opacity-[0.03] pointer-events-none"
+            className="absolute inset-0 opacity-[0.025] pointer-events-none"
             style={{
-              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.5) 1px, transparent 1px)`,
+              backgroundImage: `radial-gradient(circle, rgba(255,255,255,0.6) 1px, transparent 1px)`,
               backgroundSize: '24px 24px',
             }}
           />
-
-          {/* Canvas */}
           <AnnotationCanvas
             ref={canvasRef}
             key={imageDataUrl}
@@ -558,7 +452,6 @@ export default function Editor() {
             onHistoryChange={handleHistoryChange}
             onZoomChange={setZoomLevel}
           />
-
         </div>
 
         {/* ── Auto-blur panel ── */}
@@ -589,27 +482,18 @@ export default function Editor() {
         {showClipPanel && (
           <aside className="w-60 flex-shrink-0 glass-refractive border-l border-white/5 flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-white/5 flex-shrink-0">
-              <span
-                className="text-[10px] font-bold uppercase tracking-widest text-slate-500"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
+              <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500" style={{ fontFamily: 'Manrope, sans-serif' }}>
                 Recent Captures
               </span>
-              <button
-                onClick={() => setShowClipPanel(false)}
-                className="text-slate-500 hover:text-white transition-colors"
-              >
+              <button onClick={() => setShowClipPanel(false)} className="text-slate-500 hover:text-white transition-colors">
                 <span className="material-symbols-outlined text-sm">close</span>
               </button>
             </div>
-
             <div className="flex-1 overflow-y-auto p-2 space-y-1">
               {clipboardHistory.length === 0 ? (
                 <div className="flex flex-col items-center py-10 gap-3">
                   <span className="material-symbols-outlined text-2xl text-slate-700">collections</span>
-                  <p className="text-xs text-slate-600 text-center px-4">
-                    Your recent captures will appear here
-                  </p>
+                  <p className="text-xs text-slate-600 text-center px-4">Your recent captures will appear here</p>
                 </div>
               ) : (
                 clipboardHistory.map((item) => (
@@ -620,13 +504,9 @@ export default function Editor() {
                         ? 'bg-primary/10 border border-primary/20'
                         : 'bg-white/[0.02] hover:bg-white/[0.06] border border-transparent'
                     }`}
-                    onClick={() => { resetForNewImage(item.dataUrl) }}
+                    onClick={() => resetForNewImage(item.dataUrl)}
                   >
-                    <img
-                      src={item.dataUrl}
-                      className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10"
-                      draggable={false}
-                    />
+                    <img src={item.dataUrl} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" draggable={false} />
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] text-slate-300 truncate font-medium">{item.name}</p>
                       <p className="text-[9px] text-slate-600 mt-0.5">{relativeTime(item.timestamp)}</p>
@@ -650,33 +530,153 @@ export default function Editor() {
         )}
       </div>
 
+      {/* ── Bottom toolbar (Snipping Tool style) ── */}
+      <div className="liquid-glass border-t border-white/5 flex-shrink-0 flex flex-col">
+
+        {/* Tool groups */}
+        <div className="flex items-stretch h-14 px-3 gap-1">
+
+          {/* Tool group tabs */}
+          {TOOL_GROUPS.map((group) => {
+            const isGroupActive = group.tools.some(t => t.id === tool)
+            return (
+              <div key={group.group} className="flex items-center">
+                {/* Group label */}
+                <div className={`flex items-center gap-0.5 rounded-xl p-1 ${isGroupActive ? 'bg-white/[0.06]' : ''}`}>
+                  {group.tools.map(({ id, icon, label, key }) => (
+                    <button
+                      key={id}
+                      title={`${label} (${key})`}
+                      onClick={() => setTool(id)}
+                      className={`relative flex flex-col items-center justify-center gap-0.5 w-12 h-10 rounded-lg transition-all ${
+                        tool === id
+                          ? 'bg-primary/20 text-primary shadow-[0_0_12px_rgba(182,160,255,0.15)]'
+                          : 'text-slate-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+                      <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
+                      {tool === id && (
+                        <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-primary" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                <div className="w-px h-8 bg-white/[0.06] mx-1" />
+              </div>
+            )
+          })}
+
+          {/* Color swatches */}
+          <div className="flex items-center gap-1 px-1">
+            {COLORS.map((c) => (
+              <button
+                key={c}
+                onClick={() => setColor(c)}
+                className="relative flex-shrink-0 transition-all hover:scale-110"
+                title={c}
+              >
+                <div
+                  className={`w-5 h-5 rounded-full border-2 transition-all ${
+                    color === c ? 'border-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border-transparent hover:border-white/30'
+                  }`}
+                  style={{ background: c }}
+                />
+              </button>
+            ))}
+            {/* Custom color */}
+            <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group" title="Custom color">
+              <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/50 transition-colors flex items-center justify-center overflow-hidden">
+                <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
+              </div>
+              <input
+                type="color"
+                value={color}
+                onChange={(e) => setColor(e.target.value)}
+                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+              />
+            </label>
+          </div>
+
+          <div className="w-px h-8 bg-white/[0.06] self-center" />
+
+          {/* Stroke width */}
+          <div className="flex items-center gap-2 px-2">
+            <div className="flex items-center gap-1">
+              {[2, 4, 8].map((w) => (
+                <button
+                  key={w}
+                  onClick={() => setStrokeWidth(w)}
+                  className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                    strokeWidth === w ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-white hover:bg-white/10'
+                  }`}
+                  title={`Stroke ${w}px`}
+                >
+                  <div
+                    className="rounded-full flex-shrink-0"
+                    style={{ background: 'currentColor', width: w + 4, height: w + 4 }}
+                  />
+                </button>
+              ))}
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={20}
+              value={strokeWidth}
+              onChange={(e) => setStrokeWidth(Number(e.target.value))}
+              className="w-20 accent-primary h-1"
+            />
+            <span className="text-[10px] text-slate-500 font-mono w-5 tabular-nums">{strokeWidth}</span>
+          </div>
+
+          <div className="w-px h-8 bg-white/[0.06] self-center" />
+
+          {/* Undo / Redo / Clear */}
+          <div className="flex items-center gap-0.5 px-1">
+            <BottomBtn icon="undo" label="Undo" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
+            <BottomBtn icon="redo" label="Redo" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
+            <BottomBtn icon="delete_sweep" label="Clear" onClick={() => canvasRef.current?.clear()} variant="danger" />
+          </div>
+
+        </div>
+      </div>
+
     </div>
   )
 }
 
-/* ── Header icon button ── */
+/* ── Tiny icon button (top bar) ── */
+function TinyBtn({ icon, title, onClick, disabled }: { icon: string; title: string; onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      title={title}
+      disabled={disabled}
+      onClick={onClick}
+      className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-white hover:bg-white/10 transition-all disabled:opacity-25 disabled:cursor-not-allowed"
+    >
+      <span className="material-symbols-outlined text-[16px]">{icon}</span>
+    </button>
+  )
+}
 
-function HeaderBtn({
-  icon, label, disabled, onClick, variant,
-}: {
-  icon: string
-  label: string
-  disabled?: boolean
-  onClick: () => void
-  variant?: 'danger'
+/* ── Bottom toolbar button ── */
+function BottomBtn({ icon, label, disabled, onClick, variant }: {
+  icon: string; label: string; disabled?: boolean; onClick: () => void; variant?: 'danger'
 }) {
   return (
     <button
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:opacity-25 disabled:cursor-not-allowed ${
+      className={`flex flex-col items-center justify-center gap-0.5 w-10 h-10 rounded-lg transition-all disabled:opacity-25 disabled:cursor-not-allowed ${
         variant === 'danger'
-          ? 'text-slate-400 hover:text-red-400 hover:bg-red-400/10'
-          : 'text-slate-400 hover:text-white hover:bg-white/10'
+          ? 'text-slate-500 hover:text-red-400 hover:bg-red-400/10'
+          : 'text-slate-500 hover:text-white hover:bg-white/10'
       }`}
     >
-      <span className="material-symbols-outlined text-[16px]">{icon}</span>
+      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
     </button>
   )
 }
