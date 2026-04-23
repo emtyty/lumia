@@ -51,6 +51,12 @@ export function getOverlayWindow() {
 }
 export function getOverlayDisplayId() { return activeOverlayDisplayId }
 
+export function broadcastToOverlays(channel: string, ...args: unknown[]) {
+  for (const [, win] of overlayWindows) {
+    if (!win.isDestroyed()) win.webContents.send(channel, ...args)
+  }
+}
+
 export function closeAllOverlays() {
   if (overlayPollTimer) {
     clearInterval(overlayPollTimer)

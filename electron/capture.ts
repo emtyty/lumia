@@ -1,5 +1,5 @@
 import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard } from 'electron'
-import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId } from './index'
+import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays } from './index'
 import { getWindowAtPointPhysical } from './native-input'
 import { setOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
@@ -183,6 +183,12 @@ export function setupCapture() {
     import('./scroll-capture').then(m => m.resetOverlayMode())
     closeAllOverlays()
     showMainWindow()
+  })
+
+  // Switch between overlay capture modes without closing the overlay.
+  ipcMain.handle('overlay:switch-mode', (_e, mode: 'region' | 'window-pick' | 'monitor-pick') => {
+    setOverlayMode(mode)
+    broadcastToOverlays('overlay:mode-changed', mode)
   })
 
   // Monitor-pick: user clicked an overlay → capture that display

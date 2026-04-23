@@ -14,6 +14,59 @@ function HintCard({ icon, children }: { icon: string; children: React.ReactNode 
   )
 }
 
+/** Floating top bar: mode switcher (Region/Window) + hint. Only visible when the
+ *  overlay is the active one for the user's cursor display. */
+type SwitchableMode = 'region' | 'window-pick' | 'monitor-pick'
+function ModeBar({
+  mode, hint, icon,
+}: {
+  mode: SwitchableMode
+  hint: string
+  icon: string
+}) {
+  const switchTo = (next: SwitchableMode) => {
+    if (next === mode) return
+    window.electronAPI?.switchOverlayMode?.(next)
+  }
+  const TabBtn = ({ value, label, tabIcon }: { value: SwitchableMode; label: string; tabIcon: string }) => (
+    <button
+      onMouseDown={(e) => e.stopPropagation()}
+      onMouseUp={(e) => e.stopPropagation()}
+      onClick={(e) => { e.stopPropagation(); switchTo(value) }}
+      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1 transition-all ${
+        mode === value
+          ? 'bg-primary text-slate-900 shadow-[0_0_12px_rgba(182,160,255,0.35)]'
+          : 'text-slate-300 hover:text-white hover:bg-white/10'
+      }`}
+      style={{ fontFamily: 'Manrope, sans-serif' }}
+    >
+      <span className="material-symbols-outlined text-[14px]">{tabIcon}</span>
+      {label}
+    </button>
+  )
+  return (
+    <div
+      className="absolute top-8 left-1/2 -translate-x-1/2 flex items-center gap-3 glass-refractive rounded-full pl-1.5 pr-5 py-1.5"
+      onMouseDown={(e) => e.stopPropagation()}
+      onMouseMove={(e) => e.stopPropagation()}
+      onMouseUp={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+      style={{ fontFamily: 'Manrope, sans-serif' }}
+    >
+      <div className="flex items-center gap-1">
+        <TabBtn value="region" label="Region" tabIcon="crop" />
+        <TabBtn value="window-pick" label="Window" tabIcon="web_asset" />
+        <TabBtn value="monitor-pick" label="Screen" tabIcon="monitor" />
+      </div>
+      <div className="w-px h-4 bg-white/10" />
+      <span className="text-sm font-semibold text-white flex items-center gap-2">
+        <span className="material-symbols-outlined text-sm">{icon}</span>
+        {hint}
+      </span>
+    </div>
+  )
+}
+
 export default function Overlay() {
   useEffect(() => {
     document.body.style.background = 'transparent'
@@ -40,7 +93,17 @@ export default function Overlay() {
 
   useEffect(() => {
     window.electronAPI?.onOverlaySetActive((active: boolean) => setIsActive(active))
-    return () => { window.electronAPI?.removeAllListeners('overlay:set-active') }
+    window.electronAPI?.onOverlayModeChanged?.((m) => {
+      setMode(m as any)
+      setStartPos(null)
+      setCurrentPos(null)
+      setIsDrawing(false)
+      setHoveredWindow(null)
+    })
+    return () => {
+      window.electronAPI?.removeAllListeners('overlay:set-active')
+      window.electronAPI?.removeAllListeners('overlay:mode-changed')
+    }
   }, [])
 
   // Window-pick: poll window under cursor (throttled 80ms)
@@ -142,7 +205,7 @@ export default function Overlay() {
                 boxShadow: 'inset 0 0 0 1px rgba(96,165,250,0.3)',
               }}
             />
-            <HintCard icon="monitor">Click to capture this monitor · ESC to cancel</HintCard>
+            <ModeBar mode="monitor-pick" icon="monitor" hint="Click to capture this monitor · ESC to cancel" />
           </>
         )}
       </div>
@@ -166,7 +229,7 @@ export default function Overlay() {
         )}
 
         {isActive && (
-          <HintCard icon="window">Move over a window · Click to capture · ESC to cancel</HintCard>
+          <ModeBar mode="window-pick" icon="window" hint="Click a window · ESC to cancel" />
         )}
 
         {hoveredWindow && isActive && (
@@ -229,8 +292,11 @@ export default function Overlay() {
         .scroll-region-pulse { animation: scroll-region-border-pulse 1.5s ease-in-out infinite; }
       `}</style>
 
-      {isActive && (
-        <HintCard icon={mode === 'scroll-region' ? 'swipe_down' : 'crop_free'}>{hint}</HintCard>
+      {isActive && mode === 'region' && (
+        <ModeBar mode="region" icon="crop_free" hint={hint} />
+      )}
+      {isActive && mode === 'scroll-region' && (
+        <HintCard icon="swipe_down">{hint}</HintCard>
       )}
 
       {rect && rect.width > 0 && rect.height > 0 && (

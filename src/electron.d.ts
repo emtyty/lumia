@@ -68,6 +68,8 @@ declare global {
       cancelWindowPick: () => Promise<void>
       confirmMonitorPick: () => Promise<void>
       cancelMonitorPick: () => Promise<void>
+      switchOverlayMode: (mode: 'region' | 'window-pick' | 'monitor-pick') => Promise<void>
+      onOverlayModeChanged: (cb: (mode: string) => void) => void
       onOverlaySetActive: (cb: (active: boolean) => void) => void
       overlayDrawing: (drawing: boolean) => void
       notifyRoute: (route: string) => void

@@ -109,6 +109,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelWindowPick: () => ipcRenderer.invoke('window-pick:cancel'),
   confirmMonitorPick: () => ipcRenderer.invoke('monitor-pick:confirm'),
   cancelMonitorPick: () => ipcRenderer.invoke('monitor-pick:cancel'),
+  switchOverlayMode: (mode: 'region' | 'window-pick' | 'monitor-pick') => ipcRenderer.invoke('overlay:switch-mode', mode),
+  onOverlayModeChanged: (cb: (mode: string) => void) => {
+    ipcRenderer.on('overlay:mode-changed', (_e, mode) => cb(mode))
+  },
   onOverlaySetActive: (cb: (active: boolean) => void) => {
     ipcRenderer.on('overlay:set-active', (_e, active) => cb(active))
   },
