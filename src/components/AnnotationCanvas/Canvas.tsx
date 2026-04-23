@@ -9,6 +9,7 @@ import {
 import {
   Arrow,
   Ellipse,
+  Group,
   Image as KonvaImage,
   Layer,
   Line,
@@ -72,10 +73,27 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     ref,
   ) {
     const [bgImage] = useImage(imageDataUrl)
+    const [blurredBg, setBlurredBg] = useState<HTMLCanvasElement | null>(null)
     const stageRef     = useRef<Konva.Stage>(null)
+
+    // Pre-compute a blurred version of the background once per image load.
+    // Blur regions sample from this canvas, so mousemove while drawing doesn't
+    // trigger a new filter pass.
+    useEffect(() => {
+      if (!bgImage) { setBlurredBg(null); return }
+      const c = document.createElement('canvas')
+      c.width  = bgImage.width
+      c.height = bgImage.height
+      const ctx = c.getContext('2d')
+      if (!ctx) return
+      ctx.filter = 'blur(12px)'
+      ctx.drawImage(bgImage, 0, 0)
+      setBlurredBg(c)
+    }, [bgImage])
     const containerRef = useRef<HTMLDivElement>(null)
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentObj, setCurrentObj] = useState<DrawObject | null>(null)
+    const drawStart = useRef({ x: 0, y: 0 })
     const [, setSelectedId] = useState<string | null>(null)
     const [textInput, setTextInput] = useState<{
       x: number; y: number; screenX: number; screenY: number
@@ -94,6 +112,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     // ── Pan (right-click drag) ────────────────────────────────────────────────
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
+    const panOffsetRef = useRef(panOffset)
+    useEffect(() => { panOffsetRef.current = panOffset }, [panOffset])
     const [isPanningState, setIsPanningState] = useState(false)
     const isPanning = useRef(false)
     const panStart  = useRef({ x: 0, y: 0 })
@@ -155,18 +175,47 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     useEffect(() => { onZoomChange?.(userZoom) }, [userZoom, onZoomChange])
 
-    // Scroll to zoom
+    // Scroll to zoom, anchored at the cursor position
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
       const onWheel = (e: WheelEvent) => {
         e.preventDefault()
-        const delta = e.deltaY > 0 ? -0.05 : 0.05
-        setUserZoom(z => clampZoom(z + delta))
+        const rect = el.getBoundingClientRect()
+        const mx = e.clientX - rect.left
+        const my = e.clientY - rect.top
+        const pan = panOffsetRef.current
+
+        setUserZoom(prevZoom => {
+          // Exponential step: zoom feels linear in perceived size regardless of
+          // current level, and scales smoothly with high-resolution wheel/trackpad.
+          const factor = Math.exp(-e.deltaY * 0.0015)
+          const nextZoom = clampZoom(prevZoom * factor)
+          if (nextZoom === prevZoom) return prevZoom
+
+          const prevScale = baseScale * prevZoom
+          const nextScale = baseScale * nextZoom
+          const prevStageW = naturalW * prevScale
+          const prevStageH = naturalH * prevScale
+          const nextStageW = naturalW * nextScale
+          const nextStageH = naturalH * nextScale
+          const prevLeft = (rect.width  - prevStageW) / 2 + pan.x
+          const prevTop  = (rect.height - prevStageH) / 2 + pan.y
+
+          const imgX = (mx - prevLeft) / prevScale
+          const imgY = (my - prevTop)  / prevScale
+
+          const newPanX = mx - (rect.width  - nextStageW) / 2 - imgX * nextScale
+          const newPanY = my - (rect.height - nextStageH) / 2 - imgY * nextScale
+          setPanOffset({ x: newPanX, y: newPanY })
+          panOffsetRef.current = { x: newPanX, y: newPanY }
+
+          return nextZoom
+        })
       }
       el.addEventListener('wheel', onWheel, { passive: false })
       return () => el.removeEventListener('wheel', onWheel)
-    }, [])
+    }, [baseScale, naturalW, naturalH])
 
     // Double-click to reset zoom + pan to center
     useEffect(() => {
@@ -239,6 +288,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
         const raw = e.target.getStage()!.getPointerPosition()!
         const pos = { x: raw.x / scale, y: raw.y / scale }
         setIsDrawing(true)
+        drawStart.current = pos
 
         const base: DrawObject = { id: uid(), type: tool, color, strokeWidth }
 
@@ -271,20 +321,24 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             prev ? { ...prev, points: [...(prev.points ?? []), pos.x, pos.y] } : null,
           )
         } else if (currentObj.type === 'rect' || currentObj.type === 'blur') {
+          const s = drawStart.current
+          const nx = Math.min(s.x, pos.x)
+          const ny = Math.min(s.y, pos.y)
+          const nw = Math.abs(pos.x - s.x)
+          const nh = Math.abs(pos.y - s.y)
           setCurrentObj(prev =>
-            prev
-              ? { ...prev, width: pos.x - (prev.x ?? 0), height: pos.y - (prev.y ?? 0) }
-              : null,
+            prev ? { ...prev, x: nx, y: ny, width: nw, height: nh } : null,
           )
         } else if (currentObj.type === 'ellipse') {
+          const s = drawStart.current
           setCurrentObj(prev =>
             prev
               ? {
                   ...prev,
-                  radiusX: Math.abs(pos.x - (prev.x ?? 0)) / 2,
-                  radiusY: Math.abs(pos.y - (prev.y ?? 0)) / 2,
-                  x: ((prev.x ?? 0) + pos.x) / 2,
-                  y: ((prev.y ?? 0) + pos.y) / 2,
+                  radiusX: Math.abs(pos.x - s.x) / 2,
+                  radiusY: Math.abs(pos.y - s.y) / 2,
+                  x: (s.x + pos.x) / 2,
+                  y: (s.y + pos.y) / 2,
                 }
               : null,
           )
@@ -305,6 +359,18 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       commitObjects(prev => [...prev, currentObj])
       setCurrentObj(null)
     }, [isDrawing, currentObj, commitObjects])
+
+    // Global mouseup — commits the in-progress shape even if the cursor left
+    // the stage before the button was released.
+    useEffect(() => {
+      if (!isDrawing) return
+      const onUp = (e: MouseEvent) => {
+        if (e.button !== 0) return
+        handleMouseUp()
+      }
+      window.addEventListener('mouseup', onUp)
+      return () => window.removeEventListener('mouseup', onUp)
+    }, [isDrawing, handleMouseUp])
 
     // ── Rendering ─────────────────────────────────────────────────────────────
     const renderObj = (obj: DrawObject, isPreview = false) => {
@@ -327,7 +393,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
           />
         )
       }
-      if (obj.type === 'rect' || obj.type === 'blur') {
+      if (obj.type === 'rect') {
         return (
           <Rect
             key={key}
@@ -336,14 +402,44 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             y={obj.y}
             width={obj.width}
             height={obj.height}
-            fill={obj.type === 'blur' ? 'rgba(128,128,128,0.65)' : 'transparent'}
-            stroke={obj.type === 'blur' ? 'rgba(255,255,255,0.3)' : obj.color}
-            strokeWidth={obj.type === 'blur' ? 1 : obj.strokeWidth}
-            dash={obj.type === 'blur' ? [4, 4] : undefined}
-            cornerRadius={obj.type === 'blur' ? 2 : 0}
+            fill="transparent"
+            stroke={obj.color}
+            strokeWidth={obj.strokeWidth}
             draggable={tool === 'select'}
             onClick={() => !isPreview && setSelectedId(obj.id)}
           />
+        )
+      }
+      if (obj.type === 'blur') {
+        const bx = obj.x ?? 0, by = obj.y ?? 0
+        const bw = obj.width ?? 0, bh = obj.height ?? 0
+        if (!blurredBg || bw <= 0 || bh <= 0) {
+          return (
+            <Rect
+              key={key}
+              id={obj.id}
+              x={bx} y={by} width={bw} height={bh}
+              fill="rgba(128,128,128,0.35)"
+              stroke="rgba(255,255,255,0.4)"
+              dash={[4, 4]}
+            />
+          )
+        }
+        return (
+          <Group
+            key={key}
+            id={obj.id}
+            clipX={bx} clipY={by} clipWidth={bw} clipHeight={bh}
+            draggable={tool === 'select'}
+            onClick={() => !isPreview && setSelectedId(obj.id)}
+          >
+            <KonvaImage
+              image={blurredBg}
+              width={naturalW}
+              height={naturalH}
+              listening={false}
+            />
+          </Group>
         )
       }
       if (obj.type === 'ellipse') {
@@ -424,11 +520,11 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
         style={{ cursor: isPanningState ? 'grabbing' : undefined }}
       >
         <div style={{
-          display: 'grid',
-          placeItems: 'center',
-          width: '100%',
-          height: '100%',
-          transform: `translate(${panOffset.x}px, ${panOffset.y}px)`,
+          position: 'absolute',
+          left: (containerSize.w - stageWidth) / 2 + panOffset.x,
+          top:  (containerSize.h - stageHeight) / 2 + panOffset.y,
+          width: stageWidth,
+          height: stageHeight,
         }}>
         <Stage
           ref={stageRef}
