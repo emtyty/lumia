@@ -56,6 +56,12 @@ win:
   target:
     - target: nsis
       arch: [x64, arm64]
+  publisherName: {{ env.AZURE_PUBLISHER_NAME }}
+  azureSignOptions: {
+    endpoint: {{ env.AZURE_TRUSTED_SIGNING_ENDPOINT }},
+    codeSigningAccountName: {{ env.AZURE_CODE_SIGNING_ACCOUNT_NAME }},
+    certificateProfileName: {{ env.AZURE_CERT_PROFILE_NAME }}
+  }
 
 nsis:
   oneClick: false
@@ -92,8 +98,6 @@ mac:
   darkModeSupport: true
   target:
     - target: dmg
-      arch: [x64, arm64]
-    - target: zip
       arch: [x64, arm64]
 
 
