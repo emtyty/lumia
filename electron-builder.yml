@@ -1,6 +1,5 @@
 appId: com.lumia.app
 productName: Lumia
-copyright: Copyright © 2026 Lumia
 
 # ── Publish (GitHub Releases) ─────────────────────────────────────────────────
 # Requires GH_TOKEN env var (a GitHub personal-access token with repo scope).
@@ -56,11 +55,6 @@ win:
   target:
     - target: nsis
       arch: [x64, arm64]
-  azureSignOptions:
-    publisherName: "${env.AZURE_PUBLISHER_NAME}"
-    endpoint: "${env.AZURE_TRUSTED_SIGNING_ENDPOINT}"
-    codeSigningAccountName: "${env.AZURE_CODE_SIGNING_ACCOUNT_NAME}"
-    certificateProfileName: "${env.AZURE_CERT_PROFILE_NAME}"
 
 nsis:
   oneClick: false
