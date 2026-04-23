@@ -121,10 +121,10 @@ jobs:
         shell: pwsh
         run: |
           npx electron-builder --win --publish always `
-            -c.win.azureSignOptions.publisherName="$env:AZURE_PUBLISHER_NAME" `
-            -c.win.azureSignOptions.endpoint="$env:AZURE_TRUSTED_SIGNING_ENDPOINT" `
-            -c.win.azureSignOptions.codeSigningAccountName="$env:AZURE_CODE_SIGNING_ACCOUNT_NAME" `
-            -c.win.azureSignOptions.certificateProfileName="$env:AZURE_CERT_PROFILE_NAME"
+            "--config.win.azureSignOptions.publisherName=$env:AZURE_PUBLISHER_NAME" `
+            "--config.win.azureSignOptions.endpoint=$env:AZURE_TRUSTED_SIGNING_ENDPOINT" `
+            "--config.win.azureSignOptions.codeSigningAccountName=$env:AZURE_CODE_SIGNING_ACCOUNT_NAME" `
+            "--config.win.azureSignOptions.certificateProfileName=$env:AZURE_CERT_PROFILE_NAME"
 
 
   # ── Mark as latest ───────────────────────────────────────────────────────────
