@@ -2,6 +2,7 @@ import { globalShortcut, app } from 'electron'
 import Store from 'electron-store'
 import { sendCaptureToEditor } from './capture'
 import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
+import { startVideoCapture, requestStop as requestVideoStop, isRecordingActive } from './video'
 
 interface HotkeyConfig {
   [action: string]: string
@@ -14,7 +15,6 @@ const defaultHotkeys: HotkeyConfig = {
   ActiveMonitor:     'Ctrl+Shift+1',
   ScrollingCapture:  'Ctrl+Shift+5',
   ScreenRecorder:    'Ctrl+Shift+R',
-  ScreenRecorderGIF: 'Ctrl+Shift+G',
   StopScreenRecording: 'Ctrl+Shift+S',
   OpenMainWindow:    'Ctrl+Shift+X',
   WorkflowPicker:    'Ctrl+Shift+Q'
@@ -155,19 +155,12 @@ export function setupHotkeys() {
       createOverlayWindows()
     }),
     ScreenRecorder: () => {
-      const win = getMainWindow()
-      win?.show()
-      win?.focus()
-      win?.webContents.send('recorder:open')
-    },
-    ScreenRecorderGIF: () => {
-      const win = getMainWindow()
-      win?.show()
-      win?.focus()
-      win?.webContents.send('recorder:open-gif')
+      // If recording is active, treat the hotkey as "stop" (matches Snipping Tool).
+      if (isRecordingActive()) { requestVideoStop(); return }
+      startVideoCapture('region')
     },
     StopScreenRecording: () => {
-      getMainWindow()?.webContents.send('recorder:stop')
+      if (isRecordingActive()) requestVideoStop()
     },
     OpenMainWindow: () => {
       const win = getMainWindow()

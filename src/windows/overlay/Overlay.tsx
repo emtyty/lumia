@@ -2,6 +2,44 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface Rect { x: number; y: number; width: number; height: number }
 
+type Mode =
+  | 'region' | 'scroll-region' | 'window-pick' | 'monitor-pick'
+  | 'video-region' | 'video-window' | 'video-screen'
+
+type Intent = 'capture' | 'record'
+type Base = 'region' | 'window' | 'screen'
+
+function intentOf(mode: Mode): Intent {
+  return mode.startsWith('video-') ? 'record' : 'capture'
+}
+
+function baseOf(mode: Mode): Base | 'scroll' {
+  if (mode === 'scroll-region') return 'scroll'
+  if (mode === 'region' || mode === 'video-region') return 'region'
+  if (mode === 'window-pick' || mode === 'video-window') return 'window'
+  if (mode === 'monitor-pick' || mode === 'video-screen') return 'screen'
+  return 'region'
+}
+
+const ACCENT = {
+  capture: {
+    border: 'rgba(182,160,255,0.8)',       // primary purple
+    highlightBorder: 'rgba(96,165,250,0.9)', // blue for window/monitor hover
+    highlightShadow: 'rgba(96,165,250,0.3)',
+    highlightFill: 'rgba(96,165,250,0.06)',
+    activeBg: 'rgba(59,130,246,0.15)',
+    tabGlow: '0 0 12px rgba(182,160,255,0.35)',
+  },
+  record: {
+    border: 'rgba(239,68,68,0.9)',          // red-500
+    highlightBorder: 'rgba(239,68,68,0.9)',
+    highlightShadow: 'rgba(239,68,68,0.3)',
+    highlightFill: 'rgba(239,68,68,0.08)',
+    activeBg: 'rgba(239,68,68,0.12)',
+    tabGlow: '0 0 12px rgba(239,68,68,0.45)',
+  },
+} as const
+
 function HintCard({ icon, children }: { icon: string; children: React.ReactNode }) {
   return (
     <div
@@ -14,36 +52,51 @@ function HintCard({ icon, children }: { icon: string; children: React.ReactNode 
   )
 }
 
-/** Floating top bar: mode switcher (Region/Window) + hint. Only visible when the
- *  overlay is the active one for the user's cursor display. */
-type SwitchableMode = 'region' | 'window-pick' | 'monitor-pick'
+/** Floating top bar: mode switcher + hint. Visible only on the active overlay. */
 function ModeBar({
-  mode, hint, icon,
+  mode, hint, icon, intent,
 }: {
-  mode: SwitchableMode
+  mode: Mode
   hint: string
   icon: string
+  intent: Intent
 }) {
-  const switchTo = (next: SwitchableMode) => {
-    if (next === mode) return
+  const base = baseOf(mode)
+  const accent = ACCENT[intent]
+
+  const switchTo = (nextBase: Base) => {
+    if (nextBase === base) return
+    const next: Mode = intent === 'record'
+      ? (nextBase === 'region' ? 'video-region' : nextBase === 'window' ? 'video-window' : 'video-screen')
+      : (nextBase === 'region' ? 'region' : nextBase === 'window' ? 'window-pick' : 'monitor-pick')
     window.electronAPI?.switchOverlayMode?.(next)
   }
-  const TabBtn = ({ value, label, tabIcon }: { value: SwitchableMode; label: string; tabIcon: string }) => (
-    <button
-      onMouseDown={(e) => e.stopPropagation()}
-      onMouseUp={(e) => e.stopPropagation()}
-      onClick={(e) => { e.stopPropagation(); switchTo(value) }}
-      className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1 transition-all ${
-        mode === value
-          ? 'bg-primary text-slate-900 shadow-[0_0_12px_rgba(182,160,255,0.35)]'
-          : 'text-slate-300 hover:text-white hover:bg-white/10'
-      }`}
-      style={{ fontFamily: 'Manrope, sans-serif' }}
-    >
-      <span className="material-symbols-outlined text-[14px]">{tabIcon}</span>
-      {label}
-    </button>
-  )
+
+  const TabBtn = ({ value, label, tabIcon }: { value: Base; label: string; tabIcon: string }) => {
+    const active = base === value
+    return (
+      <button
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); switchTo(value) }}
+        className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1 transition-all ${
+          active
+            ? (intent === 'record'
+                ? 'bg-red-500 text-white'
+                : 'bg-primary text-slate-900')
+            : 'text-slate-300 hover:text-white hover:bg-white/10'
+        }`}
+        style={{
+          fontFamily: 'Manrope, sans-serif',
+          boxShadow: active ? accent.tabGlow : undefined,
+        }}
+      >
+        <span className="material-symbols-outlined text-[14px]">{tabIcon}</span>
+        {label}
+      </button>
+    )
+  }
+
   return (
     <div
       className="absolute top-8 left-1/2 -translate-x-1/2 flex items-center gap-3 glass-refractive rounded-full pl-1.5 pr-5 py-1.5"
@@ -53,10 +106,16 @@ function ModeBar({
       onClick={(e) => e.stopPropagation()}
       style={{ fontFamily: 'Manrope, sans-serif' }}
     >
+      {intent === 'record' && (
+        <div className="ml-2 mr-1 flex items-center gap-1.5 text-red-400">
+          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+          <span className="text-[10px] font-bold uppercase tracking-widest">REC</span>
+        </div>
+      )}
       <div className="flex items-center gap-1">
         <TabBtn value="region" label="Region" tabIcon="crop" />
-        <TabBtn value="window-pick" label="Window" tabIcon="web_asset" />
-        <TabBtn value="monitor-pick" label="Screen" tabIcon="monitor" />
+        <TabBtn value="window" label="Window" tabIcon="web_asset" />
+        <TabBtn value="screen" label="Screen" tabIcon="monitor" />
       </div>
       <div className="w-px h-4 bg-white/10" />
       <span className="text-sm font-semibold text-white flex items-center gap-2">
@@ -77,7 +136,7 @@ export default function Overlay() {
     }
   }, [])
 
-  const [mode, setMode] = useState<'region' | 'scroll-region' | 'window-pick' | 'monitor-pick'>('region')
+  const [mode, setMode] = useState<Mode>('region')
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null)
   const [currentPos, setCurrentPos] = useState<{ x: number; y: number } | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
@@ -87,14 +146,18 @@ export default function Overlay() {
   const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const hoveredWindowRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
 
+  const intent = intentOf(mode)
+  const base = baseOf(mode)
+  const accent = ACCENT[intent]
+
   useEffect(() => {
-    window.electronAPI?.getOverlayMode().then(m => setMode(m as any))
+    window.electronAPI?.getOverlayMode().then(m => setMode(m as Mode))
   }, [])
 
   useEffect(() => {
     window.electronAPI?.onOverlaySetActive((active: boolean) => setIsActive(active))
     window.electronAPI?.onOverlayModeChanged?.((m) => {
-      setMode(m as any)
+      setMode(m as Mode)
       setStartPos(null)
       setCurrentPos(null)
       setIsDrawing(false)
@@ -108,20 +171,23 @@ export default function Overlay() {
 
   // Window-pick: poll window under cursor (throttled 80ms)
   const pollWindowAt = useCallback(async (x: number, y: number) => {
-    if (mode !== 'window-pick' || !isActive) return
+    if (base !== 'window' || !isActive) return
     const rect = await window.electronAPI?.getWindowAt(x, y)
     hoveredWindowRef.current = rect ?? null
     setHoveredWindow(rect ?? null)
-  }, [mode, isActive])
+  }, [base, isActive])
+
+  const cancel = useCallback(() => {
+    if (mode === 'scroll-region') window.electronAPI?.cancelScrollRegion()
+    else if (mode === 'window-pick') window.electronAPI?.cancelWindowPick()
+    else if (mode === 'monitor-pick') window.electronAPI?.cancelMonitorPick()
+    else if (mode === 'region') window.electronAPI?.cancelRegion()
+    else window.electronAPI?.cancelVideo?.()
+  }, [mode])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      if (mode === 'scroll-region') window.electronAPI?.cancelScrollRegion()
-      else if (mode === 'window-pick') window.electronAPI?.cancelWindowPick()
-      else if (mode === 'monitor-pick') window.electronAPI?.cancelMonitorPick()
-      else window.electronAPI?.cancelRegion()
-    }
-  }, [mode])
+    if (e.key === 'Escape') cancel()
+  }, [cancel])
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown)
@@ -141,12 +207,14 @@ export default function Overlay() {
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!isActive) return
-    if (mode === 'window-pick') {
+    if (base === 'window') {
       const x = e.clientX
       const y = e.clientY
       if (pollRef.current) clearTimeout(pollRef.current)
       window.electronAPI?.getWindowAt(x, y).then(rect => {
-        if (rect) window.electronAPI?.confirmWindowPick(rect)
+        if (!rect) return
+        if (intent === 'record') window.electronAPI?.confirmVideoWindow?.(rect)
+        else window.electronAPI?.confirmWindowPick(rect)
       })
       return
     }
@@ -157,7 +225,7 @@ export default function Overlay() {
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
-    if (mode === 'window-pick') {
+    if (base === 'window') {
       const x = e.clientX
       const y = e.clientY
       if (pollRef.current) clearTimeout(pollRef.current)
@@ -169,7 +237,7 @@ export default function Overlay() {
   }
 
   const handleMouseUp = async () => {
-    if (mode === 'window-pick') return
+    if (base === 'window') return
     if (!isDrawing) return
     setIsDrawing(false)
     window.electronAPI?.overlayDrawing(false)
@@ -177,6 +245,8 @@ export default function Overlay() {
     if (!rect || rect.width < 10 || rect.height < 10) return
     if (mode === 'scroll-region') {
       await window.electronAPI?.confirmScrollRegion(rect)
+    } else if (mode === 'video-region') {
+      await window.electronAPI?.confirmVideoRegion?.(rect)
     } else {
       await window.electronAPI?.confirmRegion({ dataUrl: '', rect })
     }
@@ -184,36 +254,47 @@ export default function Overlay() {
 
   const rect = getRect()
 
-  // ── Monitor-pick UI ───────────────────────────────────────────────────────
-  if (mode === 'monitor-pick') {
+  // ── Monitor-pick / video-screen UI ───────────────────────────────────────
+  if (base === 'screen') {
+    const onClick = () => {
+      if (!isActive) return
+      if (intent === 'record') window.electronAPI?.confirmVideoScreen?.()
+      else window.electronAPI?.confirmMonitorPick()
+    }
+    const hint = intent === 'record'
+      ? 'Click to record this monitor · ESC to cancel'
+      : 'Click to capture this monitor · ESC to cancel'
     return (
       <div
         className="fixed inset-0 select-none"
         style={{
           cursor: isActive ? 'pointer' : 'default',
-          background: isActive ? 'rgba(59,130,246,0.15)' : 'rgba(0,0,0,0.4)',
+          background: isActive ? accent.activeBg : 'rgba(0,0,0,0.4)',
         }}
-        onClick={() => { if (isActive) window.electronAPI?.confirmMonitorPick() }}
+        onClick={onClick}
       >
         {isActive && (
           <>
             <div
               className="absolute inset-4 pointer-events-none"
               style={{
-                border: '3px solid rgba(96,165,250,0.9)',
+                border: `3px solid ${accent.highlightBorder}`,
                 borderRadius: 8,
-                boxShadow: 'inset 0 0 0 1px rgba(96,165,250,0.3)',
+                boxShadow: `inset 0 0 0 1px ${accent.highlightShadow}`,
               }}
             />
-            <ModeBar mode="monitor-pick" icon="monitor" hint="Click to capture this monitor · ESC to cancel" />
+            <ModeBar mode={mode} intent={intent} icon="monitor" hint={hint} />
           </>
         )}
       </div>
     )
   }
 
-  // ── Window-pick UI ────────────────────────────────────────────────────────
-  if (mode === 'window-pick') {
+  // ── Window-pick / video-window UI ────────────────────────────────────────
+  if (base === 'window') {
+    const hint = intent === 'record'
+      ? 'Click a window to record · ESC to cancel'
+      : 'Click a window · ESC to cancel'
     return (
       <div
         className="fixed inset-0 select-none"
@@ -229,12 +310,11 @@ export default function Overlay() {
         )}
 
         {isActive && (
-          <ModeBar mode="window-pick" icon="window" hint="Click a window · ESC to cancel" />
+          <ModeBar mode={mode} intent={intent} icon="window" hint={hint} />
         )}
 
         {hoveredWindow && isActive && (
           <>
-            {/* Highlight border */}
             <div
               className="absolute pointer-events-none"
               style={{
@@ -242,13 +322,12 @@ export default function Overlay() {
                 top: hoveredWindow.y,
                 width: hoveredWindow.width,
                 height: hoveredWindow.height,
-                border: '2px solid rgba(96,165,250,0.9)',
-                boxShadow: '0 0 0 9999px rgba(0,0,0,0.25), inset 0 0 0 1px rgba(96,165,250,0.3)',
+                border: `2px solid ${accent.highlightBorder}`,
+                boxShadow: `0 0 0 9999px rgba(0,0,0,0.25), inset 0 0 0 1px ${accent.highlightShadow}`,
                 borderRadius: 4,
-                background: 'rgba(96,165,250,0.06)',
+                background: accent.highlightFill,
               }}
             />
-            {/* Size label */}
             <div
               className="absolute glass-refractive text-xs text-white px-3 py-1.5 rounded-full pointer-events-none font-mono"
               style={{
@@ -266,10 +345,13 @@ export default function Overlay() {
     )
   }
 
-  // ── Region / scroll-region UI ─────────────────────────────────────────────
+  // ── Region / scroll-region / video-region UI ─────────────────────────────
   const hint = mode === 'scroll-region'
     ? 'Drag to select scroll region · ESC to cancel'
-    : 'Drag to select region · ESC to cancel'
+    : intent === 'record'
+      ? 'Drag to select recording area · ESC to cancel'
+      : 'Drag to select region · ESC to cancel'
+  const icon = mode === 'scroll-region' ? 'swipe_down' : intent === 'record' ? 'fiber_manual_record' : 'crop_free'
 
   return (
     <div
@@ -292,11 +374,11 @@ export default function Overlay() {
         .scroll-region-pulse { animation: scroll-region-border-pulse 1.5s ease-in-out infinite; }
       `}</style>
 
-      {isActive && mode === 'region' && (
-        <ModeBar mode="region" icon="crop_free" hint={hint} />
+      {isActive && (mode === 'region' || mode === 'video-region') && (
+        <ModeBar mode={mode} intent={intent} icon={icon} hint={hint} />
       )}
       {isActive && mode === 'scroll-region' && (
-        <HintCard icon="swipe_down">{hint}</HintCard>
+        <HintCard icon={icon}>{hint}</HintCard>
       )}
 
       {rect && rect.width > 0 && rect.height > 0 && (
@@ -309,7 +391,7 @@ export default function Overlay() {
               boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
               border: mode === 'scroll-region'
                 ? '2px solid rgba(56, 189, 248, 0.8)'
-                : '2px solid rgba(182,160,255,0.8)',
+                : `2px solid ${accent.border}`,
               borderRadius: 4,
             }}
           />

@@ -4,90 +4,26 @@ import AnnotationCanvas, {
   type CanvasHandle,
   Tool,
 } from '../../components/AnnotationCanvas/Canvas'
-import type { WorkflowTemplate, HistoryItem, AfterCaptureStep, UploadDestination, SensitiveRegion } from '../../types'
+import AnnotationToolBar from '../../components/AnnotationCanvas/ToolBar'
+import { matchToolShortcut } from '../../components/AnnotationCanvas/tools'
+import type { WorkflowTemplate, HistoryItem, SensitiveRegion } from '../../types'
 import { AutoBlurPanel } from '../../components/AutoBlurPanel'
+import { deriveActions, type ActionBtn } from '../../lib/workflow-actions'
+import { useLocalVideoUrl } from '../../hooks/useLocalVideoUrl'
 
-interface ActionBtn {
-  key: string
-  icon: string
-  label: string
-  templateId: string
-  destinationIndex?: number
-  primary?: boolean
-  actionType?: 'clipboard' | 'save'
+/** Location.state shape accepted by the unified editor. Image mode carries a
+ *  dataUrl; video mode carries filePath (+ optional display name). */
+type EditorState = {
+  kind?: 'image' | 'video'
+  dataUrl?: string
+  filePath?: string
+  name?: string
+  source?: string
 }
 
-const DEST_META: Record<string, { icon: string; label: string }> = {
-  imgur:          { icon: 'link',         label: 'Imgur' },
-  'google-drive': { icon: 'add_to_drive', label: 'Google Drive' },
-  r2:            { icon: 'share',         label: 'Lumia' },
-  custom:        { icon: 'upload',        label: 'Upload' },
-}
-
-function deriveActions(tpl: WorkflowTemplate | undefined, gdriveConnected: boolean, imgurConfigured: boolean, customConfigured: boolean): ActionBtn[] {
-  if (!tpl) return []
-  const btns: ActionBtn[] = []
-  for (const step of tpl.afterCapture) {
-    if (step.type === 'clipboard') {
-      btns.push({ key: 'clipboard', icon: 'content_copy', label: 'Copy', templateId: tpl.id, actionType: 'clipboard' })
-    } else if (step.type === 'save') {
-      btns.push({ key: 'save', icon: 'save', label: 'Save', templateId: tpl.id, actionType: 'save' })
-    }
-  }
-  for (let i = 0; i < tpl.destinations.length; i++) {
-    const dest = tpl.destinations[i]
-    if (dest.type === 'google-drive' && !gdriveConnected) continue
-    if (dest.type === 'imgur' && !imgurConfigured) continue
-    if (dest.type === 'custom' && !customConfigured) continue
-    const meta = DEST_META[dest.type] ?? { icon: 'cloud_upload', label: dest.type }
-    btns.push({
-      key: `dest-${i}-${dest.type}`,
-      icon: meta.icon,
-      label: meta.label,
-      templateId: tpl.id,
-      destinationIndex: i,
-      primary: true,
-    })
-  }
-  return btns
-}
-
-type ToolGroup = 'draw' | 'shape' | 'select'
-
-const TOOL_GROUPS: { group: ToolGroup; label: string; tools: { id: Tool; icon: string; label: string; key: string }[] }[] = [
-  {
-    group: 'draw',
-    label: 'Draw',
-    tools: [
-      { id: 'pen',    icon: 'edit',       label: 'Pen',    key: 'P' },
-      { id: 'blur',   icon: 'blur_on',    label: 'Blur',   key: 'B' },
-      { id: 'text',   icon: 'title',      label: 'Text',   key: 'T' },
-    ],
-  },
-  {
-    group: 'shape',
-    label: 'Shape',
-    tools: [
-      { id: 'rect',    icon: 'crop_square',   label: 'Rectangle', key: 'R' },
-      { id: 'ellipse', icon: 'circle',        label: 'Ellipse',   key: 'E' },
-      { id: 'arrow',   icon: 'north_east',    label: 'Arrow',     key: 'A' },
-    ],
-  },
-  {
-    group: 'select',
-    label: 'Select',
-    tools: [
-      { id: 'select', icon: 'arrow_selector_tool', label: 'Select', key: 'V' },
-    ],
-  },
-]
-
-const ALL_TOOLS = TOOL_GROUPS.flatMap(g => g.tools)
-
-const COLORS = [
-  '#f87171', '#fb923c', '#fbbf24', '#34d399',
-  '#60a5fa', '#a78bfa', '#f472b6', '#ffffff', '#000000',
-]
+// Tools / colors / shortcuts live in ../../components/AnnotationCanvas/tools.ts —
+// the VideoAnnotator shares the same palette, so keeping them here would just
+// invite drift.
 
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts
@@ -104,9 +40,16 @@ function relativeTime(ts: number): string {
 export default function Editor() {
   const location = useLocation()
   const navigate = useNavigate()
-  const [imageDataUrl, setImageDataUrl] = useState<string>(
-    (location.state as { dataUrl?: string })?.dataUrl ?? '',
-  )
+
+  // Unified state — `kind` switches the editor between image and video mode.
+  // Callers that navigate here must set `kind` explicitly; default is 'image'
+  // so existing screenshot paths keep working without changes.
+  const initialState = (location.state ?? {}) as EditorState
+  const [kind, setKind] = useState<'image' | 'video'>(initialState.kind ?? (initialState.filePath ? 'video' : 'image'))
+  const [imageDataUrl, setImageDataUrl] = useState<string>(initialState.dataUrl ?? '')
+  const [videoFilePath, setVideoFilePath] = useState<string>(initialState.filePath ?? '')
+  const [videoName, setVideoName]         = useState<string>(initialState.name ?? '')
+  const isVideo = kind === 'video'
 
   type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
   const CAPTURE_MODES: CaptureMode[] = ['region', 'window', 'fullscreen', 'active-monitor']
@@ -146,39 +89,18 @@ export default function Editor() {
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
   const [showAutoBlur, setShowAutoBlur] = useState(false)
-  const [showColorPopover, setShowColorPopover] = useState(false)
-  const [colorPopoverPos, setColorPopoverPos] = useState<{ left: number; top: number } | null>(null)
-  const colorPopoverRef = useRef<HTMLDivElement>(null)
-  const colorBtnRef = useRef<HTMLButtonElement>(null)
-
-  useEffect(() => {
-    if (!showColorPopover) return
-    const onDown = (e: MouseEvent) => {
-      const target = e.target as Node
-      if (colorPopoverRef.current?.contains(target)) return
-      if (colorBtnRef.current?.contains(target)) return
-      setShowColorPopover(false)
-    }
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setShowColorPopover(false) }
-    document.addEventListener('mousedown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('mousedown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [showColorPopover])
-
-  const openColorPopover = () => {
-    const r = colorBtnRef.current?.getBoundingClientRect()
-    if (r) setColorPopoverPos({ left: r.left + r.width / 2, top: r.top - 8 })
-    setShowColorPopover(p => !p)
-  }
+  // Color popover is now handled inside AnnotationToolBar.
   const [autoBlurScanning, setAutoBlurScanning] = useState(false)
   const [autoBlurRegions, setAutoBlurRegions] = useState<SensitiveRegion[]>([])
   const [autoBlurSelected, setAutoBlurSelected] = useState<Set<string>>(new Set())
   const [autoBlurOcrTime, setAutoBlurOcrTime] = useState<number>()
   const [, setAutoBlurDetectTime] = useState<number>()
   const [autoBlurHistory, setAutoBlurHistory] = useState<string[]>([])
+
+  // Video is view-only here — plain HTML5 <video controls> for playback. Save
+  // / Copy / Upload R2 operate on the source file directly, not on frames.
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const videoSrc = useLocalVideoUrl(isVideo ? videoFilePath : '')
 
   const resetForNewImage = useCallback((dataUrl: string) => {
     setImageDataUrl(dataUrl)
@@ -198,16 +120,37 @@ export default function Editor() {
     if (found) return found
     return templates.find(t => t.id === 'builtin-r2') ?? templates[0]
   }, [templates, activeWorkflowId])
-  const actionBtns = useMemo(() => deriveActions(activeTemplate, gdriveConnected, imgurConfigured, customConfigured), [activeTemplate, gdriveConnected, imgurConfigured, customConfigured])
+  const actionBtns = useMemo(
+    () => deriveActions(activeTemplate, gdriveConnected, imgurConfigured, customConfigured, kind),
+    [activeTemplate, gdriveConnected, imgurConfigured, customConfigured, kind],
+  )
 
   useEffect(() => {
-    const state = location.state as { dataUrl?: string; source?: string } | null
-    if (state?.dataUrl) resetForNewImage(state.dataUrl)
-    if (isCaptureMode(state?.source)) setLastMode(state.source)
+    const state = (location.state ?? {}) as EditorState
+    const nextKind: 'image' | 'video' = state.kind ?? (state.filePath ? 'video' : state.dataUrl ? 'image' : kind)
+    if (nextKind === 'video') {
+      setKind('video')
+      setVideoFilePath(state.filePath ?? '')
+      setVideoName(state.name ?? '')
+      setImageDataUrl('')
+      canvasRef.current?.clear()
+    } else if (state.dataUrl) {
+      setKind('image')
+      setVideoFilePath('')
+      setVideoName('')
+      resetForNewImage(state.dataUrl)
+    }
+    if (isCaptureMode(state.source)) setLastMode(state.source)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state])
 
   useEffect(() => {
     window.electronAPI?.onCaptureReady(({ dataUrl, source }) => {
+      // capture:ready is screenshot-only — switch back to image mode if the
+      // user happened to be viewing a video when the next capture landed.
+      setKind('image')
+      setVideoFilePath('')
+      setVideoName('')
       resetForNewImage(dataUrl)
       if (isCaptureMode(source)) setLastMode(source)
     })
@@ -243,8 +186,8 @@ export default function Editor() {
         if (e.key === '-')                  { e.preventDefault(); canvasRef.current?.zoomOut(); return }
         if (e.key === '0')                  { e.preventDefault(); canvasRef.current?.zoomReset(); return }
       }
-      const t = ALL_TOOLS.find(t => t.key?.toLowerCase() === e.key.toLowerCase())
-      if (t) setTool(t.id)
+      const match = matchToolShortcut(e.key)
+      if (match) setTool(match)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -254,6 +197,42 @@ export default function Editor() {
     setToast({ message, icon, type })
     setTimeout(() => setToast(null), 2500)
   }, [])
+
+  // ── Video action handlers ─────────────────────────────────────────────────
+  // Video in this editor is view-only — Save / Copy / Upload act on the source
+  // recording file directly. (Annotating video / freeze-frame export were
+  // removed to keep the flow simple; bring them back in a dedicated video
+  // editing module when needed.)
+  // Unified action dispatcher — both modes share the same button list (from
+  // deriveActions) so order and styling stay consistent. Video routes clicks
+  // to file-level IPCs since there's no composite frame pipeline.
+  const runVideoAction = useCallback(async (btn: ActionBtn) => {
+    if (!videoFilePath) return
+    setActionBusy(btn.key)
+    try {
+      if (btn.actionType === 'clipboard') {
+        const res = await window.electronAPI?.videoCopyFile?.(videoFilePath)
+        if (res?.fallback === 'text') showToast('Copied file path (clipboard file copy unsupported here)', 'content_copy')
+        else                          showToast('Video copied', 'content_copy')
+      } else if (btn.actionType === 'save') {
+        const res = await window.electronAPI?.videoSaveAs?.(videoFilePath)
+        if (res && !res.canceled && res.savedPath) showToast('Recording saved', 'check_circle')
+      } else if (btn.destinationIndex !== undefined) {
+        const dest = activeTemplate?.destinations[btn.destinationIndex]
+        if (dest?.type === 'r2') {
+          const res = await window.electronAPI?.videoUploadR2?.(videoFilePath)
+          if (res?.success && res.url) showToast('Uploaded — link copied', 'check_circle')
+          else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
+        } else {
+          showToast(`${dest?.type ?? 'Destination'} doesn't support video yet`, 'error', 'error')
+        }
+      }
+    } catch (err: any) {
+      showToast(err?.message ?? 'Action failed', 'error', 'error')
+    } finally {
+      setActionBusy(null)
+    }
+  }, [videoFilePath, activeTemplate, showToast])
 
   const handleExport = useCallback((dataUrl: string) => {
     setExportedDataUrl(dataUrl)
@@ -346,21 +325,26 @@ export default function Editor() {
     })
   }, [showToast])
 
-  /* ── Empty state ── */
-  if (!imageDataUrl) {
+  /* ── Empty state (no source at all — covers both image and video modes) ── */
+  const hasSource = isVideo ? !!videoFilePath : !!imageDataUrl
+  if (!hasSource) {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-6">
         <div className="relative">
           <div className="absolute -inset-8 rounded-full bg-primary/10 blur-3xl" />
           <div className="relative p-7 rounded-3xl bg-white/[0.03] border border-white/[0.06] shadow-2xl">
             <span className="material-symbols-outlined text-5xl text-slate-500" style={{ fontVariationSettings: "'FILL' 0, 'wght' 300" }}>
-              photo_camera
+              {isVideo ? 'videocam' : 'photo_camera'}
             </span>
           </div>
         </div>
         <div className="text-center space-y-2">
           <p className="text-lg font-bold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>Ready to annotate</p>
-          <p className="text-sm text-slate-500 max-w-[260px]">Capture your screen or pick a recent screenshot to start editing</p>
+          <p className="text-sm text-slate-500 max-w-[260px]">
+            {isVideo
+              ? 'Open a recording from the History page to start editing'
+              : 'Capture your screen or pick a recent screenshot to start editing'}
+          </p>
         </div>
         <div className="flex gap-3 mt-1">
           <button
@@ -406,21 +390,24 @@ export default function Editor() {
           <span className="material-symbols-outlined text-[16px]">arrow_back</span>
         </button>
 
-        <div className="w-px h-5 bg-white/10" />
-
-        {/* Zoom */}
-        <div className="flex items-center gap-0.5">
-          <TinyBtn icon="remove" title="Zoom out (Ctrl+-)" onClick={() => canvasRef.current?.zoomOut()} />
-          <button
-            onClick={() => canvasRef.current?.zoomReset()}
-            className="h-7 px-2 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 transition-all tabular-nums min-w-[44px] text-center"
-            title="Reset zoom (Ctrl+0 / Double click)"
-            style={{ fontFamily: 'Manrope, sans-serif' }}
-          >
-            {Math.round(zoomLevel * 100)}%
-          </button>
-          <TinyBtn icon="add" title="Zoom in (Ctrl+=)" onClick={() => canvasRef.current?.zoomIn()} />
-        </div>
+        {/* Zoom — image only (Konva-managed; video player has its own scaling). */}
+        {!isVideo && (
+          <>
+            <div className="w-px h-5 bg-white/10" />
+            <div className="flex items-center gap-0.5">
+              <TinyBtn icon="remove" title="Zoom out (Ctrl+-)" onClick={() => canvasRef.current?.zoomOut()} />
+              <button
+                onClick={() => canvasRef.current?.zoomReset()}
+                className="h-7 px-2 rounded-lg text-[11px] font-bold text-slate-400 hover:text-white hover:bg-white/10 transition-all tabular-nums min-w-[44px] text-center"
+                title="Reset zoom (Ctrl+0 / Double click)"
+                style={{ fontFamily: 'Manrope, sans-serif' }}
+              >
+                {Math.round(zoomLevel * 100)}%
+              </button>
+              <TinyBtn icon="add" title="Zoom in (Ctrl+=)" onClick={() => canvasRef.current?.zoomIn()} />
+            </div>
+          </>
+        )}
 
         {/* Spacer */}
         <div className="flex-1" />
@@ -449,12 +436,16 @@ export default function Editor() {
 
         {actionBtns.length > 0 && <div className="w-px h-5 bg-white/10" />}
 
-        {/* Action buttons */}
+        {/* Shared action buttons — same list, order, and styling for image and
+             video. Click dispatches via kind: image → workflow/inline-action,
+             video → file-level IPCs (save-as copy, clipboard file, R2 upload). */}
         {actionBtns.map((btn) => (
           <button
             key={btn.key}
-            onClick={() => triggerAction(btn.key, btn.templateId, btn.destinationIndex, btn.actionType)}
-            disabled={!!actionBusy}
+            onClick={() => isVideo
+              ? runVideoAction(btn)
+              : triggerAction(btn.key, btn.templateId, btn.destinationIndex, btn.actionType)}
+            disabled={!!actionBusy || (isVideo && !videoFilePath)}
             title={btn.label}
             className={`h-7 px-2.5 rounded-lg flex items-center gap-1.5 transition-all flex-shrink-0 disabled:opacity-40 text-[11px] font-semibold ${
               actionBusy === btn.key
@@ -489,18 +480,40 @@ export default function Editor() {
               backgroundSize: '24px 24px',
             }}
           />
-          <AnnotationCanvas
-            ref={canvasRef}
-            key={imageDataUrl}
-            imageDataUrl={imageDataUrl}
-            tool={tool}
-            color={color}
-            strokeWidth={strokeWidth}
-            onExport={handleExport}
-            exportTrigger={exportTrigger}
-            onHistoryChange={handleHistoryChange}
-            onZoomChange={setZoomLevel}
-          />
+          {isVideo ? (
+            /* Plain HTML5 video player — annotation isn't supported on video in
+             *  this build; showing a live video through Konva is overkill when
+             *  we're not drawing on it. Native controls give smooth playback. */
+            videoSrc ? (
+              <video
+                ref={el => { videoRef.current = el }}
+                src={videoSrc}
+                controls
+                playsInline
+                preload="auto"
+                className="w-full h-full object-contain"
+                style={{ maxHeight: '100%' }}
+              />
+            ) : (
+              <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-500">
+                <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                <span className="text-sm" style={{ fontFamily: 'Manrope, sans-serif' }}>Loading video…</span>
+              </div>
+            )
+          ) : (
+            <AnnotationCanvas
+              ref={canvasRef}
+              key={imageDataUrl}
+              background={{ kind: 'image', dataUrl: imageDataUrl }}
+              tool={tool}
+              color={color}
+              strokeWidth={strokeWidth}
+              onExport={handleExport}
+              exportTrigger={exportTrigger}
+              onHistoryChange={handleHistoryChange}
+              onZoomChange={setZoomLevel}
+            />
+          )}
         </div>
 
         {/* ── Auto-blur panel ── */}
@@ -579,189 +592,37 @@ export default function Editor() {
         )}
       </div>
 
-      {/* ── Bottom toolbar (Snipping Tool style) ── */}
-      <div className="liquid-glass border-t border-white/5 flex-shrink-0 flex flex-col">
-
-        {/* Three-zone layout: left (tools) + middle (color/stroke, flex & overflow-hidden)
-             + right (undo/redo/clear). Right zone stays pinned; middle shrinks first. */}
-        <div className="flex items-stretch h-12 px-3 gap-1">
-
-          {/* ── Left: AI Blur + tool groups ─────────────────────────────── */}
-          <div className="flex items-stretch gap-1 flex-shrink-0">
-            <div className="flex items-center gap-0.5 px-1">
-              <button
-                title="AI blur sensitive info"
-                onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
-                className={`flex flex-col items-center justify-center gap-0.5 w-12 h-9 rounded-lg transition-all ${
-                  showAutoBlur
-                    ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
-                    : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
-                }`}
-              >
-                <span className="material-symbols-outlined text-[16px]">security</span>
-                <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
-              </button>
-            </div>
-            <div className="w-px h-7 bg-white/[0.06] self-center mx-1" />
-
-            {TOOL_GROUPS.map((group) => {
-              const isGroupActive = group.tools.some(t => t.id === tool)
-              return (
-                <div key={group.group} className="flex items-center">
-                  <div className={`flex items-center gap-0.5 rounded-xl p-0.5 ${isGroupActive ? 'bg-white/[0.06]' : ''}`}>
-                    {group.tools.map(({ id, icon, label, key }) => (
-                      <button
-                        key={id}
-                        title={`${label} (${key})`}
-                        onClick={() => setTool(id)}
-                        className={`relative flex flex-col items-center justify-center gap-0.5 w-11 h-9 rounded-lg transition-all ${
-                          tool === id
-                            ? 'bg-primary/20 text-primary shadow-[0_0_12px_rgba(182,160,255,0.15)]'
-                            : 'text-slate-400 hover:text-white hover:bg-white/10'
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-[16px]">{icon}</span>
-                        <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="w-px h-7 bg-white/[0.06] mx-1" />
-                </div>
-              )
-            })}
-          </div>
-
-          {/* ── Middle: color + stroke (shrinks, hides overflow) ─────────── */}
-          <div className="flex-1 flex items-center gap-2 min-w-0 overflow-hidden">
-            <div className="flex items-center gap-1 px-1 flex-shrink min-w-0">
-              {COLORS.map((c) => (
-                <button
-                  key={c}
-                  onClick={() => setColor(c)}
-                  className="relative flex-shrink-0 transition-all hover:scale-110 hidden lg:flex"
-                  title={c}
-                >
-                  <div
-                    className={`w-5 h-5 rounded-full border-2 transition-all ${
-                      color === c ? 'border-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border-transparent hover:border-white/30'
-                    }`}
-                    style={{ background: c }}
-                  />
-                </button>
-              ))}
-              {/* Compact trigger — only when preset palette is hidden (<lg). Opens
-                   a popover that includes the preset swatches + native picker. */}
-              <button
-                ref={colorBtnRef}
-                type="button"
-                title="Pick a color"
-                onClick={openColorPopover}
-                className="relative w-5 h-5 flex-shrink-0 cursor-pointer group block lg:hidden"
-              >
-                <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/50 transition-colors flex items-center justify-center overflow-hidden">
-                  <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
-                </div>
-              </button>
-              {/* Native OS color picker — only shown at lg+ when preset swatches are already visible */}
-              <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group hidden lg:block" title="Custom color">
-                <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/20 group-hover:border-white/50 transition-colors flex items-center justify-center overflow-hidden">
-                  <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
-                </div>
-                <input
-                  type="color"
-                  value={color}
-                  onChange={(e) => setColor(e.target.value)}
-                  className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                />
-              </label>
-            </div>
-
-            <div className="w-px h-7 bg-white/[0.06] self-center flex-shrink-0 hidden min-[950px]:block" />
-
-            <div className="hidden min-[950px]:flex items-center gap-2 px-2 min-w-0 flex-1">
-              <div className="hidden xl:flex items-center gap-1 flex-shrink-0">
-                {[2, 4, 8].map((w) => (
-                  <button
-                    key={w}
-                    onClick={() => setStrokeWidth(w)}
-                    className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all ${
-                      strokeWidth === w ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-white hover:bg-white/10'
-                    }`}
-                    title={`Stroke ${w}px`}
-                  >
-                    <div
-                      className="rounded-full flex-shrink-0"
-                      style={{ background: 'currentColor', width: w + 4, height: w + 4 }}
-                    />
-                  </button>
-                ))}
-              </div>
-              <input
-                type="range"
-                min={1}
-                max={20}
-                value={strokeWidth}
-                onChange={(e) => setStrokeWidth(Number(e.target.value))}
-                className="flex-1 min-w-0 max-w-[120px] accent-primary h-1"
-              />
-              <span className="text-[10px] text-slate-500 font-mono w-5 tabular-nums flex-shrink-0">{strokeWidth}</span>
-            </div>
-          </div>
-
-          {/* ── Right: Undo / Redo / Clear ───────────────────────────────── */}
-          <div className="flex items-center gap-0.5 px-1 flex-shrink-0">
-            <div className="w-px h-7 bg-white/[0.06] self-center mr-1" />
-            <BottomBtn icon="undo" label="Undo" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
-            <BottomBtn icon="redo" label="Redo" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
-            <BottomBtn icon="delete_sweep" label="Clear" onClick={() => canvasRef.current?.clear()} variant="danger" />
-          </div>
-
-        </div>
-      </div>
-
-      {/* Color popover — rendered at root & positioned fixed so overflow-hidden
-           parents (middle toolbar zone, canvas region) can't clip it. */}
-      {showColorPopover && colorPopoverPos && (
-        <div
-          ref={colorPopoverRef}
-          className="fixed z-[100] glass-refractive rounded-xl p-2 flex items-center gap-1.5"
-          style={{
-            left: colorPopoverPos.left,
-            top: colorPopoverPos.top,
-            transform: 'translate(-50%, -100%)',
-            fontFamily: 'Manrope, sans-serif',
-          }}
-        >
-          {COLORS.map((c) => (
+      {/* Annotation toolbar — image mode only. Video is view-only in this
+           build; to annotate, extract a frame via the History page or rebuild
+           the dedicated video annotator. */}
+      {!isVideo && (
+        <AnnotationToolBar
+          tool={tool} setTool={setTool}
+          color={color} setColor={setColor}
+          strokeWidth={strokeWidth} setStrokeWidth={setStrokeWidth}
+          canUndo={canUndo} canRedo={canRedo}
+          onUndo={() => canvasRef.current?.undo()}
+          onRedo={() => canvasRef.current?.redo()}
+          onClear={() => canvasRef.current?.clear()}
+          extraLeft={
             <button
-              key={c}
-              type="button"
-              onClick={() => { setColor(c); setShowColorPopover(false) }}
-              className="relative flex-shrink-0 transition-all hover:scale-110"
-              title={c}
+              title="AI blur sensitive info"
+              onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
+              className={`flex flex-col items-center justify-center gap-0.5 w-12 h-9 rounded-lg transition-all ${
+                showAutoBlur
+                  ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
+                  : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
+              }`}
             >
-              <div
-                className={`w-5 h-5 rounded-full border-2 transition-all ${
-                  color === c ? 'border-white scale-125 shadow-[0_0_8px_rgba(255,255,255,0.3)]' : 'border-transparent hover:border-white/30'
-                }`}
-                style={{ background: c }}
-              />
+              <span className="material-symbols-outlined text-[16px]">security</span>
+              <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
             </button>
-          ))}
-          <div className="w-px h-5 bg-white/10 mx-0.5" />
-          <label className="relative w-5 h-5 flex-shrink-0 cursor-pointer group" title="Custom color">
-            <div className="w-5 h-5 rounded-full border-2 border-dashed border-white/30 group-hover:border-white/60 transition-colors flex items-center justify-center overflow-hidden">
-              <div className="w-full h-full rounded-full" style={{ background: `conic-gradient(red, yellow, lime, cyan, blue, magenta, red)` }} />
-            </div>
-            <input
-              type="color"
-              value={color}
-              onChange={(e) => setColor(e.target.value)}
-              className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-            />
-          </label>
-        </div>
+          }
+        />
       )}
+
+      {/* No playback bar — the native HTML5 <video controls> provides
+           play/pause/seek/volume without any custom UI. */}
 
     </div>
   )
@@ -781,23 +642,3 @@ function TinyBtn({ icon, title, onClick, disabled }: { icon: string; title: stri
   )
 }
 
-/* ── Bottom toolbar button ── */
-function BottomBtn({ icon, label, disabled, onClick, variant }: {
-  icon: string; label: string; disabled?: boolean; onClick: () => void; variant?: 'danger'
-}) {
-  return (
-    <button
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-0.5 w-9 h-9 rounded-lg transition-all disabled:opacity-25 disabled:cursor-not-allowed ${
-        variant === 'danger'
-          ? 'text-slate-500 hover:text-red-400 hover:bg-red-400/10'
-          : 'text-slate-500 hover:text-white hover:bg-white/10'
-      }`}
-    >
-      <span className="material-symbols-outlined text-[16px]">{icon}</span>
-      <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
-    </button>
-  )
-}

@@ -59,7 +59,6 @@ declare global {
       onNavigate: (cb: (route: string, state?: Record<string, unknown>) => void) => void
       onRegionSelected: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => void
       onRecorderOpen: (cb: () => void) => void
-      onRecorderOpenGif: (cb: () => void) => void
       onRecorderStop: (cb: () => void) => void
       removeAllListeners: (channel: string) => void
 
@@ -70,11 +69,60 @@ declare global {
       cancelWindowPick: () => Promise<void>
       confirmMonitorPick: () => Promise<void>
       cancelMonitorPick: () => Promise<void>
-      switchOverlayMode: (mode: 'region' | 'window-pick' | 'monitor-pick') => Promise<void>
+      switchOverlayMode: (mode:
+        | 'region' | 'window-pick' | 'monitor-pick'
+        | 'video-region' | 'video-window' | 'video-screen'
+      ) => Promise<void>
       onOverlayModeChanged: (cb: (mode: string) => void) => void
       onOverlaySetActive: (cb: (active: boolean) => void) => void
       overlayDrawing: (drawing: boolean) => void
       notifyRoute: (route: string) => void
+
+      // Video file actions (operate on saved recording files)
+      videoSaveAs:   (filePath: string) => Promise<{ canceled: boolean; savedPath?: string }>
+      videoCopyFile: (filePath: string) => Promise<{ ok: boolean; fallback?: 'text'; error?: string }>
+      videoUploadR2: (filePath: string) => Promise<import('./types').UploadResult>
+
+      // Video recording — overlay mode selection
+      startVideoCapture: (mode: 'region' | 'window' | 'screen') => Promise<void>
+      confirmVideoRegion: (rect: { x: number; y: number; width: number; height: number }) => Promise<void>
+      confirmVideoWindow: (rect: { x: number; y: number; width: number; height: number }) => Promise<void>
+      confirmVideoScreen: () => Promise<void>
+      cancelVideo: () => Promise<void>
+
+      // Video recording — RecorderHost & Toolbar control
+      recorderGetTarget: () => Promise<{
+        kind: 'region' | 'window' | 'screen'
+        sourceId: string
+        displayId: number
+        rect?: { x: number; y: number; width: number; height: number }   // region: local to displayId; window/screen: full source
+        physicalRect?: { x: number; y: number; width: number; height: number }  // region: physical px (for canvas crop)
+      } | null>
+      recorderReady: (ok: boolean, error?: string) => Promise<void>
+      recorderStateChange: (state: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error', payload?: unknown) => Promise<void>
+      recorderTick: (elapsedMs: number) => Promise<void>
+      recorderSaveBlob: (buffer: ArrayBuffer, thumbnailDataUrl: string, durationMs: number) => Promise<{ filePath: string }>
+      onRecorderBegin: (cb: () => void) => void
+      onRecorderPause: (cb: () => void) => void
+      onRecorderResume: (cb: () => void) => void
+      onRecorderStopRequest: (cb: () => void) => void
+      onRecorderCancelRequest: (cb: () => void) => void
+      onRecorderMicToggle: (cb: (enabled: boolean) => void) => void
+
+      // Toolbar commands (toolbar renderer → main → recorder host)
+      toolbarBegin: () => Promise<void>
+      toolbarPause: () => Promise<void>
+      toolbarResume: () => Promise<void>
+      toolbarStop: () => Promise<void>
+      toolbarCancel: () => Promise<void>
+      toolbarToggleMic: (enabled: boolean) => Promise<void>
+      onToolbarState: (cb: (state: {
+        phase: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error'
+        elapsedMs?: number
+        countdown?: number
+        micEnabled?: boolean
+        error?: string
+      }) => void) => void
 
       // OCR & Auto-Blur
       ocrScan: (dataUrl: string) => Promise<import('@/types').AutoBlurResult>

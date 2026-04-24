@@ -89,8 +89,14 @@ function buildSigV4(opts: {
   return { headers, amzdate }
 }
 
+/** Accepts either a base64 data URL (backwards-compatible image path) or a
+ *  pre-decoded buffer + content-type (used for video uploads). */
+export type R2UploadInput =
+  | { dataUrl: string }
+  | { buffer: Buffer; contentType: string; ext: string; keyPrefix?: string }
+
 export async function uploadToR2(
-  imageData: string,
+  input: string | R2UploadInput,
   accountId: string,
   accessKeyId: string,
   secretAccessKey: string,
@@ -101,15 +107,33 @@ export async function uploadToR2(
     return { destination: 'r2', success: false, error: 'R2 credentials are not configured' }
   }
 
-  const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
-  const buffer = Buffer.from(base64, 'base64')
+  // Normalise input: legacy string arg is treated as an image dataUrl.
+  let buffer: Buffer
+  let contentType: string
+  let ext: string
+  let keyPrefix = 'captures'
+  if (typeof input === 'string') {
+    const base64 = input.replace(/^data:image\/\w+;base64,/, '')
+    buffer = Buffer.from(base64, 'base64')
+    contentType = 'image/png'
+    ext = 'png'
+  } else if ('dataUrl' in input) {
+    const base64 = input.dataUrl.replace(/^data:image\/\w+;base64,/, '')
+    buffer = Buffer.from(base64, 'base64')
+    contentType = 'image/png'
+    ext = 'png'
+  } else {
+    buffer = input.buffer
+    contentType = input.contentType
+    ext = input.ext
+    if (input.keyPrefix) keyPrefix = input.keyPrefix
+  }
 
-  const contentType = 'image/png'
   const payloadHash = sha256hex(buffer)
   // Content-addressable key — identical bytes always map to the same URL, so
   // re-uploading the same file reuses the original object instead of creating
   // a duplicate.
-  const key  = `captures/${payloadHash}.png`
+  const key  = `${keyPrefix}/${payloadHash}.${ext}`
   const host = `${accountId}.r2.cloudflarestorage.com`
   const path = `/${bucket}/${key}`
   const url  = `https://${host}${path}`

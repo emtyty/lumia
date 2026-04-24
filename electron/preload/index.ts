@@ -71,7 +71,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('region:selected', (_e, rect) => cb(rect))
   },
   onRecorderOpen: (cb: () => void) => { ipcRenderer.on('recorder:open', cb) },
-  onRecorderOpenGif: (cb: () => void) => { ipcRenderer.on('recorder:open-gif', cb) },
   onRecorderStop: (cb: () => void) => { ipcRenderer.on('recorder:stop', cb) },
   onUpdateDownloaded: (cb: (version: string) => void) => { ipcRenderer.on('update:downloaded', (_e, version: string) => cb(version)) },
   installUpdate: () => ipcRenderer.invoke('update:install'),
@@ -109,7 +108,50 @@ contextBridge.exposeInMainWorld('electronAPI', {
   cancelWindowPick: () => ipcRenderer.invoke('window-pick:cancel'),
   confirmMonitorPick: () => ipcRenderer.invoke('monitor-pick:confirm'),
   cancelMonitorPick: () => ipcRenderer.invoke('monitor-pick:cancel'),
-  switchOverlayMode: (mode: 'region' | 'window-pick' | 'monitor-pick') => ipcRenderer.invoke('overlay:switch-mode', mode),
+  switchOverlayMode: (mode:
+    | 'region' | 'window-pick' | 'monitor-pick'
+    | 'video-region' | 'video-window' | 'video-screen'
+  ) => ipcRenderer.invoke('overlay:switch-mode', mode),
+
+  // Video file actions (operate on saved recording files)
+  videoSaveAs:   (filePath: string) => ipcRenderer.invoke('video:save-as', filePath),
+  videoCopyFile: (filePath: string) => ipcRenderer.invoke('video:copy-file', filePath),
+  videoUploadR2: (filePath: string) => ipcRenderer.invoke('video:upload-r2', filePath),
+
+  // Video recording — overlay mode selection
+  startVideoCapture: (mode: 'region' | 'window' | 'screen') =>
+    ipcRenderer.invoke('video:start', mode),
+  confirmVideoRegion: (rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke('video:region-confirm', rect),
+  confirmVideoWindow: (rect: { x: number; y: number; width: number; height: number }) =>
+    ipcRenderer.invoke('video:window-confirm', rect),
+  confirmVideoScreen: () => ipcRenderer.invoke('video:screen-confirm'),
+  cancelVideo: () => ipcRenderer.invoke('video:cancel'),
+
+  // Video recording — RecorderHost & Toolbar
+  recorderGetTarget: () => ipcRenderer.invoke('recorder:get-target'),
+  recorderReady: (ok: boolean, error?: string) => ipcRenderer.invoke('recorder:ready', ok, error),
+  recorderStateChange: (state: string, payload?: unknown) =>
+    ipcRenderer.invoke('recorder:state', state, payload),
+  recorderTick: (elapsedMs: number) => ipcRenderer.invoke('recorder:tick', elapsedMs),
+  recorderSaveBlob: (buffer: ArrayBuffer, thumbnailDataUrl: string, durationMs: number) =>
+    ipcRenderer.invoke('recorder:save-blob', buffer, thumbnailDataUrl, durationMs),
+  onRecorderBegin: (cb: () => void) => ipcRenderer.on('recorder:begin', cb),
+  onRecorderPause: (cb: () => void) => ipcRenderer.on('recorder:pause', cb),
+  onRecorderResume: (cb: () => void) => ipcRenderer.on('recorder:resume', cb),
+  onRecorderStopRequest: (cb: () => void) => ipcRenderer.on('recorder:stop-request', cb),
+  onRecorderCancelRequest: (cb: () => void) => ipcRenderer.on('recorder:cancel-request', cb),
+  onRecorderMicToggle: (cb: (enabled: boolean) => void) =>
+    ipcRenderer.on('recorder:mic-toggle', (_e, enabled: boolean) => cb(enabled)),
+
+  toolbarBegin: () => ipcRenderer.invoke('toolbar:begin'),
+  toolbarPause: () => ipcRenderer.invoke('toolbar:pause'),
+  toolbarResume: () => ipcRenderer.invoke('toolbar:resume'),
+  toolbarStop: () => ipcRenderer.invoke('toolbar:stop'),
+  toolbarCancel: () => ipcRenderer.invoke('toolbar:cancel'),
+  toolbarToggleMic: (enabled: boolean) => ipcRenderer.invoke('toolbar:toggle-mic', enabled),
+  onToolbarState: (cb: (state: unknown) => void) =>
+    ipcRenderer.on('toolbar:state', (_e, state) => cb(state as any)),
   onOverlayModeChanged: (cb: (mode: string) => void) => {
     ipcRenderer.on('overlay:mode-changed', (_e, mode) => cb(mode))
   },

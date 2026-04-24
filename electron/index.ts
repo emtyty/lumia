@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
+import { setupVideo } from './video'
 import { registerOverlayHwnd, unregisterOverlayHwnd } from './native-input'
 import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
@@ -332,6 +333,7 @@ app.whenReady().then(async () => {
   applyLaunchAtStartup(getSettings().launchAtStartup)
 
   setupCapture()
+  setupVideo()
   setupHotkeys()
   setupTray()
   setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
@@ -419,7 +421,29 @@ app.whenReady().then(async () => {
     if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
     return shell.openPath(normalized)
   })
-  ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
+  ipcMain.handle('history:addCapture', async (_e, item) => {
+    // If a renderer is adding a screenshot with only a dataUrl (e.g. scroll
+    // capture, video-annotator frame extract), persist the original to
+    // ~/Pictures/Lumia/ here so every history item references a real file.
+    try {
+      if (item && item.type === 'screenshot' && !item.filePath && typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/')) {
+        const { writeFile, mkdir } = await import('fs/promises')
+        const { ORIGINALS_DIR } = await import('./capture')
+        const { join: joinPath } = await import('path')
+        const { localTimestamp } = await import('./utils')
+        await mkdir(ORIGINALS_DIR, { recursive: true })
+        const ext = item.dataUrl.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+        const filename = `capture-${localTimestamp()}.${ext}`
+        const filePath = joinPath(ORIGINALS_DIR, filename)
+        const base64 = item.dataUrl.replace(/^data:image\/\w+;base64,/, '')
+        await writeFile(filePath, Buffer.from(base64, 'base64'))
+        item = { ...item, name: item.name ?? filename, filePath }
+      }
+    } catch (err) {
+      console.error('[history:addCapture] failed to persist original', err)
+    }
+    return historyStore.add(item)
+  })
 
   // IPC: Overlay mode (scroll-region vs region)
   // Do NOT reset here — React StrictMode double-mounts the overlay,

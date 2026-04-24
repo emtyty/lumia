@@ -38,14 +38,15 @@ export class WorkflowEngine {
       }
 
       if (step.type === 'save') {
+        // Empty path = "surface a Save button in the editor only". The button
+        // calls runInlineAction('save', ...) which opens a Save-As dialog.
+        // Skip here so destination clicks don't silently auto-save a duplicate.
+        if (!step.path || !step.path.trim()) continue
         const ts = localTimestamp()
         const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
         const filename = `capture-${ts}.${ext}`
-        const dir = step.path && step.path.trim()
-          ? step.path
-          : getSettings().defaultSavePath || join(homedir(), 'Pictures', 'ShareAnywhere')
-        await mkdir(dir, { recursive: true })
-        const filePath = join(dir, filename)
+        await mkdir(step.path, { recursive: true })
+        const filePath = join(step.path, filename)
         const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
         await writeFile(filePath, Buffer.from(base64, 'base64'))
         result.savedPath = filePath

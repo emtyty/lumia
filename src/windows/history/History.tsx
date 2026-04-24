@@ -288,7 +288,7 @@ export default function History() {
                   isSelected={selectedIds.has(item.id)}
                   onToggleSelect={() => toggleSelect(item.id)}
                   onOpen={() => openItem(item)}
-                  onAnnotate={() => navigate('/video-annotator', { state: { filePath: item.filePath, name: item.name } })}
+                  onAnnotate={() => navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })}
                   onDelete={() => handleDelete(item.id)}
                   onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
                   onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
@@ -310,7 +310,7 @@ export default function History() {
                   isSelected={selectedIds.has(item.id)}
                   onToggleSelect={() => toggleSelect(item.id)}
                   onOpen={() => openItem(item)}
-                  onAnnotate={() => navigate('/video-annotator', { state: { filePath: item.filePath, name: item.name } })}
+                  onAnnotate={() => navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })}
                   onDelete={() => handleDelete(item.id)}
                   onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
                   onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
@@ -328,7 +328,7 @@ export default function History() {
           onClose={() => setPreviewItem(null)}
           onAnnotate={() => {
             setPreviewItem(null)
-            navigate('/video-annotator', { state: { filePath: previewItem.filePath, name: previewItem.name } })
+            navigate('/editor', { state: { kind: 'video', filePath: previewItem.filePath, name: previewItem.name } })
           }}
         />
       )}

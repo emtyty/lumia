@@ -21,10 +21,16 @@ import {
 import useImage from 'use-image'
 import type Konva from 'konva'
 import { useHistory } from '../../hooks/useHistory'
+import type { Tool } from './tools'
 
-export type Tool = 'select' | 'pen' | 'rect' | 'ellipse' | 'arrow' | 'text' | 'blur'
+export type { Tool }
 
-interface DrawObject {
+/** Pluggable background source for the annotation stage. */
+export type CanvasBackground =
+  | { kind: 'image'; dataUrl: string }
+  | { kind: 'video'; element: HTMLVideoElement | null; naturalWidth: number; naturalHeight: number }
+
+export interface DrawObject {
   id: string
   type: Tool
   points?: number[]
@@ -49,19 +55,33 @@ export interface CanvasHandle {
   zoomOut: () => void
   zoomReset: () => void
   zoomLevel: number
+  /** Snapshot the current composite (background + annotations) as a PNG data URL.
+   *  Resolution follows the source's natural pixel dimensions. */
+  toDataURL: () => string
+  /** Same composite as a fresh canvas. Useful for feeding MediaRecorder during
+   *  video export (canvas.captureStream). */
+  toCanvas: () => HTMLCanvasElement | null
+  /** Render ONLY the annotations (no background) to a fresh canvas at natural
+   *  resolution. Lets callers composite annotations on top of arbitrary frames
+   *  — used by the video exporter to paint annotations only during the freeze
+   *  phase while letting raw video frames flow through otherwise. */
+  toAnnotationsCanvas: () => HTMLCanvasElement | null
 }
 
 interface Props {
-  imageDataUrl: string
+  background: CanvasBackground
   tool: Tool
   color: string
   strokeWidth: number
-  onExport: (dataUrl: string) => void
-  exportTrigger: number
-  /** Called whenever the undo/redo availability changes so the parent can
-   *  reflect the state in its own UI (e.g. toolbar buttons). */
+  /** Optional: if provided, hitting Enter/clicking an action button writes the
+   *  composite PNG here. Video callers should prefer the `toDataURL` ref method. */
+  onExport?: (dataUrl: string) => void
+  exportTrigger?: number
   onHistoryChange?: (canUndo: boolean, canRedo: boolean) => void
   onZoomChange?: (zoom: number) => void
+  /** Disable pointer-driven drawing (used by video mode while the video is
+   *  actively playing — lets users watch without accidental strokes). */
+  readOnly?: boolean
 }
 
 let idCounter = 0
@@ -69,18 +89,18 @@ const uid = () => `obj-${++idCounter}-${Date.now()}`
 
 const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
   function AnnotationCanvas(
-    { imageDataUrl, tool, color, strokeWidth, onExport, exportTrigger, onHistoryChange, onZoomChange },
+    { background, tool, color, strokeWidth, onExport, exportTrigger = 0, onHistoryChange, onZoomChange, readOnly = false },
     ref,
   ) {
+    // ── Background ────────────────────────────────────────────────────────────
+    const imageDataUrl = background.kind === 'image' ? background.dataUrl : ''
     const [bgImage] = useImage(imageDataUrl)
     const [blurredBg, setBlurredBg] = useState<HTMLCanvasElement | null>(null)
-    const stageRef     = useRef<Konva.Stage>(null)
 
-    // Pre-compute a blurred version of the background once per image load.
-    // Blur regions sample from this canvas, so mousemove while drawing doesn't
-    // trigger a new filter pass.
+    // Pre-compute a blurred version of the image once on load. Blur tool samples
+    // from this canvas so mouse-drag doesn't trigger a new filter pass.
     useEffect(() => {
-      if (!bgImage) { setBlurredBg(null); return }
+      if (background.kind !== 'image' || !bgImage) { setBlurredBg(null); return }
       const c = document.createElement('canvas')
       c.width  = bgImage.width
       c.height = bgImage.height
@@ -89,12 +109,44 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       ctx.filter = 'blur(12px)'
       ctx.drawImage(bgImage, 0, 0)
       setBlurredBg(c)
-    }, [bgImage])
+    }, [bgImage, background.kind])
+
+    // For video: repaint the Konva layer on every new frame. The KonvaImage's
+    // `image` prop keeps the same HTMLVideoElement reference, so React/Konva
+    // won't redraw on their own — we have to call batchDraw() imperatively.
+    useEffect(() => {
+      if (background.kind !== 'video' || !background.element) return
+      const video = background.element
+      const anyVideo = video as HTMLVideoElement & {
+        requestVideoFrameCallback?: (cb: () => void) => number
+        cancelVideoFrameCallback?: (id: number) => void
+      }
+      if (typeof anyVideo.requestVideoFrameCallback === 'function') {
+        let id = 0
+        const onFrame = () => {
+          layerRef.current?.batchDraw()
+          id = anyVideo.requestVideoFrameCallback!(onFrame)
+        }
+        id = anyVideo.requestVideoFrameCallback!(onFrame)
+        return () => anyVideo.cancelVideoFrameCallback?.(id)
+      }
+      // Fallback: RAF loop while the video is actually playing.
+      let raf = 0
+      const tick = () => {
+        if (!video.paused && !video.ended) layerRef.current?.batchDraw()
+        raf = requestAnimationFrame(tick)
+      }
+      raf = requestAnimationFrame(tick)
+      return () => cancelAnimationFrame(raf)
+    }, [background])
+
+    const stageRef     = useRef<Konva.Stage>(null)
+    const layerRef     = useRef<Konva.Layer>(null)
     const containerRef = useRef<HTMLDivElement>(null)
     const [isDrawing, setIsDrawing] = useState(false)
     const [currentObj, setCurrentObj] = useState<DrawObject | null>(null)
     const drawStart = useRef({ x: 0, y: 0 })
-    const [, setSelectedId] = useState<string | null>(null)
+    const [selectedId, setSelectedId] = useState<string | null>(null)
     const [textInput, setTextInput] = useState<{
       x: number; y: number; screenX: number; screenY: number
     } | null>(null)
@@ -103,7 +155,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const trRef = useRef<Konva.Transformer>(null)
     const [containerSize, setContainerSize] = useState({ w: 0, h: 0 })
 
-    // ── Zoom ────────────────────────────────────────────────────────────────
+    // ── Zoom ──────────────────────────────────────────────────────────────────
     const [userZoom, setUserZoom] = useState(1)
     const clampZoom = (z: number) => Math.max(0.1, Math.min(z, 5))
     const zoomIn  = useCallback(() => setUserZoom(z => clampZoom(z + 0.1)), [])
@@ -128,11 +180,6 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       canRedo,
       clear,
     } = useHistory<DrawObject[]>([])
-
-    // Expose imperative handle to parent
-    useImperativeHandle(ref, () => ({ undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, zoomLevel: userZoom }), [
-      undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom,
-    ])
 
     // Notify parent when undo/redo availability changes
     useEffect(() => {
@@ -159,11 +206,15 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       }
     }, [textInput])
 
-    const naturalW = bgImage?.width  ?? 800
-    const naturalH = bgImage?.height ?? 600
+    // ── Natural dimensions ────────────────────────────────────────────────────
+    const naturalW = background.kind === 'image'
+      ? (bgImage?.width  ?? 800)
+      : (background.naturalWidth  || 800)
+    const naturalH = background.kind === 'image'
+      ? (bgImage?.height ?? 600)
+      : (background.naturalHeight || 600)
 
-    // Base scale: fit image into container.
-    // For very tall images (scroll captures), fit to width only and allow vertical scrolling.
+    // Base scale: fit content into container.
     const isTallImage = naturalH / naturalW > 2
     const baseScale = containerSize.w > 0 && containerSize.h > 0
       ? isTallImage
@@ -175,7 +226,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     useEffect(() => { onZoomChange?.(userZoom) }, [userZoom, onZoomChange])
 
-    // Scroll to zoom, anchored at the cursor position
+    // Scroll-to-zoom, anchored at cursor
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
@@ -187,8 +238,6 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
         const pan = panOffsetRef.current
 
         setUserZoom(prevZoom => {
-          // Exponential step: zoom feels linear in perceived size regardless of
-          // current level, and scales smoothly with high-resolution wheel/trackpad.
           const factor = Math.exp(-e.deltaY * 0.0015)
           const nextZoom = clampZoom(prevZoom * factor)
           if (nextZoom === prevZoom) return prevZoom
@@ -217,7 +266,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       return () => el.removeEventListener('wheel', onWheel)
     }, [baseScale, naturalW, naturalH])
 
-    // Double-click to reset zoom + pan to center
+    // Double-click to reset zoom + pan
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
@@ -266,21 +315,87 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const stageWidth  = Math.round(naturalW * scale)
     const stageHeight = Math.round(naturalH * scale)
 
-    // ── Export ────────────────────────────────────────────────────────────────
+    // ── Composite snapshot (current background + annotations at natural res) ──
+    const toDataURL = useCallback((): string => {
+      const stage = stageRef.current
+      if (!stage) return ''
+      return stage.toDataURL({ mimeType: 'image/png', pixelRatio: 1 / scale })
+    }, [scale])
+
+    const toCanvas = useCallback((): HTMLCanvasElement | null => {
+      const stage = stageRef.current
+      if (!stage) return null
+      return stage.toCanvas({ pixelRatio: 1 / scale })
+    }, [scale])
+
+    const toAnnotationsCanvas = useCallback((): HTMLCanvasElement | null => {
+      const stage = stageRef.current
+      if (!stage) return null
+      // Temporarily hide the background node so the export contains only the
+      // annotation shapes. Transformer stays hidden via `nodes([])` when idle,
+      // so it rarely shows up in snapshots — but hide it too to be safe.
+      const bg = stage.findOne('#__bg__')
+      const tr = trRef.current
+      const prevBg = bg?.visible() ?? true
+      const prevTrNodes = tr?.nodes() ?? []
+      bg?.visible(false)
+      tr?.nodes([])
+      stage.batchDraw()
+      const out = stage.toCanvas({ pixelRatio: 1 / scale })
+      bg?.visible(prevBg)
+      if (tr && prevTrNodes.length > 0) tr.nodes(prevTrNodes)
+      stage.batchDraw()
+      return out
+    }, [scale])
+
+    // Expose imperative handle to parent
+    useImperativeHandle(ref, () => ({
+      undo, redo, clear, canUndo, canRedo,
+      zoomIn, zoomOut, zoomReset, zoomLevel: userZoom,
+      toDataURL, toCanvas, toAnnotationsCanvas,
+    }), [undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas])
+
+    // ── Export trigger (legacy path — kept for Editor's workflow buttons) ────
     useEffect(() => {
-      if (exportTrigger > 0 && stageRef.current) {
-        const dataUrl = stageRef.current.toDataURL({
-          mimeType: 'image/png',
-          pixelRatio: 1 / scale,
-        })
-        onExport(dataUrl)
+      if (exportTrigger > 0 && stageRef.current && onExport) {
+        onExport(toDataURL())
       }
-    }, [exportTrigger, onExport, scale])
+    }, [exportTrigger, onExport, toDataURL])
+
+    // ── Transformer attachment ────────────────────────────────────────────────
+    useEffect(() => {
+      const tr = trRef.current
+      if (!tr) return
+      if (!selectedId) { tr.nodes([]); tr.getLayer()?.batchDraw(); return }
+      const stage = stageRef.current
+      if (!stage) return
+      const node = stage.findOne('#' + selectedId)
+      if (node) { tr.nodes([node]); tr.getLayer()?.batchDraw() }
+      else tr.nodes([])
+    }, [selectedId, objects])
+
+    // Deselect when switching away from the Select tool.
+    useEffect(() => { if (tool !== 'select') setSelectedId(null) }, [tool])
+
+    // ── Keyboard: Delete / Backspace removes the selected shape ──────────────
+    useEffect(() => {
+      const onKey = (e: KeyboardEvent) => {
+        const tag = (e.target as HTMLElement).tagName
+        if (tag === 'INPUT' || tag === 'TEXTAREA') return
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId) {
+          e.preventDefault()
+          commitObjects(prev => prev.filter(o => o.id !== selectedId))
+          setSelectedId(null)
+        }
+      }
+      window.addEventListener('keydown', onKey)
+      return () => window.removeEventListener('keydown', onKey)
+    }, [selectedId, commitObjects])
 
     // ── Drawing handlers ──────────────────────────────────────────────────────
     const handleMouseDown = useCallback(
       (e: Konva.KonvaEventObject<MouseEvent>) => {
-        if (e.evt.button === 2) return
+        if (readOnly || e.evt.button === 2) return
         if (tool === 'select') {
           if (e.target === e.target.getStage()) setSelectedId(null)
           return
@@ -307,7 +422,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
           return
         }
       },
-      [tool, color, strokeWidth, scale],
+      [tool, color, strokeWidth, scale, readOnly],
     )
 
     const handleMouseMove = useCallback(
@@ -371,15 +486,12 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const handleMouseUp = useCallback(() => {
       if (!isDrawing || !currentObj) return
       setIsDrawing(false)
-      // Skip committing shapes that are too small — these come from accidental
-      // clicks (e.g. double-click to reset zoom while in a shape tool).
       if (isTrivialShape(currentObj)) { setCurrentObj(null); return }
       commitObjects(prev => [...prev, currentObj])
       setCurrentObj(null)
     }, [isDrawing, currentObj, commitObjects])
 
-    // Global mouseup — commits the in-progress shape even if the cursor left
-    // the stage before the button was released.
+    // Global mouseup so a shape still commits if the pointer exits the stage
     useEffect(() => {
       if (!isDrawing) return
       const onUp = (e: MouseEvent) => {
@@ -390,12 +502,16 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       return () => window.removeEventListener('mouseup', onUp)
     }, [isDrawing, handleMouseUp])
 
-    // ── Rendering ─────────────────────────────────────────────────────────────
+    // ── Per-object shape renderer ─────────────────────────────────────────────
+    const selectable = tool === 'select'
     const renderObj = (obj: DrawObject, isPreview = false) => {
-      // Hide preview for trivially-small shapes so accidental clicks (e.g. the
-      // double-click-to-reset-zoom gesture) don't flash an arrowhead/rect on-screen.
       if (isPreview && isTrivialShape(obj)) return null
       const key = isPreview ? 'preview' : obj.id
+
+      const commonInteractive = !isPreview && {
+        onClick: () => { if (selectable) setSelectedId(obj.id) },
+        onTap:   () => { if (selectable) setSelectedId(obj.id) },
+      }
 
       if (obj.type === 'pen') {
         return (
@@ -409,8 +525,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             lineCap="round"
             lineJoin="round"
             globalCompositeOperation="source-over"
-            draggable={tool === 'select'}
-            onClick={() => !isPreview && setSelectedId(obj.id)}
+            draggable={selectable}
+            {...commonInteractive}
           />
         )
       }
@@ -426,14 +542,16 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             fill="transparent"
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
-            draggable={tool === 'select'}
-            onClick={() => !isPreview && setSelectedId(obj.id)}
+            draggable={selectable}
+            {...commonInteractive}
           />
         )
       }
       if (obj.type === 'blur') {
         const bx = obj.x ?? 0, by = obj.y ?? 0
         const bw = obj.width ?? 0, bh = obj.height ?? 0
+        // Video background has no pre-blurred sample — fall through to the
+        // placeholder frosted rect. (Video blur is a v1.5 feature.)
         if (!blurredBg || bw <= 0 || bh <= 0) {
           return (
             <Rect
@@ -443,6 +561,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
               fill="rgba(128,128,128,0.35)"
               stroke="rgba(255,255,255,0.4)"
               dash={[4, 4]}
+              draggable={selectable}
+              {...commonInteractive}
             />
           )
         }
@@ -451,8 +571,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             key={key}
             id={obj.id}
             clipX={bx} clipY={by} clipWidth={bw} clipHeight={bh}
-            draggable={tool === 'select'}
-            onClick={() => !isPreview && setSelectedId(obj.id)}
+            draggable={selectable}
+            {...commonInteractive}
           >
             <KonvaImage
               image={blurredBg}
@@ -475,8 +595,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
             fill="transparent"
-            draggable={tool === 'select'}
-            onClick={() => !isPreview && setSelectedId(obj.id)}
+            draggable={selectable}
+            {...commonInteractive}
           />
         )
       }
@@ -489,8 +609,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
             fill={obj.color}
-            draggable={tool === 'select'}
-            onClick={() => !isPreview && setSelectedId(obj.id)}
+            draggable={selectable}
+            {...commonInteractive}
           />
         )
       }
@@ -503,9 +623,11 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             y={obj.y}
             text={obj.text ?? ''}
             fontSize={obj.strokeWidth * 6 + 12}
+            fontFamily="Manrope, sans-serif"
+            fontStyle="bold"
             fill={obj.color}
             draggable={!isPreview}
-            onClick={() => !isPreview && setSelectedId(obj.id)}
+            {...commonInteractive}
             onDragEnd={e => {
               if (!isPreview) {
                 const node = e.target
@@ -522,7 +644,6 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       return null
     }
 
-    // ── Text input commit helpers ──────────────────────────────────────────────
     const commitText = useCallback(
       (pos: { x: number; y: number }, value: string) => {
         if (!value.trim()) return
@@ -533,6 +654,19 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       },
       [commitObjects, color, strokeWidth],
     )
+
+    // ── Cursor ────────────────────────────────────────────────────────────────
+    const cursor = isPanningState ? 'grabbing'
+      : readOnly ? 'default'
+      : tool === 'pen' ? 'crosshair'
+      : tool === 'text' ? 'text'
+      : tool === 'select' ? 'default'
+      : 'crosshair'
+
+    // ── Background Konva node (image or video) ───────────────────────────────
+    const bgElement = background.kind === 'image'
+      ? bgImage
+      : background.element
 
     return (
       <div
@@ -547,29 +681,39 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
           width: stageWidth,
           height: stageHeight,
         }}>
-        <Stage
-          ref={stageRef}
-          width={stageWidth}
-          height={stageHeight}
-          scaleX={scale}
-          scaleY={scale}
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-          style={{
-            cursor: isPanningState ? 'grabbing'
-              : tool === 'pen' ? 'crosshair'
-              : tool === 'text' ? 'text'
-              : 'default',
-          }}
-        >
-          <Layer>
-            {bgImage && <KonvaImage image={bgImage} width={naturalW} height={naturalH} />}
-            {objects.map(obj => renderObj(obj))}
-            {currentObj && renderObj(currentObj, true)}
-            <Transformer ref={trRef} />
-          </Layer>
-        </Stage>
+          <Stage
+            ref={stageRef}
+            width={stageWidth}
+            height={stageHeight}
+            scaleX={scale}
+            scaleY={scale}
+            onMouseDown={handleMouseDown}
+            onMouseMove={handleMouseMove}
+            onMouseUp={handleMouseUp}
+            style={{ cursor }}
+          >
+            <Layer ref={layerRef}>
+              {bgElement && (
+                <KonvaImage
+                  id="__bg__"
+                  image={bgElement as any}
+                  width={naturalW}
+                  height={naturalH}
+                  listening={false}
+                />
+              )}
+              {objects.map(obj => renderObj(obj))}
+              {currentObj && renderObj(currentObj, true)}
+              <Transformer
+                ref={trRef}
+                rotateEnabled={false}
+                borderStroke="#a78bfa"
+                anchorStroke="#a78bfa"
+                anchorFill="#ffffff"
+                anchorSize={8}
+              />
+            </Layer>
+          </Stage>
         </div>
 
         {textInput && (
@@ -593,7 +737,6 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
                 }
               }}
               onBlur={() => {
-                // Delay to avoid Konva mouseUp immediately triggering blur
                 setTimeout(() => {
                   setTextInput(prev => {
                     if (!prev) return null

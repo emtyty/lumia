@@ -1,8 +1,34 @@
 import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard } from 'electron'
+import { homedir } from 'os'
+import { join } from 'path'
 import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays } from './index'
 import { getWindowAtPointPhysical } from './native-input'
 import { setOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
+
+/** Canonical folder for original captures (both images and videos). Not
+ *  user-configurable — user-chosen locations are for the Save-As dialog only,
+ *  which writes a separate file and never touches the original. */
+export const ORIGINALS_DIR = join(homedir(), 'Pictures', 'Lumia')
+
+/** Write the just-captured image to disk at {ORIGINALS_DIR}/capture-{ts}.{ext}.
+ *  Best-effort — returns null if anything goes wrong so capture still completes. */
+async function saveOriginalImage(dataUrl: string): Promise<{ filePath: string; filename: string } | null> {
+  try {
+    const { writeFile, mkdir } = await import('fs/promises')
+    await mkdir(ORIGINALS_DIR, { recursive: true })
+    const ts = localTimestamp()
+    const ext = dataUrl.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+    const filename = `capture-${ts}.${ext}`
+    const filePath = join(ORIGINALS_DIR, filename)
+    const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '')
+    await writeFile(filePath, Buffer.from(base64, 'base64'))
+    return { filePath, filename }
+  } catch (err) {
+    console.error('[capture] failed to save original image', err)
+    return null
+  }
+}
 
 export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
 
@@ -180,8 +206,13 @@ export function setupCapture() {
     showMainWindow()
   })
 
-  // Switch between overlay capture modes without closing the overlay.
-  ipcMain.handle('overlay:switch-mode', (_e, mode: 'region' | 'window-pick' | 'monitor-pick') => {
+  // Switch between overlay modes without closing the overlay. Works for both
+  // screenshot (region/window-pick/monitor-pick) and video (video-*) intents —
+  // the overlay renderer picks rendering + confirm-channel based on the prefix.
+  ipcMain.handle('overlay:switch-mode', (_e, mode:
+    | 'region' | 'window-pick' | 'monitor-pick'
+    | 'video-region' | 'video-window' | 'video-screen'
+  ) => {
     setOverlayMode(mode)
     broadcastToOverlays('overlay:mode-changed', mode)
   })
@@ -404,6 +435,10 @@ export async function sendCaptureToEditor(dataUrl: string, source: string) {
     clipboard.writeImage(img)
   } catch { /* silent */ }
 
+  // Always save the original capture to ~/Pictures/Lumia/ (fixed location).
+  // Editor's Save button is a separate flow that writes to a user-chosen path.
+  const saved = await saveOriginalImage(dataUrl)
+
   try {
     const historyStore = getHistoryStore()
     if (historyStore) {
@@ -411,7 +446,8 @@ export async function sendCaptureToEditor(dataUrl: string, source: string) {
       historyStore.add({
         id: require('crypto').randomUUID(),
         timestamp: Date.now(),
-        name: `capture-${ts}`,
+        name: saved?.filename ?? `capture-${ts}`,
+        filePath: saved?.filePath,
         dataUrl,
         type: 'screenshot',
         uploads: []

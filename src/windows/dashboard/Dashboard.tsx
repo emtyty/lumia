@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
-import VideoRecorder from '../../components/VideoRecorder'
 import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
 import { UpdateNotification } from '../../components/UpdateNotification'
 
 type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
+type VideoMode = 'region' | 'window' | 'screen'
+type MediaKind = 'image' | 'video'
 type FilterType = 'all' | 'screenshot' | 'recording'
 
 // Map capture mode → hotkey action name (from electron/hotkeys.ts)
@@ -22,6 +23,12 @@ const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
   { mode: 'window',         icon: 'web_asset',       label: 'Window' },
   { mode: 'fullscreen',     icon: 'tv_displays',     label: 'Fullscreen' },
   { mode: 'active-monitor', icon: 'monitor',         label: 'Active Screen' },
+]
+
+const VIDEO_MODES: { mode: VideoMode; icon: string; label: string }[] = [
+  { mode: 'region', icon: 'crop',      label: 'Region' },
+  { mode: 'window', icon: 'web_asset', label: 'Window' },
+  { mode: 'screen', icon: 'monitor',   label: 'Screen' },
 ]
 
 /** Parse an Electron accelerator string like "Ctrl+Shift+4" into display keys */
@@ -71,13 +78,13 @@ function relativeTime(timestamp: number): string {
 export default function Dashboard() {
   const navigate = useNavigate()
   const [recentItems, setRecentItems] = useState<HistoryItem[]>([])
-  const [showRecorder, setShowRecorder] = useState(false)
   const [showScrollCapture, setShowScrollCapture] = useState(false)
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<FilterType>('all')
   const [searchFocused, setSearchFocused] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
   const [hotkeys, setHotkeys] = useState<Record<string, string>>({})
+  const [mediaKind, setMediaKind] = useState<MediaKind>('image')
 
   useEffect(() => {
     window.electronAPI?.getHistory().then(items => setRecentItems(items.slice(0, 12)))
@@ -87,14 +94,13 @@ export default function Dashboard() {
       navigate('/editor', { state: { dataUrl, source } })
     })
 
-    window.electronAPI?.onRecorderOpen(() => setShowRecorder(true))
-    window.electronAPI?.onRecorderOpenGif(() => setShowRecorder(true))
+    // Record Screen hotkey → launch new overlay-based video flow (region mode default).
+    window.electronAPI?.onRecorderOpen(() => window.electronAPI?.startVideoCapture?.('region'))
     window.electronAPI?.onScrollCaptureOpen(() => setShowScrollCapture(true))
 
     return () => {
       window.electronAPI?.removeAllListeners('capture:ready')
       window.electronAPI?.removeAllListeners('recorder:open')
-      window.electronAPI?.removeAllListeners('recorder:open-gif')
       window.electronAPI?.removeAllListeners('scroll-capture:open')
     }
   }, [navigate])
@@ -153,16 +159,14 @@ export default function Dashboard() {
       </header>
 
       {/* ── Capture Actions ── */}
-      <section className="grid grid-cols-2 gap-6">
-        {/* Screenshot group */}
-        <div>
-          <div className="flex items-center gap-2 mb-2.5 px-0.5">
-            <span className="material-symbols-outlined text-primary text-[15px]">photo_camera</span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: 'Manrope, sans-serif' }}>
-              Screenshot
-            </span>
-          </div>
-          <div className="grid grid-cols-2 gap-2">
+      <section>
+        {/* Media kind toggle */}
+        <div className="flex items-center justify-between mb-4">
+          <MediaKindToggle value={mediaKind} onChange={setMediaKind} />
+        </div>
+
+        {mediaKind === 'image' ? (
+          <div className="grid grid-cols-5 gap-2">
             {CAPTURE_MODES.map(({ mode, icon, label }) => {
               const accel = hotkeys[MODE_ACTION[mode]]
               const keys = accel ? parseShortcut(accel) : []
@@ -181,7 +185,7 @@ export default function Dashboard() {
                   </div>
                   <div className="text-left min-w-0">
                     <span
-                      className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
+                      className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors truncate"
                       style={{ fontFamily: 'Manrope, sans-serif' }}
                     >
                       {label}
@@ -191,84 +195,59 @@ export default function Dashboard() {
                 </button>
               )
             })}
-          </div>
-          {/* Scrolling capture — full width below the 2×2 grid */}
-          <button
-            onClick={() => handleCapture('scrolling')}
-            className="group flex items-center gap-3 px-3 py-3 mt-2 rounded-xl
-                       bg-white/[0.03] border border-white/[0.05]
-                       hover:bg-primary/[0.08] hover:border-primary/20
-                       active:scale-[0.98] transition-all duration-200 cursor-pointer w-full"
-          >
-            <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0
-                            group-hover:bg-primary/20 transition-colors duration-200">
-              <span className="material-symbols-outlined text-primary text-lg">swipe_down</span>
-            </div>
-            <div className="text-left min-w-0">
-              <span
-                className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
-                style={{ fontFamily: 'Manrope, sans-serif' }}
-              >
-                Scrolling
-              </span>
-              {hotkeys.ScrollingCapture && <KeyCombo keys={parseShortcut(hotkeys.ScrollingCapture)} />}
-            </div>
-          </button>
-        </div>
-
-        {/* Video group */}
-        <div>
-          <div className="flex items-center gap-2 mb-2.5 px-0.5">
-            <span className="material-symbols-outlined text-tertiary text-[15px]">videocam</span>
-            <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-slate-500" style={{ fontFamily: 'Manrope, sans-serif' }}>
-              Video
-            </span>
-          </div>
-          <div className="grid grid-cols-1 gap-2">
             <button
-              onClick={() => setShowRecorder(true)}
+              onClick={() => handleCapture('scrolling')}
               className="group flex items-center gap-3 px-3 py-3 rounded-xl
                          bg-white/[0.03] border border-white/[0.05]
-                         hover:bg-tertiary/[0.08] hover:border-tertiary/20
+                         hover:bg-primary/[0.08] hover:border-primary/20
                          active:scale-[0.98] transition-all duration-200 cursor-pointer"
             >
-              <div className="w-9 h-9 rounded-lg bg-tertiary/10 flex items-center justify-center flex-shrink-0
-                              group-hover:bg-tertiary/20 transition-colors duration-200">
-                <span className="material-symbols-outlined text-tertiary text-lg">fiber_manual_record</span>
+              <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center flex-shrink-0
+                              group-hover:bg-primary/20 transition-colors duration-200">
+                <span className="material-symbols-outlined text-primary text-lg">swipe_down</span>
               </div>
               <div className="text-left min-w-0">
                 <span
-                  className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
+                  className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors truncate"
                   style={{ fontFamily: 'Manrope, sans-serif' }}
                 >
-                  Record Screen
+                  Scrolling
                 </span>
-                {hotkeys.ScreenRecorder && <KeyCombo keys={parseShortcut(hotkeys.ScreenRecorder)} />}
-              </div>
-            </button>
-            <button
-              onClick={() => setShowRecorder(true)}
-              className="group flex items-center gap-3 px-3 py-3 rounded-xl
-                         bg-white/[0.03] border border-white/[0.05]
-                         hover:bg-tertiary/[0.08] hover:border-tertiary/20
-                         active:scale-[0.98] transition-all duration-200 cursor-pointer"
-            >
-              <div className="w-9 h-9 rounded-lg bg-tertiary/10 flex items-center justify-center flex-shrink-0
-                              group-hover:bg-tertiary/20 transition-colors duration-200">
-                <span className="material-symbols-outlined text-tertiary text-lg">gif_box</span>
-              </div>
-              <div className="text-left min-w-0">
-                <span
-                  className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors"
-                  style={{ fontFamily: 'Manrope, sans-serif' }}
-                >
-                  Record GIF
-                </span>
-                {hotkeys.ScreenRecorderGIF && <KeyCombo keys={parseShortcut(hotkeys.ScreenRecorderGIF)} />}
+                {hotkeys.ScrollingCapture && <KeyCombo keys={parseShortcut(hotkeys.ScrollingCapture)} />}
               </div>
             </button>
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {VIDEO_MODES.map(({ mode, icon, label }) => {
+              const hotkey = mode === 'region' ? hotkeys.ScreenRecorder : undefined
+              return (
+                <button
+                  key={mode}
+                  onClick={() => window.electronAPI?.startVideoCapture?.(mode)}
+                  className="group flex items-center gap-3 px-3 py-3 rounded-xl
+                             bg-white/[0.03] border border-white/[0.05]
+                             hover:bg-tertiary/[0.08] hover:border-tertiary/20
+                             active:scale-[0.98] transition-all duration-200 cursor-pointer"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-tertiary/10 flex items-center justify-center flex-shrink-0
+                                  group-hover:bg-tertiary/20 transition-colors duration-200">
+                    <span className="material-symbols-outlined text-tertiary text-lg">{icon}</span>
+                  </div>
+                  <div className="text-left min-w-0">
+                    <span
+                      className="block text-xs font-semibold text-slate-200 group-hover:text-white transition-colors truncate"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      {label}
+                    </span>
+                    {hotkey && <KeyCombo keys={parseShortcut(hotkey)} />}
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        )}
       </section>
 
       {/* ── Recent Captures ── */}
@@ -375,9 +354,9 @@ export default function Dashboard() {
                 item={item}
                 onOpen={() => {
                   if (item.type === 'recording') {
-                    navigate('/video-annotator', { state: { filePath: item.filePath, name: item.name } })
+                    navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })
                   } else {
-                    navigate('/editor', { state: { dataUrl: item.dataUrl, source: 'history' } })
+                    navigate('/editor', { state: { kind: 'image', dataUrl: item.dataUrl, source: 'history' } })
                   }
                 }}
               />
@@ -386,8 +365,64 @@ export default function Dashboard() {
         )}
       </section>
 
-      {showRecorder && <VideoRecorder onClose={() => setShowRecorder(false)} />}
       {showScrollCapture && <ScrollCaptureDialog onClose={() => setShowScrollCapture(false)} />}
+    </div>
+  )
+}
+
+/* ── Media Kind Toggle ── */
+
+function MediaKindToggle({ value, onChange }: { value: MediaKind; onChange: (v: MediaKind) => void }) {
+  const options: { kind: MediaKind; icon: string; label: string; activeBg: string; activeBorder: string; activeIcon: string }[] = [
+    {
+      kind: 'image',
+      icon: 'photo_camera',
+      label: 'Image',
+      activeBg: 'bg-primary/15',
+      activeBorder: 'border-primary/25',
+      activeIcon: 'text-primary',
+    },
+    {
+      kind: 'video',
+      icon: 'videocam',
+      label: 'Video',
+      activeBg: 'bg-tertiary/15',
+      activeBorder: 'border-tertiary/25',
+      activeIcon: 'text-tertiary',
+    },
+  ]
+  return (
+    <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+      {options.map(({ kind, icon, label, activeBg, activeBorder, activeIcon }) => {
+        const active = value === kind
+        return (
+          <button
+            key={kind}
+            onClick={() => onChange(kind)}
+            className={`group flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 cursor-pointer border ${
+              active
+                ? `${activeBg} ${activeBorder} shadow-[0_0_16px_rgba(0,0,0,0.2)]`
+                : 'border-transparent hover:bg-white/[0.04]'
+            }`}
+          >
+            <span
+              className={`material-symbols-outlined text-[16px] transition-colors ${
+                active ? activeIcon : 'text-slate-500 group-hover:text-slate-300'
+              }`}
+            >
+              {icon}
+            </span>
+            <span
+              className={`text-xs font-semibold transition-colors ${
+                active ? 'text-white' : 'text-slate-400 group-hover:text-slate-200'
+              }`}
+              style={{ fontFamily: 'Manrope, sans-serif' }}
+            >
+              {label}
+            </span>
+          </button>
+        )
+      })}
     </div>
   )
 }
