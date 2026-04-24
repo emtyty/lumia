@@ -39,6 +39,22 @@ export interface WorkflowResult {
   copiedToClipboard: boolean
 }
 
+// Structural snapshot of an annotation shape. Mirrors Canvas' DrawObject but
+// kept loose (type: string) so main doesn't need to know the Tool union.
+export interface AnnotationObject {
+  id: string
+  type: string
+  points?: number[]
+  x?: number; y?: number
+  width?: number; height?: number
+  radiusX?: number; radiusY?: number
+  text?: string
+  color: string
+  strokeWidth: number
+  fill?: string
+  isBlur?: boolean
+}
+
 export interface HistoryItem {
   id: string
   timestamp: number
@@ -52,6 +68,15 @@ export interface HistoryItem {
   // Computed at read time by history:get. True when filePath is set but the
   // file is gone from disk. Never persisted — set only on the IPC response.
   fileMissing?: boolean
+  // Vector annotations layered over the original. Re-editable: the Editor
+  // replays each entry as its own commit on mount so native Undo steps back
+  // through them one at a time.
+  annotations?: AnnotationObject[]
+  // Sidecar PNG with annotations flattened into pixels. Kept in sync on
+  // every saveHistoryAnnotations call that carries a flattened dataUrl, so
+  // surfaces outside the Editor (Dashboard Share/Copy, thumbnail) operate
+  // on the annotated version without re-running Konva.
+  annotatedFilePath?: string
 }
 
 // ── OCR & Auto-Blur ──────────────────────────────────────────────

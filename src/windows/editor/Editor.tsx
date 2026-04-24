@@ -6,7 +6,8 @@ import AnnotationCanvas, {
 } from '../../components/AnnotationCanvas/Canvas'
 import AnnotationToolBar from '../../components/AnnotationCanvas/ToolBar'
 import { matchToolShortcut } from '../../components/AnnotationCanvas/tools'
-import type { WorkflowTemplate, HistoryItem, SensitiveRegion } from '../../types'
+import type { WorkflowTemplate, HistoryItem, SensitiveRegion, AnnotationObject } from '../../types'
+import type { DrawObject } from '../../components/AnnotationCanvas/Canvas'
 import { AutoBlurPanel } from '../../components/AutoBlurPanel'
 import { deriveActions, type ActionBtn } from '../../lib/workflow-actions'
 import { useLocalVideoUrl } from '../../hooks/useLocalVideoUrl'
@@ -19,6 +20,8 @@ type EditorState = {
   filePath?: string
   name?: string
   source?: string
+  historyId?: string
+  annotations?: AnnotationObject[]
 }
 
 // Tools / colors / shortcuts live in ../../components/AnnotationCanvas/tools.ts —
@@ -67,6 +70,8 @@ export default function Editor() {
   const [imageDataUrl, setImageDataUrl] = useState<string>(initialState.dataUrl ?? '')
   const [videoFilePath, setVideoFilePath] = useState<string>(initialState.filePath ?? '')
   const [videoName, setVideoName]         = useState<string>(initialState.name ?? '')
+  const [historyId, setHistoryId]         = useState<string | undefined>(initialState.historyId)
+  const [initialAnnotations, setInitialAnnotations] = useState<AnnotationObject[] | undefined>(initialState.annotations)
   const isVideo = kind === 'video'
 
   const triggerNewCapture = useCallback(() => {
@@ -108,9 +113,13 @@ export default function Editor() {
   const videoSrc = useLocalVideoUrl(isVideo ? videoFilePath : '')
 
   const resetForNewImage = useCallback((dataUrl: string) => {
+    // No canvasRef.current?.clear() here — the Canvas is keyed on
+    // `imageDataUrl` so it remounts (with fresh history) whenever the image
+    // actually changes. Calling clear() here would also wipe replay that
+    // Canvas just ran for a loaded history item, since Editor's location
+    // effect runs AFTER Canvas's mount effects.
     setImageDataUrl(dataUrl)
     setExportTrigger(0)
-    canvasRef.current?.clear()
     setAutoBlurRegions([])
     setAutoBlurSelected(new Set())
     setAutoBlurHistory([])
@@ -133,6 +142,8 @@ export default function Editor() {
   useEffect(() => {
     const state = (location.state ?? {}) as EditorState
     const nextKind: 'image' | 'video' = state.kind ?? (state.filePath ? 'video' : state.dataUrl ? 'image' : kind)
+    setHistoryId(state.historyId)
+    setInitialAnnotations(state.annotations)
     if (nextKind === 'video') {
       setKind('video')
       setVideoFilePath(state.filePath ?? '')
@@ -155,6 +166,10 @@ export default function Editor() {
       setKind('image')
       setVideoFilePath('')
       setVideoName('')
+      // Fresh capture has no existing history entry yet, so wipe any lingering
+      // annotation context from a previously-opened history item.
+      setHistoryId(undefined)
+      setInitialAnnotations(undefined)
       resetForNewImage(dataUrl)
     })
     Promise.all([
@@ -258,15 +273,54 @@ export default function Editor() {
     }
   }, [videoFilePath, activeTemplate, showToast])
 
+  // Debounce timer for auto-saving annotation JSON as the user draws. Full
+  // saves (with the flattened PNG sidecar + fresh thumbnail) happen on every
+  // action trigger via handleExport — this debounce is purely so annotations
+  // survive an Editor close that isn't accompanied by an action.
+  //
+  // `pendingSave` holds the payload the timer is scheduled to write. On
+  // unmount (Back button, closing the editor, app quit) we flush it
+  // synchronously so work in progress isn't dropped when the debounce
+  // doesn't reach its 600ms window.
+  const annotationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingAnnotationSave = useRef<{ historyId: string; objects: AnnotationObject[] } | null>(null)
+  useEffect(() => () => {
+    if (annotationSaveTimer.current) {
+      clearTimeout(annotationSaveTimer.current)
+      annotationSaveTimer.current = null
+    }
+    const pending = pendingAnnotationSave.current
+    pendingAnnotationSave.current = null
+    if (pending) {
+      window.electronAPI?.saveHistoryAnnotations(pending.historyId, pending.objects).catch(() => {})
+    }
+  }, [])
+
   const handleExport = useCallback((dataUrl: string) => {
     setExportedDataUrl(dataUrl)
     setExportTrigger(0)
-    const pending = pendingAction.current
+
+    const pendingRaw = pendingAction.current
     pendingAction.current = null
-    if (!pending) return
-    const { key, templateId, destinationIndex, actionType } = JSON.parse(pending) as {
+    const pending = pendingRaw ? JSON.parse(pendingRaw) as {
       key: string; templateId: string; destinationIndex?: number; actionType?: 'clipboard' | 'save'
+    } : null
+
+    // Save is pure file I/O to a user-chosen path — never mutate history. For
+    // every other action (Copy, Share, workflow destinations) commit the
+    // current annotations + flattened sidecar so the next Editor session
+    // rehydrates the shapes and Dashboard surfaces see annotated pixels.
+    if (historyId && !isVideo && canvasRef.current && pending?.actionType !== 'save') {
+      if (annotationSaveTimer.current) { clearTimeout(annotationSaveTimer.current); annotationSaveTimer.current = null }
+      pendingAnnotationSave.current = null  // action save supersedes any pending debounced save
+      const objects = canvasRef.current.getObjects() as AnnotationObject[]
+      window.electronAPI?.saveHistoryAnnotations(historyId, objects, dataUrl).catch((err) => {
+        console.error('[editor] failed to save annotations', err)
+      })
     }
+
+    if (!pending) return
+    const { key, templateId, destinationIndex, actionType } = pending
     setActionBusy(key)
     if (actionType) {
       window.electronAPI?.runInlineAction(actionType, dataUrl)
@@ -278,7 +332,7 @@ export default function Editor() {
         .finally(() => setActionBusy(null))
       return
     }
-    window.electronAPI?.runWorkflow(templateId, dataUrl, destinationIndex)
+    window.electronAPI?.runWorkflow(templateId, dataUrl, destinationIndex, historyId)
       .then((r) => {
         if (r?.uploads?.some(u => u.url))  showToast('Uploaded — link copied', 'check_circle')
         else if (r?.copiedToClipboard)     showToast('Copied to clipboard', 'check_circle')
@@ -287,7 +341,7 @@ export default function Editor() {
       })
       .catch(() => showToast('Action failed', 'error', 'error'))
       .finally(() => setActionBusy(null))
-  }, [showToast])
+  }, [historyId, isVideo, showToast])
 
   const triggerAction = (key: string, templateId: string, destinationIndex?: number, actionType?: 'clipboard' | 'save') => {
     pendingAction.current = JSON.stringify({ key, templateId, destinationIndex, actionType })
@@ -297,7 +351,31 @@ export default function Editor() {
   const handleHistoryChange = useCallback((u: boolean, r: boolean) => {
     setCanUndo(u)
     setCanRedo(r)
-  }, [])
+    // Lightweight auto-save: just the annotation JSON, no flattened PNG. That
+    // way closing the Editor without clicking an action doesn't lose work.
+    // The flattened sidecar + thumbnail get refreshed on the next action via
+    // handleExport, which is the right moment since that's when external
+    // surfaces (Dashboard Share/Copy) need an up-to-date pixel version.
+    //
+    // Skip when the stack is at its blank root (no undo, no redo) — that's
+    // either the Canvas's first render before replay fills it, or a cleared
+    // state with no editing history. In both cases saving an empty array
+    // would wipe the user's persisted annotations.
+    if (!u && !r) return
+    if (historyId && !isVideo && canvasRef.current) {
+      const objects = canvasRef.current.getObjects() as AnnotationObject[]
+      pendingAnnotationSave.current = { historyId, objects }
+      if (annotationSaveTimer.current) clearTimeout(annotationSaveTimer.current)
+      annotationSaveTimer.current = setTimeout(() => {
+        const pending = pendingAnnotationSave.current
+        pendingAnnotationSave.current = null
+        annotationSaveTimer.current = null
+        if (pending) {
+          window.electronAPI?.saveHistoryAnnotations(pending.historyId, pending.objects).catch(() => {})
+        }
+      }, 600)
+    }
+  }, [historyId, isVideo])
 
   const handleAutoBlurScan = useCallback(async () => {
     if (!imageDataUrl || autoBlurScanning) return
@@ -537,6 +615,7 @@ export default function Editor() {
               exportTrigger={exportTrigger}
               onHistoryChange={handleHistoryChange}
               onZoomChange={setZoomLevel}
+              initialObjects={initialAnnotations as DrawObject[] | undefined}
             />
           )}
         </div>

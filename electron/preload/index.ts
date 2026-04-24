@@ -17,8 +17,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showAfterRecording: () => ipcRenderer.invoke('record:show'),
 
   // Workflow
-  runWorkflow: (templateId: string, imageData: string, destinationIndex?: number) =>
-    ipcRenderer.invoke('workflow:run', templateId, imageData, destinationIndex),
+  runWorkflow: (templateId: string, imageData: string, destinationIndex?: number, historyId?: string) =>
+    ipcRenderer.invoke('workflow:run', templateId, imageData, destinationIndex, historyId),
   runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) =>
     ipcRenderer.invoke('workflow:inlineAction', actionType, imageData),
   getTemplates: () => ipcRenderer.invoke('workflow:getTemplates'),
@@ -32,6 +32,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addHistoryItem: (item: unknown) => ipcRenderer.invoke('history:addCapture', item),
   readHistoryFile: (filePath: string) => ipcRenderer.invoke('history:readAsDataUrl', filePath),
   cleanupMissingHistory: () => ipcRenderer.invoke('history:cleanupMissing'),
+  shareHistoryR2: (id: string) => ipcRenderer.invoke('history:shareR2', id),
+  saveHistoryAnnotations: (id: string, annotations: unknown[], flattenedDataUrl?: string) =>
+    ipcRenderer.invoke('history:saveAnnotations', id, annotations, flattenedDataUrl),
 
   // Hotkeys
   getHotkeys: () => ipcRenderer.invoke('hotkeys:get'),

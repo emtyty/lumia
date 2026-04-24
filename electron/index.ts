@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme, Notification } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupVideo } from './video'
@@ -10,6 +10,7 @@ import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
 import { makeThumbnail } from './thumbnail'
+import type { HistoryItem } from './types'
 import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
 import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
 import { autoUpdater } from 'electron-updater'
@@ -391,8 +392,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('workflow:getTemplates', () => templateStore.getAll())
   ipcMain.handle('workflow:saveTemplate', (_e, template) => templateStore.save(template))
   ipcMain.handle('workflow:deleteTemplate', (_e, id: string) => templateStore.delete(id))
-  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string, destinationIndex?: number) => {
-    return workflowEngine.run(templateId, imageData, destinationIndex)
+  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string, destinationIndex?: number, historyId?: string) => {
+    return workflowEngine.run(templateId, imageData, destinationIndex, historyId)
   })
   ipcMain.handle('workflow:inlineAction', async (_e, actionType: 'clipboard' | 'save', imageData: string) => {
     return workflowEngine.runInlineAction(actionType, imageData)
@@ -428,7 +429,30 @@ app.whenReady().then(async () => {
       }
     }))
   })
-  ipcMain.handle('history:delete', (_e, id: string) => historyStore.delete(id))
+  ipcMain.handle('history:delete', async (_e, id: string) => {
+    // Remove the associated file(s) from disk too. Bounded to the user's
+    // home directory so a tampered history entry can't trick us into
+    // unlinking system files; ENOENT is ignored because a missing file is
+    // the state we want anyway.
+    const item = historyStore.getAll().find(i => i.id === id)
+    if (item) {
+      const { unlink } = await import('fs/promises')
+      const { resolve, normalize } = await import('path')
+      const { homedir } = await import('os')
+      const toUnlink = [item.filePath, item.annotatedFilePath].filter((p): p is string => !!p)
+      for (const path of toUnlink) {
+        try {
+          const normalized = resolve(normalize(path))
+          if (normalized.startsWith(homedir())) await unlink(normalized)
+        } catch (err: unknown) {
+          if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+            console.error('[history:delete] failed to unlink file', path, err)
+          }
+        }
+      }
+    }
+    return historyStore.delete(id)
+  })
   ipcMain.handle('history:cleanupMissing', async () => {
     const items = historyStore.getAll()
     const { access } = await import('fs/promises')
@@ -440,6 +464,126 @@ app.whenReady().then(async () => {
     for (const id of orphanIds) historyStore.delete(id)
     return orphanIds.length
   })
+  // Persist the current annotation shapes (and optionally a flattened PNG
+  // sidecar) for a history item. Reopening the item replays each shape as
+  // its own Canvas commit so native Undo walks back through them in order.
+  ipcMain.handle('history:saveAnnotations', async (_e, id: string, annotations: unknown[], flattenedDataUrl?: string) => {
+    const items = historyStore.getAll()
+    const item = items.find(i => i.id === id)
+    if (!item) throw new Error('History item not found')
+    if (!item.filePath) throw new Error('History item has no source file')
+
+    const { writeFile, unlink } = await import('fs/promises')
+    const { resolve, normalize, dirname, basename, extname, join } = await import('path')
+    const { homedir } = await import('os')
+    const originalPath = resolve(normalize(item.filePath))
+    if (!originalPath.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+
+    const hasAnnotations = Array.isArray(annotations) && annotations.length > 0
+
+    // Preserve the existing sidecar + thumbnail by default — only the branches
+    // below overwrite them. Without this, a debounced save (which ships only
+    // the vector JSON, no flattened dataUrl) would reset `annotatedFilePath`
+    // to undefined, orphan the sidecar on disk, and force Dashboard Share/
+    // Copy back to the un-annotated original.
+    let annotatedFilePath: string | undefined = item.annotatedFilePath
+    let thumbnailUrl = item.thumbnailUrl
+
+    if (hasAnnotations && typeof flattenedDataUrl === 'string' && flattenedDataUrl.startsWith('data:image/')) {
+      // Write (or overwrite) the sidecar PNG next to the original. Naming
+      // keeps the basename so a user browsing ~/Pictures/Lumia still sees the
+      // original and annotated side-by-side.
+      const dir = dirname(originalPath)
+      const ext = extname(originalPath) || '.png'
+      const stem = basename(originalPath, ext)
+      const sidecar = join(dir, `${stem}-annotated.png`)
+      const base64 = flattenedDataUrl.replace(/^data:image\/\w+;base64,/, '')
+      await writeFile(sidecar, Buffer.from(base64, 'base64'))
+      annotatedFilePath = sidecar
+      thumbnailUrl = makeThumbnail(flattenedDataUrl)
+    }
+
+    if (!hasAnnotations && item.annotatedFilePath) {
+      try {
+        const prev = resolve(normalize(item.annotatedFilePath))
+        if (prev.startsWith(homedir())) await unlink(prev)
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          console.error('[history:saveAnnotations] failed to clean up sidecar', err)
+        }
+      }
+      annotatedFilePath = undefined
+      // Regenerate thumbnail from the original now that annotations are gone.
+      try {
+        const { readFile } = await import('fs/promises')
+        const buf = await readFile(originalPath)
+        const ext = extname(originalPath).toLowerCase()
+        const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png'
+        thumbnailUrl = makeThumbnail(`data:${mime};base64,${buf.toString('base64')}`)
+      } catch { /* leave previous thumbnail rather than blank the card */ }
+    }
+
+    return historyStore.update(id, {
+      annotations: hasAnnotations ? (annotations as HistoryItem['annotations']) : undefined,
+      annotatedFilePath,
+      thumbnailUrl,
+    })
+  })
+
+  // Upload a history item's source file to R2 and copy the resulting URL.
+  // Dedup: if the item already has a successful r2 upload, reuse it so repeat
+  // clicks don't re-issue requests (uploadToR2 itself is content-addressable
+  // too, but this path short-circuits before even reading the file).
+  ipcMain.handle('history:shareR2', async (_e, id: string) => {
+    const items = historyStore.getAll()
+    const item = items.find(i => i.id === id)
+    if (!item) throw new Error('History item not found')
+    if (!item.filePath) throw new Error('History item has no source file')
+
+    const existing = item.uploads?.find(u => u.destination === 'r2' && u.success && u.url)
+    if (existing?.url) {
+      clipboard.writeText(existing.url)
+      return existing
+    }
+
+    const { readFile } = await import('fs/promises')
+    const { extname } = await import('path')
+    const { uploadToR2 } = await import('./uploaders/r2')
+
+    // Prefer the annotated sidecar when present so shared links carry the
+    // user's final edited version rather than the untouched original.
+    const sourcePath = item.annotatedFilePath ?? item.filePath
+    const buffer = await readFile(sourcePath)
+    const ext = extname(sourcePath).replace(/^\./, '').toLowerCase() || (item.type === 'recording' ? 'webm' : 'png')
+    const isVideo = item.type === 'recording'
+    const contentType = isVideo
+      ? (ext === 'mp4' ? 'video/mp4' : 'video/webm')
+      : (ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png')
+    const keyPrefix = isVideo ? 'recordings' : 'captures'
+
+    const res = await uploadToR2(
+      { buffer, contentType, ext, keyPrefix },
+      import.meta.env.MAIN_VITE_R2_ACCOUNT_ID,
+      import.meta.env.MAIN_VITE_R2_ACCESS_KEY_ID,
+      import.meta.env.MAIN_VITE_R2_SECRET_ACCESS_KEY,
+      import.meta.env.MAIN_VITE_R2_BUCKET,
+      import.meta.env.MAIN_VITE_R2_PUBLIC_URL,
+    )
+
+    if (res.success && res.url) {
+      clipboard.writeText(res.url)
+      // Append (or replace) the r2 entry so subsequent shares hit the fast
+      // path above, and so the Dashboard card can flip to "Synced".
+      const uploads = [
+        ...(item.uploads ?? []).filter(u => u.destination !== 'r2'),
+        res,
+      ]
+      historyStore.update(id, { uploads })
+      try { new Notification({ title: 'Lumia', body: 'Link copied to clipboard' }).show() } catch { /* ignore */ }
+    }
+    return res
+  })
+
   ipcMain.handle('history:openFile', (_e, filePath: string) => {
     const { resolve, normalize } = require('path')
     const { homedir } = require('os')

@@ -5,22 +5,22 @@ interface HistoryListRowProps {
   item: HistoryItem
   isSelecting: boolean
   isSelected: boolean
+  isSharing: boolean
   onToggleSelect: () => void
   onOpen: () => void
-  onAnnotate: () => void
   onDelete: () => void
-  onOpenFile: () => void
   onCopy: () => void
+  onShare: () => void
 }
 
 export function HistoryListRow({
-  item, isSelecting, isSelected, onToggleSelect, onOpen, onAnnotate, onDelete, onOpenFile, onCopy,
+  item, isSelecting, isSelected, isSharing, onToggleSelect, onOpen, onDelete, onCopy, onShare,
 }: HistoryListRowProps) {
   const date = new Date(item.timestamp).toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   })
   const isUploaded = item.uploads?.some(u => u.success)
-  const uploadUrl = item.uploads?.find(u => u.success && u.url)?.url
+  const googleUrl = item.uploads?.find(u => u.destination === 'google-drive' && u.success && u.url)?.url
   const size = item.size ? (item.size > 1e6 ? `${(item.size / 1e6).toFixed(1)} MB` : `${(item.size / 1e3).toFixed(0)} KB`) : ''
 
   const stop = (fn: () => void) => (e: ReactMouseEvent) => { e.stopPropagation(); fn() }
@@ -102,21 +102,17 @@ export function HistoryListRow({
       {/* Size */}
       <span className="text-[10px] text-slate-600 w-14 text-right flex-shrink-0">{size}</span>
 
-      {/* Inline actions — visible on hover. Missing-file rows only expose
-          Delete so users can prune orphans without chasing dead links. */}
+      {/* Inline actions — unified for image + video. Missing rows only
+          expose Delete so users prune orphans without chasing dead links. */}
       {!isSelecting && (
         <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {!missing && (
             <>
-              <RowAction icon={item.type === 'recording' ? 'draw' : 'edit'} label={item.type === 'recording' ? 'Annotate' : 'Edit'} onClick={stop(item.type === 'recording' ? onAnnotate : onOpen)} />
-              {item.type === 'screenshot' && (
-                <RowAction icon="content_copy" label="Copy" onClick={stop(onCopy)} />
-              )}
-              {item.filePath && (
-                <RowAction icon="folder_open" label="Folder" onClick={stop(onOpenFile)} />
-              )}
-              {uploadUrl && (
-                <RowAction icon="open_in_new" label="Link" onClick={stop(() => window.electronAPI?.openExternal(uploadUrl))} />
+              <RowAction icon="edit" label="Edit" onClick={stop(onOpen)} />
+              <RowAction icon="content_copy" label="Copy" onClick={stop(onCopy)} />
+              <RowAction icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} onClick={stop(onShare)} spinning={isSharing} />
+              {googleUrl && (
+                <RowAction icon="cloud" label="Open Google link" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
               )}
             </>
           )}
@@ -133,14 +129,15 @@ export function HistoryListRow({
   )
 }
 
-function RowAction({ icon, label, onClick }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void }) {
+function RowAction({ icon, label, onClick, spinning }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void; spinning?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-white/10 transition-all"
+      disabled={spinning}
+      className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-white/10 transition-all disabled:opacity-60"
       title={label}
     >
-      <span className="material-symbols-outlined text-xs">{icon}</span>
+      <span className={`material-symbols-outlined text-xs ${spinning ? 'animate-spin' : ''}`}>{icon}</span>
     </button>
   )
 }

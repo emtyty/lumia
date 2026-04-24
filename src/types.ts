@@ -39,6 +39,23 @@ export interface WorkflowResult {
   copiedToClipboard: boolean
 }
 
+// Persisted shape of an annotation stroke/shape. Structurally matches
+// Canvas' DrawObject but typed loosely so main can round-trip without
+// depending on renderer enums.
+export interface AnnotationObject {
+  id: string
+  type: string
+  points?: number[]
+  x?: number; y?: number
+  width?: number; height?: number
+  radiusX?: number; radiusY?: number
+  text?: string
+  color: string
+  strokeWidth: number
+  fill?: string
+  isBlur?: boolean
+}
+
 export interface HistoryItem {
   id: string
   timestamp: number
@@ -53,6 +70,13 @@ export interface HistoryItem {
   // persisted — the store keeps items even when files are gone so the user
   // can clean them up explicitly.
   fileMissing?: boolean
+  // Vector annotations layered over the original. Re-editable: the Editor
+  // replays each entry as its own commit on mount so native Undo steps back
+  // through them one at a time.
+  annotations?: AnnotationObject[]
+  // Pixel-flat counterpart of `annotations`, written by the Editor on every
+  // committing action (Copy/Share/upload — not Save).
+  annotatedFilePath?: string
 }
 
 // ── OCR & Auto-Blur ──────────────────────────────────────────────

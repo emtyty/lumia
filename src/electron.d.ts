@@ -31,7 +31,7 @@ declare global {
       hideForRecording: () => Promise<void>
       showAfterRecording: () => Promise<void>
 
-      runWorkflow: (templateId: string, imageData: string, destinationIndex?: number) => Promise<import('./types').WorkflowResult>
+      runWorkflow: (templateId: string, imageData: string, destinationIndex?: number, historyId?: string) => Promise<import('./types').WorkflowResult>
       runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) => Promise<{ canceled?: boolean }>
       getTemplates: () => Promise<import('./types').WorkflowTemplate[]>
       saveTemplate: (template: import('./types').WorkflowTemplate) => Promise<import('./types').WorkflowTemplate>
@@ -43,6 +43,8 @@ declare global {
       addHistoryItem: (item: import('./types').HistoryItem) => Promise<void>
       readHistoryFile: (filePath: string) => Promise<string | null>
       cleanupMissingHistory: () => Promise<number>
+      shareHistoryR2: (id: string) => Promise<import('./types').UploadResult>
+      saveHistoryAnnotations: (id: string, annotations: import('./types').AnnotationObject[], flattenedDataUrl?: string) => Promise<import('./types').HistoryItem | null>
 
       getHotkeys: () => Promise<Record<string, string>>
       getSettings: () => Promise<AppSettings>

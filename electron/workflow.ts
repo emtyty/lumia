@@ -20,7 +20,7 @@ export class WorkflowEngine {
 
   constructor(private templateStore: TemplateStore) {}
 
-  async run(templateId: string, imageData: string, destinationIndex?: number): Promise<WorkflowResult> {
+  async run(templateId: string, imageData: string, destinationIndex?: number, historyId?: string): Promise<WorkflowResult> {
     const template = this.templateStore.getById(templateId)
     if (!template) throw new Error(`Template not found: ${templateId}`)
 
@@ -111,15 +111,31 @@ export class WorkflowEngine {
     }
 
     // ── Save to history ──
-    this.historyStore.add({
-      id: uuidv4(),
-      timestamp: Date.now(),
-      name: `capture-${localTimestamp()}`,
-      thumbnailUrl: makeThumbnail(imageData),
-      filePath: result.savedPath,
-      type: 'screenshot',
-      uploads: result.uploads
-    })
+    // When the Editor is acting on an existing history item (annotations, a
+    // prior capture), merge the new uploads into it rather than adding a
+    // duplicate row. Without this, clicking Share on a history-opened item
+    // created a second identical entry every time.
+    if (historyId) {
+      const existing = this.historyStore.getAll().find(i => i.id === historyId)
+      if (existing) {
+        const nextByDest = new Map(result.uploads.map(u => [u.destination, u]))
+        const mergedUploads: UploadResult[] = [
+          ...(existing.uploads ?? []).filter(u => !nextByDest.has(u.destination)),
+          ...result.uploads,
+        ]
+        this.historyStore.update(historyId, { uploads: mergedUploads })
+      }
+    } else {
+      this.historyStore.add({
+        id: uuidv4(),
+        timestamp: Date.now(),
+        name: `capture-${localTimestamp()}`,
+        thumbnailUrl: makeThumbnail(imageData),
+        filePath: result.savedPath,
+        type: 'screenshot',
+        uploads: result.uploads,
+      })
+    }
 
     // Send result to renderer for the upload summary toast
     getMainWindow()?.webContents.send('workflow:result', result)

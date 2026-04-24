@@ -18,8 +18,9 @@ export class HistoryStore {
   add(item: HistoryItem) {
     const items = this.store.get('items')
     items.unshift(item)
-    // Keep last 200 items
-    if (items.length > 200) items.splice(200)
+    // Keep last 1000 items. At ~4 KB per item (thumbnail-only) that caps
+    // history.json at ~4 MB — still trivial to read/write on every call.
+    if (items.length > 1000) items.splice(1000)
     this.store.set('items', items)
   }
 
@@ -29,6 +30,16 @@ export class HistoryStore {
     if (filtered.length === items.length) return false
     this.store.set('items', filtered)
     return true
+  }
+
+  update(id: string, patch: Partial<HistoryItem>): HistoryItem | null {
+    const items = this.store.get('items')
+    const idx = items.findIndex(i => i.id === id)
+    if (idx < 0) return null
+    const updated = { ...items[idx], ...patch }
+    items[idx] = updated
+    this.store.set('items', items)
+    return updated
   }
 
   // Drops items older than `days` days. `days <= 0` means keep forever (no-op).

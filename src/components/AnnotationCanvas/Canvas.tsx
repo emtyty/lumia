@@ -66,6 +66,9 @@ export interface CanvasHandle {
    *  — used by the video exporter to paint annotations only during the freeze
    *  phase while letting raw video frames flow through otherwise. */
   toAnnotationsCanvas: () => HTMLCanvasElement | null
+  /** Current list of annotation shapes — plain data, JSON-serializable. Used
+   *  by history persistence so annotations survive across Editor sessions. */
+  getObjects: () => DrawObject[]
 }
 
 interface Props {
@@ -82,6 +85,12 @@ interface Props {
   /** Disable pointer-driven drawing (used by video mode while the video is
    *  actively playing — lets users watch without accidental strokes). */
   readOnly?: boolean
+  /** Seed the annotation layer on mount with previously persisted shapes.
+   *  Each shape is replayed as a separate commit, so native Undo walks back
+   *  through them one at a time — same UX as if the user had just drawn
+   *  them. Only read at mount; later changes are ignored so parent
+   *  re-renders don't clobber in-progress edits. */
+  initialObjects?: DrawObject[]
 }
 
 let idCounter = 0
@@ -89,7 +98,7 @@ const uid = () => `obj-${++idCounter}-${Date.now()}`
 
 const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
   function AnnotationCanvas(
-    { background, tool, color, strokeWidth, onExport, exportTrigger = 0, onHistoryChange, onZoomChange, readOnly = false },
+    { background, tool, color, strokeWidth, onExport, exportTrigger = 0, onHistoryChange, onZoomChange, readOnly = false, initialObjects },
     ref,
   ) {
     // ── Background ────────────────────────────────────────────────────────────
@@ -180,6 +189,24 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       canRedo,
       clear,
     } = useHistory<DrawObject[]>([])
+
+    // Rehydrate persisted annotations by replaying each shape as its own
+    // commit — Undo then walks back through them one-at-a-time, identical to
+    // the session that created them. Guarded by a ref so StrictMode's double
+    // effect invocation doesn't double-push the stack.
+    const replayedRef = useRef(false)
+    useEffect(() => {
+      if (replayedRef.current) return
+      replayedRef.current = true
+      if (!initialObjects || initialObjects.length === 0) return
+      for (let i = 0; i < initialObjects.length; i++) {
+        commitObjects(initialObjects.slice(0, i + 1))
+      }
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [])
+
+    const objectsRef = useRef(objects)
+    useEffect(() => { objectsRef.current = objects }, [objects])
 
     // Notify parent when undo/redo availability changes
     useEffect(() => {
@@ -348,12 +375,14 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       return out
     }, [scale])
 
+    const getObjects = useCallback((): DrawObject[] => objectsRef.current, [])
+
     // Expose imperative handle to parent
     useImperativeHandle(ref, () => ({
       undo, redo, clear, canUndo, canRedo,
       zoomIn, zoomOut, zoomReset, zoomLevel: userZoom,
-      toDataURL, toCanvas, toAnnotationsCanvas,
-    }), [undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas])
+      toDataURL, toCanvas, toAnnotationsCanvas, getObjects,
+    }), [undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas, getObjects])
 
     // ── Export trigger (legacy path — kept for Editor's workflow buttons) ────
     useEffect(() => {

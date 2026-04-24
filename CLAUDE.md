@@ -48,7 +48,7 @@ Context isolation is on, nodeIntegration is off. All renderer↔main communicati
 | `tray.ts` | System tray icon + context menu |
 | `workflow.ts` | WorkflowEngine — three-phase pipeline: after-capture → upload (parallel) → after-upload |
 | `templates.ts` | TemplateStore — CRUD for workflow templates + 4 built-in templates |
-| `history.ts` | HistoryStore — capture history persistence (max 200 items) |
+| `history.ts` | HistoryStore — capture history persistence (max 1000 items) |
 | `settings.ts` | AppSettings interface + electron-store wrapper |
 | `types.ts` | Shared TypeScript interfaces |
 | `uploaders/imgur.ts` | Imgur API v3 uploader |
