@@ -581,7 +581,7 @@ export default function Editor() {
 
         {/* Three-zone layout: left (tools) + middle (color/stroke, flex & overflow-hidden)
              + right (undo/redo/clear). Right zone stays pinned; middle shrinks first. */}
-        <div className="flex items-stretch h-14 px-3 gap-1">
+        <div className="flex items-stretch h-12 px-3 gap-1">
 
           {/* ── Left: AI Blur + tool groups ─────────────────────────────── */}
           <div className="flex items-stretch gap-1 flex-shrink-0">
@@ -589,40 +589,40 @@ export default function Editor() {
               <button
                 title="AI blur sensitive info"
                 onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
-                className={`flex flex-col items-center justify-center gap-0.5 w-14 h-10 rounded-lg transition-all ${
+                className={`flex flex-col items-center justify-center gap-0.5 w-12 h-9 rounded-lg transition-all ${
                   showAutoBlur
                     ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
                     : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
                 }`}
               >
-                <span className="material-symbols-outlined text-[18px]">security</span>
+                <span className="material-symbols-outlined text-[16px]">security</span>
                 <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
               </button>
             </div>
-            <div className="w-px h-8 bg-white/[0.06] self-center mx-1" />
+            <div className="w-px h-7 bg-white/[0.06] self-center mx-1" />
 
             {TOOL_GROUPS.map((group) => {
               const isGroupActive = group.tools.some(t => t.id === tool)
               return (
                 <div key={group.group} className="flex items-center">
-                  <div className={`flex items-center gap-0.5 rounded-xl p-1 ${isGroupActive ? 'bg-white/[0.06]' : ''}`}>
+                  <div className={`flex items-center gap-0.5 rounded-xl p-0.5 ${isGroupActive ? 'bg-white/[0.06]' : ''}`}>
                     {group.tools.map(({ id, icon, label, key }) => (
                       <button
                         key={id}
                         title={`${label} (${key})`}
                         onClick={() => setTool(id)}
-                        className={`relative flex flex-col items-center justify-center gap-0.5 w-12 h-10 rounded-lg transition-all ${
+                        className={`relative flex flex-col items-center justify-center gap-0.5 w-11 h-9 rounded-lg transition-all ${
                           tool === id
                             ? 'bg-primary/20 text-primary shadow-[0_0_12px_rgba(182,160,255,0.15)]'
                             : 'text-slate-400 hover:text-white hover:bg-white/10'
                         }`}
                       >
-                        <span className="material-symbols-outlined text-[18px]">{icon}</span>
+                        <span className="material-symbols-outlined text-[16px]">{icon}</span>
                         <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
                       </button>
                     ))}
                   </div>
-                  <div className="w-px h-8 bg-white/[0.06] mx-1" />
+                  <div className="w-px h-7 bg-white/[0.06] mx-1" />
                 </div>
               )
             })}
@@ -673,7 +673,7 @@ export default function Editor() {
               </label>
             </div>
 
-            <div className="w-px h-8 bg-white/[0.06] self-center flex-shrink-0 hidden min-[950px]:block" />
+            <div className="w-px h-7 bg-white/[0.06] self-center flex-shrink-0 hidden min-[950px]:block" />
 
             <div className="hidden min-[950px]:flex items-center gap-2 px-2 min-w-0 flex-1">
               <div className="hidden xl:flex items-center gap-1 flex-shrink-0">
@@ -681,7 +681,7 @@ export default function Editor() {
                   <button
                     key={w}
                     onClick={() => setStrokeWidth(w)}
-                    className={`flex items-center justify-center w-8 h-8 rounded-lg transition-all ${
+                    className={`flex items-center justify-center w-7 h-7 rounded-lg transition-all ${
                       strokeWidth === w ? 'bg-primary/20 text-primary' : 'text-slate-500 hover:text-white hover:bg-white/10'
                     }`}
                     title={`Stroke ${w}px`}
@@ -707,7 +707,7 @@ export default function Editor() {
 
           {/* ── Right: Undo / Redo / Clear ───────────────────────────────── */}
           <div className="flex items-center gap-0.5 px-1 flex-shrink-0">
-            <div className="w-px h-8 bg-white/[0.06] self-center mr-1" />
+            <div className="w-px h-7 bg-white/[0.06] self-center mr-1" />
             <BottomBtn icon="undo" label="Undo" disabled={!canUndo} onClick={() => canvasRef.current?.undo()} />
             <BottomBtn icon="redo" label="Redo" disabled={!canRedo} onClick={() => canvasRef.current?.redo()} />
             <BottomBtn icon="delete_sweep" label="Clear" onClick={() => canvasRef.current?.clear()} variant="danger" />
@@ -787,13 +787,13 @@ function BottomBtn({ icon, label, disabled, onClick, variant }: {
       title={label}
       disabled={disabled}
       onClick={onClick}
-      className={`flex flex-col items-center justify-center gap-0.5 w-10 h-10 rounded-lg transition-all disabled:opacity-25 disabled:cursor-not-allowed ${
+      className={`flex flex-col items-center justify-center gap-0.5 w-9 h-9 rounded-lg transition-all disabled:opacity-25 disabled:cursor-not-allowed ${
         variant === 'danger'
           ? 'text-slate-500 hover:text-red-400 hover:bg-red-400/10'
           : 'text-slate-500 hover:text-white hover:bg-white/10'
       }`}
     >
-      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <span className="material-symbols-outlined text-[16px]">{icon}</span>
       <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
     </button>
   )
