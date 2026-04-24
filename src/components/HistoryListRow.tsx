@@ -1,5 +1,5 @@
 import { type MouseEvent as ReactMouseEvent } from 'react'
-import type { HistoryItem } from '../../types'
+import type { HistoryItem } from '../types'
 
 interface HistoryListRowProps {
   item: HistoryItem

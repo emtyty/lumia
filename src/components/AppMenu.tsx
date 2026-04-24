@@ -69,7 +69,6 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
   const items: MenuItemDef[] = [
     { type: 'item', label: 'New Capture', icon: 'add_a_photo', action: () => window.electronAPI?.newCapture() },
     { type: 'separator' },
-    { type: 'item', label: 'History', icon: 'history', action: () => navigate('/history') },
     { type: 'item', label: 'Workflow', icon: 'rocket_launch', action: () => navigate('/workflow') },
     { type: 'item', label: 'Settings', icon: 'settings', action: () => navigate('/settings') },
     { type: 'separator' },

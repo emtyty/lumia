@@ -4,7 +4,6 @@ import { Sidebar } from './components/Sidebar'
 import { TitleBar } from './components/TitleBar'
 import Dashboard from './windows/dashboard/Dashboard'
 import Editor from './windows/editor/Editor'
-import History from './windows/history/History'
 import Workflow from './windows/workflow/Workflow'
 import Settings from './windows/settings/Settings'
 import Overlay from './windows/overlay/Overlay'
@@ -63,7 +62,8 @@ export default function App() {
           <Route path="/" element={<Navigate to="/dashboard" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/editor" element={<Editor />} />
-          <Route path="/history" element={<History />} />
+          {/* /history merged into /dashboard — stale links redirect. */}
+          <Route path="/history" element={<Navigate to="/dashboard" replace />} />
           <Route path="/workflow" element={<Workflow />} />
           <Route path="/settings" element={<Settings />} />
           {/* /video-annotator merged into /editor — stale links redirect. */}

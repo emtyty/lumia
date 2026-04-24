@@ -1,13 +1,18 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
 import { UpdateNotification } from '../../components/UpdateNotification'
+import { DateGroupedGrid } from '../../components/DateGroupedGrid'
+import { HistoryListRow } from '../../components/HistoryListRow'
+import { useLocalVideoUrl } from '../../hooks/useLocalVideoUrl'
 
 type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
 type VideoMode = 'region' | 'window' | 'screen'
 type MediaKind = 'image' | 'video'
 type FilterType = 'all' | 'screenshot' | 'recording'
+type SortKey = 'newest' | 'oldest' | 'name' | 'size'
+type ViewMode = 'grid' | 'list'
 
 // Map capture mode → hotkey action name (from electron/hotkeys.ts)
 const MODE_ACTION: Record<CaptureMode, string> = {
@@ -63,18 +68,6 @@ function getGreeting(): string {
   return 'Good evening'
 }
 
-function relativeTime(timestamp: number): string {
-  const diff = Date.now() - timestamp
-  const mins = Math.floor(diff / 60000)
-  const hrs = Math.floor(diff / 3600000)
-  const days = Math.floor(diff / 86400000)
-  if (mins < 1) return 'Just now'
-  if (mins < 60) return `${mins}m ago`
-  if (hrs < 24) return `${hrs}h ago`
-  if (days < 7) return `${days}d ago`
-  return new Date(timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
 export default function Dashboard() {
   const navigate = useNavigate()
   const [recentItems, setRecentItems] = useState<HistoryItem[]>([])
@@ -85,9 +78,17 @@ export default function Dashboard() {
   const searchRef = useRef<HTMLInputElement>(null)
   const [hotkeys, setHotkeys] = useState<Record<string, string>>({})
   const [mediaKind, setMediaKind] = useState<MediaKind>('image')
+  const [sortBy, setSortBy] = useState<SortKey>('newest')
+  const [showSortMenu, setShowSortMenu] = useState(false)
+  const [viewMode, setViewMode] = useState<ViewMode>(() =>
+    (localStorage.getItem('lumia:history-view') as ViewMode) || 'grid'
+  )
+  const [isSelecting, setIsSelecting] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [previewItem, setPreviewItem] = useState<HistoryItem | null>(null)
 
   useEffect(() => {
-    window.electronAPI?.getHistory().then(items => setRecentItems(items.slice(0, 12)))
+    window.electronAPI?.getHistory().then(setRecentItems)
     window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
     window.electronAPI?.getSettings().then(s => {
       if (s?.lastCaptureKind === 'video' || s?.lastCaptureKind === 'image') {
@@ -149,14 +150,90 @@ export default function Dashboard() {
   const screenshots = recentItems.filter(i => i.type === 'screenshot')
   const recordings = recentItems.filter(i => i.type === 'recording')
 
-  const filtered = recentItems.filter(item => {
-    if (filter !== 'all' && item.type !== filter) return false
-    if (search && !item.name.toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
+  const counts = useMemo(() => ({
+    all: recentItems.length,
+    screenshot: screenshots.length,
+    recording: recordings.length,
+  }), [recentItems, screenshots.length, recordings.length])
+
+  const filtered = useMemo(() => {
+    let result = recentItems
+    if (filter !== 'all') result = result.filter(i => i.type === filter)
+    if (search) {
+      const q = search.toLowerCase()
+      result = result.filter(i => i.name.toLowerCase().includes(q))
+    }
+    return [...result].sort((a, b) => {
+      if (sortBy === 'newest') return b.timestamp - a.timestamp
+      if (sortBy === 'oldest') return a.timestamp - b.timestamp
+      if (sortBy === 'name')   return a.name.localeCompare(b.name)
+      if (sortBy === 'size')   return (b.size ?? 0) - (a.size ?? 0)
+      return 0
+    })
+  }, [recentItems, filter, search, sortBy])
+
+  const isDateSort = sortBy === 'newest' || sortBy === 'oldest'
+
+  const handleDelete = async (id: string) => {
+    await window.electronAPI?.deleteHistoryItem(id)
+    setRecentItems(prev => prev.filter(i => i.id !== id))
+    setSelectedIds(prev => { const next = new Set(prev); next.delete(id); return next })
+  }
+
+  const handleBulkDelete = async () => {
+    const ids = [...selectedIds]
+    await Promise.all(ids.map(id => window.electronAPI?.deleteHistoryItem(id)))
+    setRecentItems(prev => prev.filter(i => !selectedIds.has(i.id)))
+    setSelectedIds(new Set())
+    setIsSelecting(false)
+  }
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }, [])
+
+  const exitSelection = () => {
+    setIsSelecting(false)
+    setSelectedIds(new Set())
+  }
+
+  const openItem = (item: HistoryItem) => {
+    if (item.type === 'recording') {
+      setPreviewItem(item)
+    } else {
+      navigate('/editor', { state: { kind: 'image', dataUrl: item.dataUrl, source: 'history' } })
+    }
+  }
+
+  // Persist view mode
+  useEffect(() => {
+    localStorage.setItem('lumia:history-view', viewMode)
+  }, [viewMode])
+
+  // Ctrl/Cmd+A to select all when in selecting mode; Escape to exit
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isSelecting) {
+        setIsSelecting(false)
+        setSelectedIds(new Set())
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'a' && isSelecting) {
+        e.preventDefault()
+        setSelectedIds(new Set(filtered.map(i => i.id)))
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [isSelecting, filtered])
 
   return (
-    <div className="h-full overflow-y-auto p-8 pb-16 space-y-8">
+    <div className="h-full flex flex-col">
+      <div className="px-8 pt-8 space-y-8 flex-shrink-0">
 
       {/* ── Greeting + Update ── */}
       <header className="flex items-start justify-between">
@@ -268,10 +345,12 @@ export default function Dashboard() {
         )}
       </section>
 
-      {/* ── Recent Captures ── */}
-      <section>
-        <div className="flex items-center justify-between mb-5">
-          <div className="flex items-center gap-3">
+      </div>
+
+      {/* ── Recent / History ── */}
+      <section className="flex-1 min-h-0 flex flex-col px-8 pt-8 pb-8">
+        <div className="flex items-center justify-between mb-4 flex-shrink-0 gap-3 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             <h2
               className="text-lg font-bold text-white"
               style={{ fontFamily: 'Manrope, sans-serif' }}
@@ -279,12 +358,12 @@ export default function Dashboard() {
               Recent
             </h2>
 
-            {/* Filter tabs — same style as History */}
+            {/* Filter tabs */}
             <div className="flex items-center gap-1.5">
               {([
-                { key: 'all' as const, label: 'All' },
-                { key: 'screenshot' as const, label: 'Screenshots' },
-                { key: 'recording' as const, label: 'Recordings' },
+                { key: 'all' as const, label: `All (${counts.all})` },
+                { key: 'screenshot' as const, label: `Screenshots (${counts.screenshot})` },
+                { key: 'recording' as const, label: `Recordings (${counts.recording})` },
               ]).map(({ key, label }) => (
                 <button
                   key={key}
@@ -302,7 +381,7 @@ export default function Dashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             {recentItems.length > 0 && (
               <div
                 className={`flex items-center px-3 py-1.5 rounded-xl transition-all duration-300 ${
@@ -330,58 +409,155 @@ export default function Dashboard() {
                 )}
               </div>
             )}
+
+            {/* Sort dropdown */}
+            <div className="relative">
+              <button
+                onClick={() => setShowSortMenu(!showSortMenu)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold text-slate-400 bg-white/5 hover:text-white transition-all"
+                style={{ fontFamily: 'Manrope, sans-serif' }}
+              >
+                <span className="material-symbols-outlined text-sm">sort</span>
+                <span className="capitalize">{sortBy}</span>
+                <span className="material-symbols-outlined text-sm">expand_more</span>
+              </button>
+              {showSortMenu && (
+                <>
+                  <div className="fixed inset-0 z-[55]" onClick={() => setShowSortMenu(false)} />
+                  <div className="absolute right-0 top-full mt-1 glass-refractive rounded-xl py-1 min-w-[120px] z-[60]">
+                    {(['newest', 'oldest', 'name', 'size'] as const).map(s => (
+                      <button
+                        key={s}
+                        onClick={() => { setSortBy(s); setShowSortMenu(false) }}
+                        className={`w-full text-left px-4 py-2 text-xs font-medium transition-colors capitalize ${
+                          sortBy === s ? 'text-primary' : 'text-slate-400 hover:text-white hover:bg-white/5'
+                        }`}
+                        style={{ fontFamily: 'Manrope, sans-serif' }}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* View toggle */}
+            <div className="flex bg-white/5 rounded-lg p-0.5 border border-white/5">
+              <button
+                onClick={() => setViewMode('grid')}
+                className={`p-1.5 rounded-md transition-all ${viewMode === 'grid' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'}`}
+              >
+                <span className="material-symbols-outlined text-sm">grid_view</span>
+              </button>
+              <button
+                onClick={() => setViewMode('list')}
+                className={`p-1.5 rounded-md transition-all ${viewMode === 'list' ? 'bg-white/10 text-white' : 'text-slate-500 hover:text-white'}`}
+              >
+                <span className="material-symbols-outlined text-sm">view_list</span>
+              </button>
+            </div>
+
+            {/* Select toggle */}
             <button
-              onClick={() => navigate('/history', { state: { search, filter } })}
-              className="text-xs text-slate-500 hover:text-primary transition-colors font-semibold"
+              onClick={() => isSelecting ? exitSelection() : setIsSelecting(true)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                isSelecting ? 'bg-primary/20 text-primary' : 'bg-white/5 text-slate-400 hover:text-white'
+              }`}
               style={{ fontFamily: 'Manrope, sans-serif' }}
             >
-              View all &rarr;
+              <span className="material-symbols-outlined text-sm">checklist</span>
+              Select
             </button>
           </div>
         </div>
 
-        {filtered.length === 0 && !search ? (
-          <div className="card-organic text-center py-16">
-            <span className="material-symbols-outlined text-4xl text-slate-700 mb-3 block">add_a_photo</span>
-            <p
-              className="text-sm text-slate-500 font-medium"
-              style={{ fontFamily: 'Manrope, sans-serif' }}
-            >
-              No captures yet
-            </p>
-            <p className="text-xs text-slate-600 mt-1.5">
-              Use the buttons above or press{' '}
-              <kbd className="px-1.5 py-0.5 bg-white/5 rounded text-slate-400 text-[10px] font-mono">
-                Ctrl+Shift+4
-              </kbd>{' '}
-              to capture a region
-            </p>
-          </div>
-        ) : filtered.length === 0 && search ? (
-          <div className="text-center py-16">
-            <span className="material-symbols-outlined text-3xl text-slate-700 mb-2 block">search_off</span>
-            <p className="text-sm text-slate-500">
-              No captures match &ldquo;{search}&rdquo;
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-4 gap-5">
-            {filtered.map(item => (
-              <CaptureCard
-                key={item.id}
-                item={item}
-                onOpen={() => {
-                  if (item.type === 'recording') {
-                    navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })
-                  } else {
-                    navigate('/editor', { state: { kind: 'image', dataUrl: item.dataUrl, source: 'history' } })
-                  }
-                }}
-              />
-            ))}
+        {/* Selection toolbar */}
+        {isSelecting && selectedIds.size > 0 && (
+          <div className="flex items-center justify-between px-4 py-2 mb-3 bg-primary/5 border border-primary/10 rounded-xl flex-shrink-0">
+            <span className="text-xs font-semibold text-primary" style={{ fontFamily: 'Manrope, sans-serif' }}>
+              {selectedIds.size} selected
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleBulkDelete}
+                className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-all"
+                style={{ fontFamily: 'Manrope, sans-serif' }}
+              >
+                <span className="material-symbols-outlined text-sm">delete</span>
+                Delete
+              </button>
+              <button
+                onClick={exitSelection}
+                className="px-3 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-white/5 transition-all"
+                style={{ fontFamily: 'Manrope, sans-serif' }}
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
+
+        <div className="flex-1 min-h-0 overflow-y-auto pr-1 -mr-1">
+          {viewMode === 'grid' ? (
+            <DateGroupedGrid
+              items={filtered}
+              getTimestamp={item => item.timestamp}
+              flat={!isDateSort}
+              gridClassName="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-3"
+              renderItem={(item) => (
+                <HistoryCard
+                  key={item.id}
+                  item={item}
+                  isSelecting={isSelecting}
+                  isSelected={selectedIds.has(item.id)}
+                  onToggleSelect={() => toggleSelect(item.id)}
+                  onOpen={() => openItem(item)}
+                  onAnnotate={() => navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })}
+                  onDelete={() => handleDelete(item.id)}
+                  onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
+                  onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
+                />
+              )}
+              emptyState={<EmptyState search={search} filter={filter} onClear={() => setSearch('')} />}
+            />
+          ) : (
+            <DateGroupedGrid
+              items={filtered}
+              getTimestamp={item => item.timestamp}
+              flat={!isDateSort}
+              gridClassName="flex flex-col gap-1"
+              renderItem={(item) => (
+                <HistoryListRow
+                  key={item.id}
+                  item={item}
+                  isSelecting={isSelecting}
+                  isSelected={selectedIds.has(item.id)}
+                  onToggleSelect={() => toggleSelect(item.id)}
+                  onOpen={() => openItem(item)}
+                  onAnnotate={() => navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })}
+                  onDelete={() => handleDelete(item.id)}
+                  onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
+                  onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
+                />
+              )}
+              emptyState={<EmptyState search={search} filter={filter} onClear={() => setSearch('')} />}
+            />
+          )}
+        </div>
       </section>
+
+      {previewItem && (
+        <VideoPreviewModal
+          item={previewItem}
+          onClose={() => setPreviewItem(null)}
+          onAnnotate={() => {
+            const item = previewItem
+            setPreviewItem(null)
+            navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })
+          }}
+        />
+      )}
 
       {showScrollCapture && <ScrollCaptureDialog onClose={() => setShowScrollCapture(false)} />}
     </div>
@@ -445,32 +621,93 @@ function MediaKindToggle({ value, onChange }: { value: MediaKind; onChange: (v: 
   )
 }
 
-/* ── Capture Card ── */
+/* ── Empty State ── */
 
-function CaptureCard({ item, onOpen }: { item: HistoryItem; onOpen: () => void }) {
-  const isUploaded = item.uploads.some(u => u.success)
+function EmptyState({ search, filter, onClear }: { search: string; filter: FilterType; onClear: () => void }) {
+  const icon = search ? 'search_off' : filter === 'recording' ? 'videocam_off' : filter === 'screenshot' ? 'hide_image' : 'history'
+  const message = search
+    ? `No captures match "${search}"`
+    : filter !== 'all'
+      ? `No ${filter === 'screenshot' ? 'screenshots' : 'recordings'} yet`
+      : 'No captures yet'
 
   return (
-    <div className="group cursor-pointer" onClick={onOpen}>
-      <div className="aspect-video bg-slate-900/50 rounded-xl overflow-hidden relative border border-white/5 group-hover:border-primary/30 transition-all">
+    <div className="flex flex-col items-center justify-center py-20">
+      <div className="p-5 rounded-2xl bg-white/5 mb-5">
+        <span className="material-symbols-outlined text-4xl text-slate-600">{icon}</span>
+      </div>
+      <p className="text-sm font-semibold text-slate-400 mb-2" style={{ fontFamily: 'Manrope, sans-serif' }}>
+        {message}
+      </p>
+      {search && (
+        <button onClick={onClear} className="text-xs text-primary hover:underline font-medium">
+          Clear search
+        </button>
+      )}
+    </div>
+  )
+}
+
+/* ── History Card (Grid View) ── */
+
+function HistoryCard({
+  item, isSelecting, isSelected, onToggleSelect, onOpen, onAnnotate, onDelete, onOpenFile, onCopy,
+}: {
+  item: HistoryItem
+  isSelecting: boolean
+  isSelected: boolean
+  onToggleSelect: () => void
+  onOpen: () => void
+  onAnnotate: () => void
+  onDelete: () => void
+  onOpenFile: () => void
+  onCopy: () => void
+}) {
+  const date = new Date(item.timestamp).toLocaleString('en-US', {
+    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+  })
+  const isUploaded = item.uploads?.some(u => u.success)
+  const uploadUrl = item.uploads?.find(u => u.success && u.url)?.url
+
+  const stop = (fn: () => void) => (e: ReactMouseEvent) => { e.stopPropagation(); fn() }
+
+  return (
+    <div
+      className={`group glass-card rounded-lg cursor-pointer transition-all duration-300 relative ${
+        isSelected ? 'ring-2 ring-primary/50' : ''
+      }`}
+      onClick={isSelecting ? onToggleSelect : onOpen}
+    >
+      {/* Thumbnail */}
+      <div className="aspect-video bg-slate-950 relative overflow-hidden rounded-t-lg">
         {item.dataUrl ? (
-          <img
-            src={item.dataUrl}
-            className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity"
-            draggable={false}
-          />
+          <img src={item.dataUrl} className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500 opacity-90 group-hover:opacity-100" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
-            <span className="material-symbols-outlined text-slate-700 text-2xl">
-              {item.type === 'recording' ? 'videocam' : 'image'}
-            </span>
+            <span className="material-symbols-outlined text-slate-700 text-4xl">{item.type === 'recording' ? 'videocam' : 'image'}</span>
           </div>
         )}
 
-        {/* Type badge — hardcoded pink so light mode doesn't render dark purple. */}
-        {item.type === 'recording' && (
+        {/* Selection checkbox */}
+        {isSelecting && (
+          <div className="absolute top-2 left-2 z-10">
+            <button
+              onClick={stop(onToggleSelect)}
+              className={`w-6 h-6 rounded-lg flex items-center justify-center transition-all border ${
+                isSelected
+                  ? 'bg-primary border-primary text-slate-900'
+                  : 'bg-black/40 border-white/20 backdrop-blur-md hover:border-primary/40'
+              }`}
+            >
+              {isSelected && <span className="material-symbols-outlined text-xs">check</span>}
+            </button>
+          </div>
+        )}
+
+        {/* Video badge. Hardcoded pink so light theme doesn't render dark purple. */}
+        {item.type === 'recording' && !isSelecting && (
           <span
-            className="absolute top-2 left-2 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
+            className="absolute top-2 left-2 z-10 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
             style={{
               color: '#ec4899',
               backgroundColor: 'color-mix(in oklab, #ec4899 20%, transparent)',
@@ -481,29 +718,107 @@ function CaptureCard({ item, onOpen }: { item: HistoryItem; onOpen: () => void }
           </span>
         )}
 
-        {/* Upload status */}
-        {isUploaded && (
-          <span className="absolute top-2 right-2 text-[9px] font-bold uppercase tracking-wider text-secondary bg-secondary/15 backdrop-blur-sm px-2 py-0.5 rounded-md border border-secondary/20">
+        {/* Synced badge */}
+        {isUploaded && !isSelecting && (
+          <span
+            className="absolute top-2 right-2 z-10 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
+            style={{
+              color: 'var(--color-secondary)',
+              backgroundColor: 'color-mix(in oklab, var(--color-secondary) 18%, transparent)',
+              borderColor: 'color-mix(in oklab, var(--color-secondary) 30%, transparent)',
+            }}
+          >
             Synced
           </span>
         )}
 
-        {/* Hover overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-3">
-          <span className="p-1.5 glass-refractive rounded-lg text-white/80 hover:text-white transition-colors">
-            <span className="material-symbols-outlined text-sm">open_in_new</span>
-          </span>
-        </div>
+        {/* Play button overlay for recordings */}
+        {item.type === 'recording' && !isSelecting && (
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+            <div className="w-12 h-12 rounded-full bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20">
+              <span className="material-symbols-outlined text-white text-2xl ml-0.5">play_arrow</span>
+            </div>
+          </div>
+        )}
+
+        {/* Hover overlay with actions */}
+        {!isSelecting && (
+          <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-3 gap-2 z-10">
+            <OvlBtn icon={item.type === 'recording' ? 'draw' : 'edit'} label={item.type === 'recording' ? 'Annotate' : 'Edit'} onClick={stop(item.type === 'recording' ? onAnnotate : onOpen)} />
+            {item.type === 'screenshot' && <OvlBtn icon="content_copy" label="Copy" onClick={stop(onCopy)} />}
+            {item.filePath && <OvlBtn icon="folder_open" label="Folder" onClick={stop(onOpenFile)} />}
+            {uploadUrl && <OvlBtn icon="open_in_new" label="Link" onClick={stop(() => window.electronAPI?.openExternal(uploadUrl))} />}
+            <OvlBtn icon="delete" label="Delete" variant="danger" onClick={stop(onDelete)} />
+          </div>
+        )}
       </div>
 
-      <div className="mt-2.5 px-0.5">
-        <p
-          className="text-[13px] font-semibold text-white truncate"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          {item.name}
-        </p>
-        <p className="text-[11px] text-slate-500 mt-0.5">{relativeTime(item.timestamp)}</p>
+      {/* Info */}
+      <div className="p-3">
+        <p className="text-xs font-bold text-white truncate mb-1" style={{ fontFamily: 'Manrope, sans-serif' }}>{item.name}</p>
+        <p className="text-[10px] text-slate-500 font-medium">{date}</p>
+      </div>
+    </div>
+  )
+}
+
+function OvlBtn({ icon, label, onClick, variant }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void; variant?: 'danger' }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm transition-all duration-200 ${
+        variant === 'danger'
+          ? 'bg-white/10 text-white/70 hover:bg-red-500/30 hover:text-red-300'
+          : 'bg-white/10 text-white/70 hover:bg-white/25 hover:text-white hover:scale-110'
+      }`}
+      title={label}
+    >
+      <span className="material-symbols-outlined text-[16px]">{icon}</span>
+    </button>
+  )
+}
+
+/* ── Video Preview Modal ── */
+
+function VideoPreviewModal({ item, onClose, onAnnotate }: { item: HistoryItem; onClose: () => void; onAnnotate: () => void }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const videoSrc = useLocalVideoUrl(item.filePath)
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70]" onClick={onClose}>
+      <div className="glass-refractive rounded-3xl overflow-hidden shadow-2xl max-w-4xl w-full mx-8" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
+          <p className="text-sm font-bold text-white truncate max-w-xs" style={{ fontFamily: 'Manrope, sans-serif' }}>{item.name}</p>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onAnnotate}
+              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-white transition-all"
+              style={{ fontFamily: 'Manrope, sans-serif' }}
+            >
+              <span className="material-symbols-outlined text-sm">draw</span>
+              Annotate
+            </button>
+            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
+              <span className="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+        <div className="bg-black">
+          <video
+            ref={videoRef}
+            src={videoSrc}
+            controls
+            autoPlay
+            className="w-full max-h-[70vh]"
+            style={{ display: 'block' }}
+          />
+        </div>
       </div>
     </div>
   )
