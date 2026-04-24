@@ -99,8 +99,10 @@ declare global {
         kind: 'region' | 'window' | 'screen'
         sourceId: string
         displayId: number
-        rect?: { x: number; y: number; width: number; height: number }   // region: local to displayId; window/screen: full source
-        physicalRect?: { x: number; y: number; width: number; height: number }  // region: physical px (for canvas crop)
+        rect?: { x: number; y: number; width: number; height: number }   // overlay-local DIP (region/window)
+        displayDipSize: { width: number; height: number }                // display DIP size — scale derived at draw time
+        displayScaleFactor: number                                       // pins stream to exact physical dims
+        outputSize?: { width: number; height: number }                   // physical-pixel output canvas dims (region/window)
       } | null>
       recorderReady: (ok: boolean, error?: string) => Promise<void>
       recorderStateChange: (state: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error', payload?: unknown) => Promise<void>

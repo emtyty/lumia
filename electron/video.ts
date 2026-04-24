@@ -28,8 +28,15 @@ export interface RecordingTarget {
   displayId: number
   /** Overlay-local DIP rect (region/window only) */
   rect?: { x: number; y: number; width: number; height: number }
-  /** Physical pixel rect on that display (region/window only) */
-  physicalRect?: { x: number; y: number; width: number; height: number }
+  /** Display DIP size — recorder host computes the DIP→stream-pixel scale
+   *  from this plus actual video frame dims at draw time, matching the image
+   *  capture pattern. */
+  displayDipSize: { width: number; height: number }
+  /** Display scale factor — used to pin the getUserMedia stream to exact
+   *  physical dims, preventing Chromium from aspect-padding the frame. */
+  displayScaleFactor: number
+  /** Physical-pixel output canvas dims (region/window only). */
+  outputSize?: { width: number; height: number }
 }
 
 let recordingTarget: RecordingTarget | null = null
@@ -177,6 +184,13 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
       backgroundThrottling: false,
     },
   })
+  // Same per-monitor DPI correction as the border window.
+  if (process.platform === 'win32') {
+    win.setBounds(bounds)
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed()) win.setBounds(bounds)
+    })
+  }
   win.setMenu(null)
   // screen-saver is the highest Z level available — stays above fullscreen
   // apps, browser fullscreen video, games, etc. Together with the
@@ -214,6 +228,16 @@ function createRecordingBorder(display: Electron.Display, rect: { x: number; y: 
       nodeIntegration: false,
     },
   })
+  // Re-apply bounds on Windows. Per-monitor DPI awareness means the
+  // constructor interprets bounds in the primary display's DPI context;
+  // without this, a border placed on a display with a different scale
+  // factor ends up short of the edges and exposes the taskbar.
+  if (process.platform === 'win32') {
+    win.setBounds(bounds)
+    win.once('ready-to-show', () => {
+      if (!win.isDestroyed()) win.setBounds(bounds)
+    })
+  }
   win.setMenu(null)
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
@@ -355,19 +379,17 @@ export function setupVideo() {
     const sourceId = await resolveScreenSourceId(display.id)
     if (!sourceId) { showMain(); return }
 
-    const physicalRect = {
-      x: Math.round(rect.x * sf),
-      y: Math.round(rect.y * sf),
-      width:  Math.max(1, Math.round(rect.width  * sf)),
-      height: Math.max(1, Math.round(rect.height * sf)),
-    }
-
     openRecordingSession({
       kind: 'region',
       sourceId,
       displayId: display.id,
       rect,
-      physicalRect,
+      displayDipSize: { width: display.size.width, height: display.size.height },
+      displayScaleFactor: sf,
+      outputSize: {
+        width:  Math.max(1, Math.round(rect.width  * sf)),
+        height: Math.max(1, Math.round(rect.height * sf)),
+      },
     })
   })
 
@@ -387,19 +409,17 @@ export function setupVideo() {
     const sourceId = await resolveScreenSourceId(display.id)
     if (!sourceId) { showMain(); return }
 
-    const physicalRect = {
-      x: Math.round(rect.x * sf),
-      y: Math.round(rect.y * sf),
-      width:  Math.max(1, Math.round(rect.width  * sf)),
-      height: Math.max(1, Math.round(rect.height * sf)),
-    }
-
     openRecordingSession({
       kind: 'window',
       sourceId,
       displayId: display.id,
       rect,
-      physicalRect,
+      displayDipSize: { width: display.size.width, height: display.size.height },
+      displayScaleFactor: sf,
+      outputSize: {
+        width:  Math.max(1, Math.round(rect.width  * sf)),
+        height: Math.max(1, Math.round(rect.height * sf)),
+      },
     })
   })
 
@@ -420,6 +440,8 @@ export function setupVideo() {
       kind: 'screen',
       sourceId,
       displayId: display.id,
+      displayDipSize: { width: display.size.width, height: display.size.height },
+      displayScaleFactor: display.scaleFactor || 1,
     })
   })
 

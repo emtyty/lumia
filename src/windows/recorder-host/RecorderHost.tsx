@@ -6,7 +6,9 @@ interface RecordingTarget {
   sourceId: string
   displayId: number
   rect?: { x: number; y: number; width: number; height: number }
-  physicalRect?: { x: number; y: number; width: number; height: number }
+  displayDipSize: { width: number; height: number }
+  displayScaleFactor: number
+  outputSize?: { width: number; height: number }
 }
 
 /** Headless renderer that owns the MediaRecorder. No user-facing UI — the
@@ -40,11 +42,18 @@ export default function RecorderHost() {
         if (!target) throw new Error('No recording target set')
         targetRef.current = target as RecordingTarget
 
-        // Request the biggest native resolution for the chosen source so
-        // cropping works on physical pixels. 30fps cap is intentional (reduces
-        // WGC frame-drop on Windows).
-        const maxW = 3840
-        const maxH = 2160
+        // Pin the stream to the display's exact physical resolution. With
+        // only max constraints, Chromium delivers the stream at maxWidth ×
+        // maxHeight ("crop-and-scale" mode), which:
+        //   1. Doesn't match the display's aspect ratio — stretches non-
+        //      uniformly so sx ≠ sy, breaking the crop math.
+        //   2. Moves the stream into a coordinate space that has no clean
+        //      mapping back to overlay DIP pixels.
+        // Forcing min=max=physical locks the stream to native pixels, so
+        // sx = sy = scaleFactor and the crop rect maps 1:1 with what the
+        // user saw in the overlay.
+        const physW = Math.max(1, Math.round(target.displayDipSize.width  * target.displayScaleFactor))
+        const physH = Math.max(1, Math.round(target.displayDipSize.height * target.displayScaleFactor))
         const desktopStream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -52,10 +61,10 @@ export default function RecorderHost() {
             mandatory: {
               chromeMediaSource: 'desktop',
               chromeMediaSourceId: target.sourceId,
-              minWidth: 1280,
-              maxWidth: maxW,
-              minHeight: 720,
-              maxHeight: maxH,
+              minWidth:  physW,
+              maxWidth:  physW,
+              minHeight: physH,
+              maxHeight: physH,
               maxFrameRate: 30,
             },
           },
@@ -63,14 +72,30 @@ export default function RecorderHost() {
         if (!mounted) { desktopStream.getTracks().forEach(t => t.stop()); return }
         desktopStreamRef.current = desktopStream
 
+        // Wait until the stream reports real frame dims. Without this, the
+        // draw loop can run with zeros for a few frames and compute the
+        // crop against bogus numbers.
+        await new Promise<void>(resolve => {
+          const t = desktopStream.getVideoTracks()[0]
+          if (!t) return resolve()
+          const check = () => {
+            const s = t.getSettings()
+            if (s.width && s.height) resolve()
+            else requestAnimationFrame(check)
+          }
+          check()
+        })
+
         // Build the output stream that MediaRecorder will consume.
         // - Region/window: pipe through a <canvas> so we only record the crop.
         // - Screen: pass the desktop stream through directly.
         let outStream: MediaStream
-        if ((target.kind === 'region' || target.kind === 'window') && target.physicalRect) {
+        if ((target.kind === 'region' || target.kind === 'window') && target.rect && target.outputSize) {
           outStream = buildCroppedStream(
             desktopStream,
-            target.physicalRect,
+            target.rect,
+            target.displayDipSize,
+            target.outputSize,
             videoElRef,
             canvasElRef,
             drawLoopRef,
@@ -244,19 +269,26 @@ export default function RecorderHost() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/** Pipe a desktop stream through a <video> + <canvas> so the recorded output
- *  only contains the physical-pixel rect inside the capture source. */
+/** Pipe the desktop stream through a <video> + <canvas> so the recorded
+ *  output only contains the DIP rect the user selected in the overlay.
+ *
+ *  The DIP→stream-pixel scale is derived from actual frame dims at draw
+ *  time (same pattern as image region capture). The stream is pinned to
+ *  the display's physical resolution upstream via getUserMedia min=max
+ *  constraints, so sx and sy should match the display's scale factor. */
 function buildCroppedStream(
   desktopStream: MediaStream,
-  physicalRect: { x: number; y: number; width: number; height: number },
+  rectDip: { x: number; y: number; width: number; height: number },
+  displayDipSize: { width: number; height: number },
+  outputSize: { width: number; height: number },
   videoRef: React.MutableRefObject<HTMLVideoElement | null>,
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
   loopRef: React.MutableRefObject<number | null>,
 ): MediaStream {
   const video = videoRef.current!
   const canvas = canvasRef.current!
-  canvas.width = physicalRect.width
-  canvas.height = physicalRect.height
+  canvas.width = outputSize.width
+  canvas.height = outputSize.height
 
   video.srcObject = desktopStream
   video.muted = true
@@ -268,12 +300,13 @@ function buildCroppedStream(
     const vw = video.videoWidth
     const vh = video.videoHeight
     if (vw > 0 && vh > 0) {
-      // Clamp source rect to video bounds so clipping never throws.
-      const sx = Math.max(0, Math.min(vw - 1, physicalRect.x))
-      const sy = Math.max(0, Math.min(vh - 1, physicalRect.y))
-      const sw = Math.max(1, Math.min(vw - sx, physicalRect.width))
-      const sh = Math.max(1, Math.min(vh - sy, physicalRect.height))
-      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, physicalRect.width, physicalRect.height)
+      const sx = vw / displayDipSize.width
+      const sy = vh / displayDipSize.height
+      const srcX = Math.max(0, Math.min(vw - 1, Math.round(rectDip.x * sx)))
+      const srcY = Math.max(0, Math.min(vh - 1, Math.round(rectDip.y * sy)))
+      const srcW = Math.max(1, Math.min(vw - srcX, Math.round(rectDip.width  * sx)))
+      const srcH = Math.max(1, Math.min(vh - srcY, Math.round(rectDip.height * sy)))
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
     }
     loopRef.current = requestAnimationFrame(draw)
   }
