@@ -12,6 +12,8 @@ interface AppSettings {
   googleDriveAccessToken: string
   googleDriveTokenExpiresAt: number
   googleDriveFolderId: string
+  launchAtStartup: boolean
+  historyRetentionDays: number
 }
 
 declare global {
@@ -26,7 +28,7 @@ declare global {
       showAfterRecording: () => Promise<void>
 
       runWorkflow: (templateId: string, imageData: string, destinationIndex?: number) => Promise<import('./types').WorkflowResult>
-      runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) => Promise<void>
+      runInlineAction: (actionType: 'clipboard' | 'save', imageData: string) => Promise<{ canceled?: boolean }>
       getTemplates: () => Promise<import('./types').WorkflowTemplate[]>
       saveTemplate: (template: import('./types').WorkflowTemplate) => Promise<import('./types').WorkflowTemplate>
       deleteTemplate: (id: string) => Promise<boolean>

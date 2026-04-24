@@ -30,4 +30,16 @@ export class HistoryStore {
     this.store.set('items', filtered)
     return true
   }
+
+  // Drops items older than `days` days. `days <= 0` means keep forever (no-op).
+  // Returns the number of items removed.
+  pruneOlderThan(days: number): number {
+    if (!Number.isFinite(days) || days <= 0) return 0
+    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
+    const items = this.store.get('items')
+    const kept = items.filter(i => i.timestamp >= cutoff)
+    const removed = items.length - kept.length
+    if (removed > 0) this.store.set('items', kept)
+    return removed
+  }
 }

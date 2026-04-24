@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react'
 
 interface AppSettings {
   imgurClientId: string
-  defaultSavePath: string
   customUploadUrl: string
   customUploadHeaders: Record<string, string>
   customUploadFieldName: string
@@ -11,11 +10,12 @@ interface AppSettings {
   googleDriveAccessToken: string
   googleDriveTokenExpiresAt: number
   googleDriveFolderId: string
+  launchAtStartup: boolean
+  historyRetentionDays: number
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
   imgurClientId: '',
-  defaultSavePath: '',
   customUploadUrl: '',
   customUploadHeaders: {},
   customUploadFieldName: 'file',
@@ -23,8 +23,19 @@ const DEFAULT_SETTINGS: AppSettings = {
   googleDriveRefreshToken: '',
   googleDriveAccessToken: '',
   googleDriveTokenExpiresAt: 0,
-  googleDriveFolderId: ''
+  googleDriveFolderId: '',
+  launchAtStartup: true,
+  historyRetentionDays: 0
 }
+
+const RETENTION_OPTIONS = [
+  { value: 0, label: 'Keep forever' },
+  { value: 7, label: '7 days' },
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+  { value: 180, label: '180 days' },
+  { value: 365, label: '1 year' },
+]
 
 export default function Settings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
@@ -37,8 +48,11 @@ export default function Settings() {
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
-      setSettings(s)
-      originalRef.current = s
+      // defaultSavePath is managed automatically by the save dialog — not part of the UI state.
+      const { defaultSavePath: _ignored, ...ui } = s
+      void _ignored
+      setSettings(ui)
+      originalRef.current = ui
       setLoading(false)
     })
   }, [])
@@ -84,16 +98,6 @@ export default function Settings() {
     setTimeout(() => setSavedToast(false), 2500)
   }
 
-  const handlePickFolder = async () => {
-    const result = await window.electronAPI?.showOpenDialog({
-      title: 'Select default save folder',
-      properties: ['openDirectory', 'createDirectory']
-    })
-    if (result && !result.canceled && result.filePaths[0]) {
-      update('defaultSavePath', result.filePaths[0])
-    }
-  }
-
   const gdriveConnected = !!settings.googleDriveRefreshToken
 
   if (loading) {
@@ -123,9 +127,24 @@ export default function Settings() {
     update('googleDriveAccessToken', '')
   }
 
+  const platform = window.electronAPI?.platform
+  const supportsStartup = platform === 'win32' || platform === 'darwin'
+
+  const handleLaunchAtStartupChange = async (next: boolean) => {
+    update('launchAtStartup', next)
+    originalRef.current = { ...originalRef.current, launchAtStartup: next }
+    await window.electronAPI?.setSetting('launchAtStartup', next)
+  }
+
+  const handleHistoryRetentionChange = async (next: number) => {
+    update('historyRetentionDays', next)
+    originalRef.current = { ...originalRef.current, historyRetentionDays: next }
+    await window.electronAPI?.setSetting('historyRetentionDays', next)
+  }
+
   const NAV_ITEMS = [
+    { id: 'general', icon: 'tune', label: 'General' },
     { id: 'appearance', icon: 'palette', label: 'Appearance' },
-    { id: 'capture', icon: 'add_a_photo', label: 'Capture' },
     { id: 'imgur', icon: 'image', label: 'Imgur' },
     { id: 'gdrive', icon: 'add_to_drive', label: 'Google Drive' },
     { id: 'custom', icon: 'api', label: 'Custom Upload' },
@@ -201,6 +220,50 @@ export default function Settings() {
         >
           <div className="max-w-xl space-y-6">
 
+            {/* General */}
+            <Section id="general" title="General" icon="tune">
+              {supportsStartup && (
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-slate-300 block" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                      Launch at Startup
+                    </span>
+                    <p className="text-[11px] text-slate-500">
+                      {platform === 'darwin'
+                        ? 'Start Lumia automatically when you log in, minimized to the menu bar.'
+                        : 'Start Lumia automatically when Windows boots, minimized to the system tray.'}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.launchAtStartup}
+                    onChange={e => handleLaunchAtStartupChange(e.target.checked)}
+                    className="w-4 h-4 accent-primary cursor-pointer flex-shrink-0"
+                  />
+                </label>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <span className="text-xs font-semibold text-slate-300 block" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                    Delete history after
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    Automatically remove captures older than the selected period. Keep forever by default.
+                  </p>
+                </div>
+                <select
+                  value={settings.historyRetentionDays}
+                  onChange={e => handleHistoryRetentionChange(Number(e.target.value))}
+                  className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-primary/30 cursor-pointer flex-shrink-0"
+                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                >
+                  {RETENTION_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </Section>
+
             {/* Appearance */}
             <Section id="appearance" title="Appearance" icon="palette">
               <Field
@@ -227,30 +290,6 @@ export default function Settings() {
                       {opt.label}
                     </button>
                   ))}
-                </div>
-              </Field>
-            </Section>
-
-            {/* Capture */}
-            <Section id="capture" title="Capture" icon="add_a_photo">
-              <Field
-                label="Default Save Path"
-                description="Where screenshots and recordings are saved when using 'Save to Disk' steps"
-              >
-                <div className="flex gap-2">
-                  <input
-                    value={settings.defaultSavePath}
-                    onChange={e => update('defaultSavePath', e.target.value)}
-                    placeholder="~/Pictures/Lumia"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                  />
-                  <button
-                    onClick={handlePickFolder}
-                    className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-slate-400 hover:text-white transition-all"
-                    title="Browse"
-                  >
-                    <span className="material-symbols-outlined text-sm">folder_open</span>
-                  </button>
                 </div>
               </Field>
             </Section>

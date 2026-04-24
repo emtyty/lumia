@@ -267,7 +267,10 @@ export default function Editor() {
     setActionBusy(key)
     if (actionType) {
       window.electronAPI?.runInlineAction(actionType, dataUrl)
-        .then(() => showToast(actionType === 'clipboard' ? 'Copied to clipboard' : 'Saved to file', 'check_circle'))
+        .then((res) => {
+          if (res?.canceled) return // user dismissed the save dialog
+          showToast(actionType === 'clipboard' ? 'Copied to clipboard' : 'Saved to file', 'check_circle')
+        })
         .catch(() => showToast('Action failed', 'error', 'error'))
         .finally(() => setActionBusy(null))
       return

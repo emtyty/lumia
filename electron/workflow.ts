@@ -1,6 +1,6 @@
-import { clipboard, nativeImage, shell, Notification } from 'electron'
+import { clipboard, dialog, nativeImage, shell, Notification } from 'electron'
 import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { homedir } from 'os'
 import type { TemplateStore } from './templates'
 import type { WorkflowResult, UploadResult, UploadDestination } from './types'
@@ -9,7 +9,7 @@ import { uploadToCustom } from './uploaders/custom'
 import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive'
 import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
-import { getSettings } from './settings'
+import { getSettings, resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { getMainWindow } from './index'
 import { v4 as uuidv4 } from 'uuid'
@@ -125,20 +125,35 @@ export class WorkflowEngine {
     return result
   }
 
-  async runInlineAction(actionType: 'clipboard' | 'save', imageData: string): Promise<void> {
+  async runInlineAction(actionType: 'clipboard' | 'save', imageData: string): Promise<{ canceled?: boolean }> {
     if (actionType === 'clipboard') {
       const img = nativeImage.createFromDataURL(imageData)
       clipboard.writeImage(img)
-    } else if (actionType === 'save') {
-      const ts = localTimestamp()
-      const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
-      const filename = `capture-${ts}.${ext}`
-      const dir = getSettings().defaultSavePath || join(homedir(), 'Pictures', 'Lumia')
-      await mkdir(dir, { recursive: true })
-      const filePath = join(dir, filename)
-      const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
-      await writeFile(filePath, Buffer.from(base64, 'base64'))
+      return {}
     }
+
+    // 'save' — always prompt the user for a location so they can pick the folder.
+    const ts = localTimestamp()
+    const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+    const filename = `capture-${ts}.${ext}`
+    const startDir = await resolveSaveStartDir()
+
+    const opts: Electron.SaveDialogOptions = {
+      defaultPath: join(startDir, filename),
+      filters: [{ name: 'Image', extensions: [ext] }]
+    }
+    const mainWin = getMainWindow()
+    const result = mainWin
+      ? await dialog.showSaveDialog(mainWin, opts)
+      : await dialog.showSaveDialog(opts)
+
+    if (result.canceled || !result.filePath) return { canceled: true }
+
+    await mkdir(dirname(result.filePath), { recursive: true })
+    const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
+    await writeFile(result.filePath, Buffer.from(base64, 'base64'))
+    rememberSaveDir(dirname(result.filePath))
+    return {}
   }
 
   private async upload(dest: UploadDestination, imageData: string): Promise<UploadResult> {

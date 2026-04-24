@@ -22,6 +22,22 @@
 
 * { box-sizing: border-box; }
 
+/* Tells the browser to render native widgets (select dropdowns, scrollbars)
+   in dark mode by default, matching the app theme. */
+html { color-scheme: dark; }
+html.light { color-scheme: light; }
+
+/* Chromium's popup for <select> ignores color-scheme on Windows — force dark
+   backgrounds on <option> so the list is readable. */
+select option {
+  background-color: #16161f;
+  color: #f1f5f9;
+}
+html.light select option {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
 body {
   font-family: var(--font-body);
   background:

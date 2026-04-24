@@ -8,7 +8,8 @@ import { setupScrollCapture, getOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
-import { getSettings, setSetting, type AppSettings } from './settings'
+import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
+import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log'
 
@@ -76,7 +77,7 @@ const ICON_PATH = process.platform === 'win32'
     ? join(__dirname, '../../resources/icons/mac/icon.icns')
     : join(__dirname, '../../resources/icon.png')
 
-function createMainWindow(): BrowserWindow {
+function createMainWindow(startHidden = false): BrowserWindow {
   const isMac = process.platform === 'darwin'
   const isWin = process.platform === 'win32'
   const win = new BrowserWindow({
@@ -86,6 +87,7 @@ function createMainWindow(): BrowserWindow {
     minHeight: 600,
     backgroundColor: '#07070b',
     icon: ICON_PATH,
+    show: !startHidden,
     // VSCode-style: frameless on both platforms
     // macOS: traffic lights inset; Windows: native overlay controls
     frame: false,
@@ -322,7 +324,12 @@ app.whenReady().then(async () => {
     callback(false)
   })
 
-  mainWindow = createMainWindow()
+  const startHidden = wasLaunchedAtStartup()
+  mainWindow = createMainWindow(startHidden)
+
+  // Keep the OS login-item entry in sync with the stored preference on every
+  // launch (covers app moves, reinstalls, and settings changed while offline).
+  applyLaunchAtStartup(getSettings().launchAtStartup)
 
   setupCapture()
   setupHotkeys()
@@ -390,6 +397,19 @@ app.whenReady().then(async () => {
   // IPC: History
   const historyStore = new HistoryStore()
   historyStoreInstance = historyStore
+
+  // Background retention cleanup: prune on boot and then hourly. `days <= 0`
+  // means keep forever, so the store skips the scan — cheap to keep running.
+  const runHistoryPrune = () => {
+    const days = getSettings().historyRetentionDays
+    const removed = historyStore.pruneOlderThan(days)
+    if (removed > 0) console.log(`[history] pruned ${removed} item(s) older than ${days} day(s)`)
+  }
+  runHistoryPrune()
+  const HISTORY_PRUNE_INTERVAL_MS = 60 * 60 * 1000
+  const historyPruneTimer = setInterval(runHistoryPrune, HISTORY_PRUNE_INTERVAL_MS)
+  app.on('will-quit', () => clearInterval(historyPruneTimer))
+
   ipcMain.handle('history:get', () => historyStore.getAll())
   ipcMain.handle('history:delete', (_e, id: string) => historyStore.delete(id))
   ipcMain.handle('history:openFile', (_e, filePath: string) => {
@@ -413,7 +433,11 @@ app.whenReady().then(async () => {
   // IPC: Settings
   ipcMain.handle('hotkeys:get', () => getHotkeys())
   ipcMain.handle('settings:get', () => getSettings())
-  ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => setSetting(key, value as AppSettings[typeof key]))
+  ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => {
+    setSetting(key, value as AppSettings[typeof key])
+    if (key === 'launchAtStartup') applyLaunchAtStartup(value as boolean)
+    if (key === 'historyRetentionDays') runHistoryPrune()
+  })
 
   // IPC: OCR & Auto-Blur
   ipcMain.handle('ocr:scan', async (_e, dataUrl: string) => {
@@ -660,8 +684,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:force-reload', () => mainWindow?.webContents.reloadIgnoringCache())
 
   // IPC: Dialog
-  ipcMain.handle('dialog:save', async (_e, opts) => {
-    const result = await dialog.showSaveDialog(mainWindow!, opts)
+  ipcMain.handle('dialog:save', async (_e, opts: Electron.SaveDialogOptions = {}) => {
+    const { isAbsolute, join, dirname } = await import('path')
+    const startDir = await resolveSaveStartDir()
+
+    // If caller gave just a filename, prepend the resolved dir.
+    const incoming = opts.defaultPath
+    const defaultPath = !incoming
+      ? startDir
+      : isAbsolute(incoming) ? incoming : join(startDir, incoming)
+
+    const result = await dialog.showSaveDialog(mainWindow!, { ...opts, defaultPath })
+    if (!result.canceled && result.filePath) {
+      rememberSaveDir(dirname(result.filePath))
+    }
     return result
   })
 
