@@ -85,8 +85,6 @@ export default function Editor() {
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
   const [activeWorkflowId, setActiveWorkflowId] = useState<string>('')
   const [gdriveConnected, setGdriveConnected] = useState(false)
-  const [imgurConfigured, setImgurConfigured] = useState(false)
-  const [customConfigured, setCustomConfigured] = useState(false)
   const [toast, setToast] = useState<{ message: string; icon: string; type: 'success' | 'error' } | null>(null)
   const [actionBusy, setActionBusy] = useState<string | null>(null)
   const pendingAction = useRef<string | null>(null)
@@ -135,8 +133,8 @@ export default function Editor() {
     return templates.find(t => t.id === 'builtin-r2') ?? templates[0]
   }, [templates, activeWorkflowId])
   const actionBtns = useMemo(
-    () => deriveActions(activeTemplate, gdriveConnected, imgurConfigured, customConfigured, kind),
-    [activeTemplate, gdriveConnected, imgurConfigured, customConfigured, kind],
+    () => deriveActions(activeTemplate, gdriveConnected, kind),
+    [activeTemplate, gdriveConnected, kind],
   )
 
   useEffect(() => {
@@ -183,8 +181,6 @@ export default function Editor() {
       if (t) setTemplates(t)
       if (s?.activeWorkflowId) setActiveWorkflowId(s.activeWorkflowId)
       setGdriveConnected(!!s?.googleDriveRefreshToken)
-      setImgurConfigured(!!s?.imgurClientId)
-      setCustomConfigured(!!s?.customUploadUrl)
     })
     return () => { window.electronAPI?.removeAllListeners('capture:ready') }
   }, [])

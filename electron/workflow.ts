@@ -4,8 +4,6 @@ import { dirname, join } from 'path'
 import { homedir } from 'os'
 import type { TemplateStore } from './templates'
 import type { WorkflowResult, UploadResult, UploadDestination } from './types'
-import { uploadToImgur } from './uploaders/imgur'
-import { uploadToCustom } from './uploaders/custom'
 import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive'
 import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
@@ -176,8 +174,6 @@ export class WorkflowEngine {
 
   private async upload(dest: UploadDestination, imageData: string): Promise<UploadResult> {
     switch (dest.type) {
-      case 'imgur': return uploadToImgur(imageData, dest.clientId)
-      case 'custom': return uploadToCustom(imageData, dest.url, dest.headers, dest.fieldName)
       case 'google-drive': return this.uploadToGoogleDrive(imageData, dest.folderId)
       case 'r2': return this.uploadToR2(imageData, dest.bucket)
     }

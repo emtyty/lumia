@@ -6,7 +6,8 @@ type ThemeMode = 'dark' | 'light' | 'system'
 
 const NAV_ITEMS = [
   { to: '/dashboard', icon: 'space_dashboard', label: 'Dashboard' },
-  { to: '/workflow',  icon: 'rocket_launch',    label: 'Workflow' },
+  // Workflow tab hidden temporarily — route still wired, reachable via /#/workflow.
+  // { to: '/workflow',  icon: 'rocket_launch',    label: 'Workflow' },
   { to: '/settings',  icon: 'settings',         label: 'Settings' },
 ]
 

@@ -6,10 +6,8 @@ const STEP_META: Record<string, { icon: string; label: string; color: string }> 
   annotate:  { icon: 'draw',          label: 'Annotate',           color: 'primary' },
   save:      { icon: 'save',          label: 'Save to Disk',       color: 'primary' },
   clipboard: { icon: 'content_copy',  label: 'Copy to Clipboard',  color: 'primary' },
-  imgur:          { icon: 'cloud_upload',   label: 'Imgur',              color: 'secondary' },
   'google-drive': { icon: 'add_to_drive',  label: 'Google Drive',       color: 'secondary' },
   r2:             { icon: 'share',         label: 'Lumia',              color: 'secondary' },
-  custom:         { icon: 'api',           label: 'Custom Endpoint',    color: 'secondary' },
   copyUrl:   { icon: 'link',          label: 'Copy URL',           color: 'tertiary' },
   notify:    { icon: 'notifications', label: 'Notification',       color: 'tertiary' },
   openUrl:   { icon: 'open_in_new',   label: 'Open URL',           color: 'tertiary' },
@@ -28,8 +26,6 @@ export default function Workflow() {
   const [savedToast, setSavedToast] = useState(false)
   const [activeId, setActiveId] = useState('')
   const [gdriveConnected, setGdriveConnected] = useState(false)
-  const [imgurConfigured, setImgurConfigured] = useState(false)
-  const [customConfigured, setCustomConfigured] = useState(false)
   const originalRef = useRef<WorkflowTemplate | null>(null)
 
   useEffect(() => {
@@ -42,8 +38,6 @@ export default function Workflow() {
       const valid = t?.some(tmpl => tmpl.id === savedId)
       setActiveId(valid ? savedId : 'builtin-r2')
       setGdriveConnected(!!s?.googleDriveRefreshToken)
-      setImgurConfigured(!!s?.imgurClientId)
-      setCustomConfigured(!!s?.customUploadUrl)
     })
   }, [])
 
@@ -98,11 +92,9 @@ export default function Workflow() {
 
   const addDestination = (type: UploadDestination['type']) => {
     if (!selected) return
-    let dest: UploadDestination
-    if (type === 'imgur') dest = { type: 'imgur', clientId: '' }
-    else if (type === 'google-drive') dest = { type: 'google-drive' }
-    else if (type === 'r2') dest = { type: 'r2' }
-    else dest = { type: 'custom', url: '', headers: {} }
+    const dest: UploadDestination = type === 'google-drive'
+      ? { type: 'google-drive' }
+      : { type: 'r2' }
     setSelected({ ...selected, destinations: [...selected.destinations, dest] })
   }
 
@@ -355,10 +347,8 @@ export default function Workflow() {
                               <span className={`material-symbols-outlined text-xs ${accentClass(meta.color, 'text')}`}>{meta.icon}</span>
                             </div>
                             <span className="text-xs font-medium text-slate-300 flex-1" style={{ fontFamily: 'Manrope, sans-serif' }}>
-                              {field === 'destinations' && step.type === 'imgur' ? 'Upload to Imgur' :
-                               field === 'destinations' && step.type === 'google-drive' ? 'Upload to Google Drive' :
+                              {field === 'destinations' && step.type === 'google-drive' ? 'Upload to Google Drive' :
                                field === 'destinations' && step.type === 'r2' ? `Upload to R2${(step as { bucket?: string }).bucket ? ` (${(step as { bucket?: string }).bucket})` : ''}` :
-                               field === 'destinations' && step.type === 'custom' ? `Upload to ${(step as { url?: string }).url || 'Custom'}` :
                                meta.label}
                             </span>
                             {!selected.builtIn && (
@@ -384,16 +374,6 @@ export default function Workflow() {
                           </div>
 
                           {/* Inline config for destinations */}
-                          {field === 'destinations' && step.type === 'imgur' && !selected.builtIn && (
-                            <div className="ml-9 mt-1.5 mb-1">
-                              <input
-                                value={(step as { clientId?: string }).clientId ?? ''}
-                                onChange={e => updateDestination(i, { clientId: e.target.value } as Partial<UploadDestination>)}
-                                placeholder="Imgur Client ID (optional — uses built-in key)"
-                                className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-1.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                              />
-                            </div>
-                          )}
                           {field === 'destinations' && step.type === 'google-drive' && !selected.builtIn && (
                             <div className="ml-9 mt-1.5 mb-1">
                               <input
@@ -414,16 +394,6 @@ export default function Workflow() {
                               />
                             </div>
                           )}
-                          {field === 'destinations' && step.type === 'custom' && !selected.builtIn && (
-                            <div className="ml-9 mt-1.5 mb-1">
-                              <input
-                                value={(step as { url?: string }).url ?? ''}
-                                onChange={e => updateDestination(i, { url: e.target.value } as Partial<UploadDestination>)}
-                                placeholder="https://your-server.com/upload"
-                                className="w-full bg-white/[0.03] border border-white/5 rounded-lg px-3 py-1.5 text-[11px] text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                              />
-                            </div>
-                          )}
                         </div>
                       )
                     })}
@@ -440,16 +410,10 @@ export default function Workflow() {
                         )}
                         {field === 'destinations' && (
                           <>
-                            {imgurConfigured && (
-                              <AddChip label="Imgur" icon="cloud_upload" accent={phase.accent} onClick={() => addDestination('imgur')} />
-                            )}
                             {gdriveConnected && (
                               <AddChip label="Google Drive" icon="add_to_drive" accent={phase.accent} onClick={() => addDestination('google-drive')} />
                             )}
                             <AddChip label="Lumia" icon="share" accent={phase.accent} onClick={() => addDestination('r2')} />
-                            {customConfigured && (
-                              <AddChip label="Custom URL" icon="api" accent={phase.accent} onClick={() => addDestination('custom')} />
-                            )}
                           </>
                         )}
                         {field === 'afterUpload' && (

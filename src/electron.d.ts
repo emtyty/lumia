@@ -1,11 +1,7 @@
 export {}
 
 interface AppSettings {
-  imgurClientId: string
   defaultSavePath: string
-  customUploadUrl: string
-  customUploadHeaders: Record<string, string>
-  customUploadFieldName: string
   theme: 'dark' | 'light' | 'system'
   activeWorkflowId: string
   googleDriveRefreshToken: string

@@ -8,11 +8,7 @@ export type LastImageMode = 'region' | 'window' | 'fullscreen' | 'active-monitor
 export type LastVideoMode = 'region' | 'window' | 'screen'
 
 export interface AppSettings {
-  imgurClientId: string
   defaultSavePath: string
-  customUploadUrl: string
-  customUploadHeaders: Record<string, string>
-  customUploadFieldName: string
   theme: 'dark' | 'light' | 'system'
   activeWorkflowId: string
   lastSeenReleaseVersion: string
@@ -30,11 +26,7 @@ export interface AppSettings {
 const store = new Store<AppSettings>({
   name: 'settings',
   defaults: {
-    imgurClientId: '',
     defaultSavePath: join(homedir(), 'Downloads'),
-    customUploadUrl: '',
-    customUploadHeaders: {},
-    customUploadFieldName: 'file',
     theme: 'system',
     activeWorkflowId: 'builtin-r2',
     lastSeenReleaseVersion: '',
@@ -52,11 +44,7 @@ const store = new Store<AppSettings>({
 
 export function getSettings(): AppSettings {
   return {
-    imgurClientId: store.get('imgurClientId'),
     defaultSavePath: store.get('defaultSavePath'),
-    customUploadUrl: store.get('customUploadUrl'),
-    customUploadHeaders: store.get('customUploadHeaders'),
-    customUploadFieldName: store.get('customUploadFieldName'),
     theme: store.get('theme'),
     activeWorkflowId: store.get('activeWorkflowId'),
     lastSeenReleaseVersion: store.get('lastSeenReleaseVersion'),

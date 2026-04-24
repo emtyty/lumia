@@ -11,15 +11,13 @@ export interface ActionBtn {
 }
 
 export const DEST_META: Record<string, { icon: string; label: string }> = {
-  imgur:         { icon: 'link',         label: 'Imgur' },
   'google-drive':{ icon: 'add_to_drive', label: 'Google Drive' },
   r2:            { icon: 'share',        label: 'Lumia' },
-  custom:        { icon: 'upload',       label: 'Upload' },
 }
 
-/** Destinations known to handle video uploads. GDrive/Imgur/Custom still
- *  assume image data URLs, so we hide them in video mode until their
- *  uploaders grow file-buffer support. */
+/** Destinations known to handle video uploads. GDrive still assumes image
+ *  data URLs, so it's hidden in video mode until the uploader grows
+ *  file-buffer support. */
 const VIDEO_CAPABLE_DESTINATIONS = new Set(['r2'])
 
 /** Map a workflow template's steps + destinations into the button list that
@@ -29,8 +27,6 @@ const VIDEO_CAPABLE_DESTINATIONS = new Set(['r2'])
 export function deriveActions(
   tpl: WorkflowTemplate | undefined,
   gdriveConnected: boolean,
-  imgurConfigured: boolean,
-  customConfigured: boolean,
   kind: 'image' | 'video' = 'image',
 ): ActionBtn[] {
   if (!tpl) return []
@@ -46,8 +42,6 @@ export function deriveActions(
     const dest = tpl.destinations[i]
     if (kind === 'video' && !VIDEO_CAPABLE_DESTINATIONS.has(dest.type)) continue
     if (dest.type === 'google-drive' && !gdriveConnected) continue
-    if (dest.type === 'imgur' && !imgurConfigured) continue
-    if (dest.type === 'custom' && !customConfigured) continue
     const meta = DEST_META[dest.type] ?? { icon: 'cloud_upload', label: dest.type }
     btns.push({
       key: `dest-${i}-${dest.type}`,

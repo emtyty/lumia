@@ -1,10 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 
 interface AppSettings {
-  imgurClientId: string
-  customUploadUrl: string
-  customUploadHeaders: Record<string, string>
-  customUploadFieldName: string
   theme: 'dark' | 'light' | 'system'
   googleDriveRefreshToken: string
   googleDriveAccessToken: string
@@ -15,10 +11,6 @@ interface AppSettings {
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  imgurClientId: '',
-  customUploadUrl: '',
-  customUploadHeaders: {},
-  customUploadFieldName: 'file',
   theme: 'system',
   googleDriveRefreshToken: '',
   googleDriveAccessToken: '',
@@ -48,9 +40,18 @@ export default function Settings() {
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
-      // defaultSavePath is managed automatically by the save dialog — not part of the UI state.
-      const { defaultSavePath: _ignored, ...ui } = s
-      void _ignored
+      // Pull out only the keys the Settings UI renders — everything else on
+      // AppSettings is managed elsewhere (capture modes, save dialog path,
+      // release gate).
+      const ui: AppSettings = {
+        theme: s.theme,
+        googleDriveRefreshToken: s.googleDriveRefreshToken,
+        googleDriveAccessToken: s.googleDriveAccessToken,
+        googleDriveTokenExpiresAt: s.googleDriveTokenExpiresAt,
+        googleDriveFolderId: s.googleDriveFolderId,
+        launchAtStartup: s.launchAtStartup,
+        historyRetentionDays: s.historyRetentionDays,
+      }
       setSettings(ui)
       originalRef.current = ui
       setLoading(false)
@@ -145,9 +146,7 @@ export default function Settings() {
   const NAV_ITEMS = [
     { id: 'general', icon: 'tune', label: 'General' },
     { id: 'appearance', icon: 'palette', label: 'Appearance' },
-    { id: 'imgur', icon: 'image', label: 'Imgur' },
     { id: 'gdrive', icon: 'add_to_drive', label: 'Google Drive' },
-    { id: 'custom', icon: 'api', label: 'Custom Upload' },
     { id: 'hotkeys', icon: 'keyboard', label: 'Hotkeys' },
   ]
 
@@ -266,10 +265,7 @@ export default function Settings() {
 
             {/* Appearance */}
             <Section id="appearance" title="Appearance" icon="palette">
-              <Field
-                label="Theme"
-                description="Choose how Lumia looks. System will automatically match your OS preference."
-              >
+              <div className="space-y-1.5">
                 <div className="flex gap-2">
                   {([
                     { value: 'light' as const, icon: 'light_mode', label: 'Light' },
@@ -291,32 +287,8 @@ export default function Settings() {
                     </button>
                   ))}
                 </div>
-              </Field>
-            </Section>
-
-            {/* Imgur */}
-            <Section id="imgur" title="Imgur Upload" icon="image">
-              <Field
-                label="Client ID"
-                description="Your Imgur app Client ID. Leave blank to use the built-in anonymous key (rate-limited)."
-              >
-                <input
-                  value={settings.imgurClientId}
-                  onChange={e => update('imgurClientId', e.target.value)}
-                  placeholder="e.g. f0ea04148a54268"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-              <p className="text-[11px] text-slate-500 mt-2">
-                Register a free app at{' '}
-                <button
-                  onClick={() => window.electronAPI?.openExternal('https://api.imgur.com/oauth2/addclient')}
-                  className="text-primary hover:underline"
-                >
-                  api.imgur.com
-                </button>{' '}
-                to get your own Client ID and avoid rate limits.
-              </p>
+                <p className="text-[11px] text-slate-500">Choose how Lumia looks. System will automatically match your OS preference.</p>
+              </div>
             </Section>
 
             {/* Google Drive */}
@@ -364,50 +336,6 @@ export default function Settings() {
                   value={settings.googleDriveFolderId}
                   onChange={e => update('googleDriveFolderId', e.target.value)}
                   placeholder="e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2wtTs"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-            </Section>
-
-            {/* Custom Upload */}
-            <Section id="custom" title="Custom HTTP Upload" icon="api">
-              <Field
-                label="Endpoint URL"
-                description="POST endpoint that receives the image file. Leave blank to disable."
-              >
-                <input
-                  value={settings.customUploadUrl}
-                  onChange={e => update('customUploadUrl', e.target.value)}
-                  placeholder="https://your-server.com/upload"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-              <Field
-                label="Form Field Name"
-                description="The multipart field name for the image file"
-              >
-                <input
-                  value={settings.customUploadFieldName}
-                  onChange={e => update('customUploadFieldName', e.target.value)}
-                  placeholder="file"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-              <Field
-                label="Authorization Header"
-                description="Optional Bearer token sent with every upload request"
-              >
-                <input
-                  value={settings.customUploadHeaders['Authorization'] ?? ''}
-                  onChange={e => update('customUploadHeaders', {
-                    ...settings.customUploadHeaders,
-                    ...(e.target.value ? { Authorization: e.target.value } : (() => {
-                      const h = { ...settings.customUploadHeaders }
-                      delete h['Authorization']
-                      return h
-                    })())
-                  })}
-                  placeholder="Bearer your-token"
                   className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
                 />
               </Field>
