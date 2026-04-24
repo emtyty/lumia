@@ -79,75 +79,28 @@ export function setupCapture() {
       const allDisplays = screen.getAllDisplays()
       const display = allDisplays.find(d => d.id === displayId) ?? screen.getPrimaryDisplay()
 
-      // Overlay's (x,y) is in its local DIP coords. Convert to virtual-screen DIP.
-      const dipX = x + display.bounds.x
-      const dipY = y + display.bounds.y
-      const sfCursor = display.scaleFactor || 1
+      // Overlay's (x,y) is in its local DIP. Go: local DIP → screen DIP → physical.
+      // Screen DIP ≠ virtual-screen physical on mixed-DPI (each display's DIP is
+      // scaled by its own factor), so we let Electron do the conversion.
+      const screenDip = { x: x + display.bounds.x, y: y + display.bounds.y }
+      const physPt = screen.dipToScreenPoint(screenDip)
 
-      // Call Win32 at the DIP point (process is PMv2-aware; on a per-monitor-aware
-      // thread, Win32 point APIs accept physical px, but Electron's main thread is
-      // effectively system-aware from the FFI side — empirically the DIP point works
-      // across all displays here).
-      const raw = getWindowAtPointPhysical(Math.round(dipX), Math.round(dipY))
+      // Native layer returns a rect in virtual-screen PHYSICAL pixels.
+      const raw = getWindowAtPointPhysical(physPt.x, physPt.y)
       if (!raw) return null
 
-      // In a per-monitor-v2 DPI-aware process (Electron's default), Win32 returns
-      // rects in physical pixels. On a 1x display that's indistinguishable from DIP,
-      // but on a scaled display we must divide by the display's scale factor.
-      const isPhysical = sfCursor !== 1
+      // Convert back to Electron's screen-DIP via screenToDipRect. When passed
+      // no window, Electron uses the display nearest the rect for the sf.
+      const dipRect = screen.screenToDipRect(null as never, {
+        x: raw.x, y: raw.y, width: raw.width, height: raw.height,
+      })
 
-      const winDisplay = display
-      const sfWin = sfCursor
-      let dipRect: { x: number; y: number; width: number; height: number }
-      if (isPhysical) {
-        // raw is physical px. Compute each display's physical origin in virtual-
-        // screen space by cumulatively summing physical widths along each axis,
-        // ordered by DIP position. With per-monitor-v2, Windows packs physical
-        // pixels contiguously in virtual-screen coords.
-        const byX = [...allDisplays].sort((a, b) => a.bounds.x - b.bounds.x)
-        const byY = [...allDisplays].sort((a, b) => a.bounds.y - b.bounds.y)
-        const phOriginX = new Map<number, number>()
-        const phOriginY = new Map<number, number>()
-        // X axis: displays at x<0 go left of origin, x>=0 go right.
-        let cursorX = 0
-        for (const d of byX.filter(d => d.bounds.x >= 0)) {
-          phOriginX.set(d.id, cursorX)
-          cursorX += d.size.width * (d.scaleFactor || 1)
-        }
-        cursorX = 0
-        for (const d of [...byX.filter(d => d.bounds.x < 0)].reverse()) {
-          cursorX -= d.size.width * (d.scaleFactor || 1)
-          phOriginX.set(d.id, cursorX)
-        }
-        let cursorY = 0
-        for (const d of byY.filter(d => d.bounds.y >= 0)) {
-          phOriginY.set(d.id, cursorY)
-          cursorY += d.size.height * (d.scaleFactor || 1)
-        }
-        cursorY = 0
-        for (const d of [...byY.filter(d => d.bounds.y < 0)].reverse()) {
-          cursorY -= d.size.height * (d.scaleFactor || 1)
-          phOriginY.set(d.id, cursorY)
-        }
-
-        const pox = phOriginX.get(winDisplay.id) ?? 0
-        const poy = phOriginY.get(winDisplay.id) ?? 0
-        dipRect = {
-          x: winDisplay.bounds.x + (raw.x - pox) / sfWin,
-          y: winDisplay.bounds.y + (raw.y - poy) / sfWin,
-          width:  raw.width  / sfWin,
-          height: raw.height / sfWin,
-        }
-      } else {
-        dipRect = { x: raw.x, y: raw.y, width: raw.width, height: raw.height }
-      }
-
-      // Floor top-left and ceil bottom-right so sub-pixel results from /sfWin
-      // don't shrink the rect inside the visible window border.
-      const left   = Math.max(display.bounds.x, Math.floor(dipRect.x))
-      const top    = Math.max(display.bounds.y, Math.floor(dipRect.y))
-      const right  = Math.min(display.bounds.x + display.bounds.width,  Math.ceil(dipRect.x + dipRect.width))
-      const bottom = Math.min(display.bounds.y + display.bounds.height, Math.ceil(dipRect.y + dipRect.height))
+      // Round to nearest int — floor/ceil would systematically expand the rect
+      // and the crop would pick up a few extra pixels of wallpaper past the edge.
+      const left   = Math.max(display.bounds.x, Math.round(dipRect.x))
+      const top    = Math.max(display.bounds.y, Math.round(dipRect.y))
+      const right  = Math.min(display.bounds.x + display.bounds.width,  Math.round(dipRect.x + dipRect.width))
+      const bottom = Math.min(display.bounds.y + display.bounds.height, Math.round(dipRect.y + dipRect.height))
       if (right <= left || bottom <= top) return null
       return {
         x: left - display.bounds.x,

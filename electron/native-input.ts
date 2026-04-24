@@ -38,6 +38,9 @@ let _IsWindowVisible: (hwnd: any) => boolean
 let _GetWindowLongW: (hwnd: any, index: number) => number
 let _EnumWindows: (callback: any, lParam: any) => boolean
 let _DwmGetWindowAttribute: (hwnd: any, attr: number, pvAttribute: any, cbAttribute: number) => number
+let _SetThreadDpiAwarenessContext: (ctx: any) => any
+const DPI_AWARENESS_CONTEXT_SYSTEM_AWARE = -2       // passed as negative intptr_t handle
+const DPI_AWARENESS_CONTEXT_PER_MONITOR_V2 = -4
 
 function ensureLoaded(): boolean {
   if (_loaded) return true
@@ -66,6 +69,12 @@ function ensureLoaded(): boolean {
     _IsWindowVisible = user32.func('bool __stdcall IsWindowVisible(intptr_t hWnd)')
     _GetWindowLongW  = user32.func('int32_t __stdcall GetWindowLongW(intptr_t hWnd, int nIndex)')
     _EnumWindows     = user32.func('bool __stdcall EnumWindows(intptr_t lpEnumFunc, intptr_t lParam)')
+    // SetThreadDpiAwarenessContext is available on Win10 1607+. Used to force
+    // GetWindowRect to return virtualized (primary-scale) DIP coords, dodging
+    // the per-monitor physical-pixel math entirely.
+    try {
+      _SetThreadDpiAwarenessContext = user32.func('intptr_t __stdcall SetThreadDpiAwarenessContext(intptr_t dpiContext)')
+    } catch { /* older Windows: leave undefined, caller falls back to raw rect */ }
 
     const dwmapi = koffi.load('dwmapi.dll')
     _DwmGetWindowAttribute = dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ RECT *pvAttribute, uint32_t cbAttribute)')
@@ -160,12 +169,22 @@ const _overlayHwnds = new Set<number>()
 export function registerOverlayHwnd(hwnd: number) { _overlayHwnds.add(hwnd) }
 export function unregisterOverlayHwnd(hwnd: number) { _overlayHwnds.delete(hwnd) }
 
-/** Get window rect at physical screen coords (px, py). Returns physical pixel rect. */
+/** Find the topmost non-overlay visible window containing the given point (in
+ *  virtual-screen physical pixels), then return its visible-frame rect in the
+ *  same physical coord space. Caller is responsible for converting physical →
+ *  Electron-DIP via screen.screenToDipRect. */
 export function getWindowAtPointPhysical(
   px: number,
   py: number,
 ): { x: number; y: number; width: number; height: number } | null {
   if (!ensureLoaded()) return null
+
+  // Force per-monitor-v2 for this call so GWR + DWM both operate in the same
+  // (physical) coord space regardless of how the calling thread was configured.
+  const prevCtx = _SetThreadDpiAwarenessContext
+    ? (() => { try { return _SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_V2) } catch { return null } })()
+    : null
+
   try {
     const GW_HWNDNEXT = 2
     const WS_EX_TOOLWINDOW = 0x80
@@ -187,8 +206,7 @@ export function getWindowAtPointPhysical(
           const r = { left: 0, top: 0, right: 0, bottom: 0 }
           if (_GetWindowRect(candidate, r)) {
             if (px >= r.left && px < r.right && py >= r.top && py < r.bottom) {
-              // Prefer DWM extended frame bounds — excludes the ~8px invisible
-              // resize border that GetWindowRect includes.
+              // Prefer DWM visible frame (no ~8px invisible resize border).
               const DWMWA_EXTENDED_FRAME_BOUNDS = 9
               const fr = { left: 0, top: 0, right: 0, bottom: 0 }
               try {
@@ -207,6 +225,10 @@ export function getWindowAtPointPhysical(
     return null
   } catch (err: any) {
     return null
+  } finally {
+    if (prevCtx && _SetThreadDpiAwarenessContext) {
+      try { _SetThreadDpiAwarenessContext(prevCtx) } catch { /* ignore */ }
+    }
   }
 }
 
