@@ -405,9 +405,11 @@ app.whenReady().then(async () => {
 
   // Background retention cleanup: prune on boot and then hourly. `days <= 0`
   // means keep forever, so the store skips the scan — cheap to keep running.
-  const runHistoryPrune = () => {
+  // Prune unlinks the associated files on disk too (shared with the manual
+  // delete path in HistoryStore), so old captures don't sit around orphaned.
+  const runHistoryPrune = async () => {
     const days = getSettings().historyRetentionDays
-    const removed = historyStore.pruneOlderThan(days)
+    const removed = await historyStore.pruneOlderThan(days)
     if (removed > 0) console.log(`[history] pruned ${removed} item(s) older than ${days} day(s)`)
   }
   runHistoryPrune()
@@ -430,27 +432,8 @@ app.whenReady().then(async () => {
     }))
   })
   ipcMain.handle('history:delete', async (_e, id: string) => {
-    // Remove the associated file(s) from disk too. Bounded to the user's
-    // home directory so a tampered history entry can't trick us into
-    // unlinking system files; ENOENT is ignored because a missing file is
-    // the state we want anyway.
-    const item = historyStore.getAll().find(i => i.id === id)
-    if (item) {
-      const { unlink } = await import('fs/promises')
-      const { resolve, normalize } = await import('path')
-      const { homedir } = await import('os')
-      const toUnlink = [item.filePath, item.annotatedFilePath].filter((p): p is string => !!p)
-      for (const path of toUnlink) {
-        try {
-          const normalized = resolve(normalize(path))
-          if (normalized.startsWith(homedir())) await unlink(normalized)
-        } catch (err: unknown) {
-          if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
-            console.error('[history:delete] failed to unlink file', path, err)
-          }
-        }
-      }
-    }
+    // Store.delete unlinks filePath + annotatedFilePath (bounded to homedir,
+    // ENOENT ignored) and then mutates history.json.
     return historyStore.delete(id)
   })
   ipcMain.handle('history:cleanupMissing', async () => {
@@ -461,7 +444,7 @@ app.whenReady().then(async () => {
       if (!item.filePath) return
       try { await access(item.filePath) } catch { orphanIds.push(item.id) }
     }))
-    for (const id of orphanIds) historyStore.delete(id)
+    await Promise.all(orphanIds.map(id => historyStore.delete(id)))
     return orphanIds.length
   })
   // Persist the current annotation shapes (and optionally a flattened PNG

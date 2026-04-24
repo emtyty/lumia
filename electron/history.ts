@@ -1,4 +1,7 @@
 import Store from 'electron-store'
+import { unlink } from 'fs/promises'
+import { resolve, normalize } from 'path'
+import { homedir } from 'os'
 import type { HistoryItem } from './types'
 
 export class HistoryStore {
@@ -24,11 +27,12 @@ export class HistoryStore {
     this.store.set('items', items)
   }
 
-  delete(id: string): boolean {
+  async delete(id: string): Promise<boolean> {
     const items = this.store.get('items')
-    const filtered = items.filter(i => i.id !== id)
-    if (filtered.length === items.length) return false
-    this.store.set('items', filtered)
+    const victim = items.find(i => i.id === id)
+    if (!victim) return false
+    await this.unlinkItemFiles(victim)
+    this.store.set('items', items.filter(i => i.id !== id))
     return true
   }
 
@@ -43,14 +47,37 @@ export class HistoryStore {
   }
 
   // Drops items older than `days` days. `days <= 0` means keep forever (no-op).
-  // Returns the number of items removed.
-  pruneOlderThan(days: number): number {
+  // Returns the number of items removed. Unlinks each pruned item's source +
+  // annotated-sidecar files so retention cleanup mirrors the manual delete
+  // button — without this, history.json shrinks but disk bloat persists.
+  async pruneOlderThan(days: number): Promise<number> {
     if (!Number.isFinite(days) || days <= 0) return 0
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
     const items = this.store.get('items')
-    const kept = items.filter(i => i.timestamp >= cutoff)
-    const removed = items.length - kept.length
-    if (removed > 0) this.store.set('items', kept)
-    return removed
+    const kept: HistoryItem[] = []
+    const pruned: HistoryItem[] = []
+    for (const it of items) (it.timestamp >= cutoff ? kept : pruned).push(it)
+    if (pruned.length === 0) return 0
+    await Promise.all(pruned.map(it => this.unlinkItemFiles(it)))
+    this.store.set('items', kept)
+    return pruned.length
+  }
+
+  // Shared file cleanup for delete + prune. Bounded to the user's home
+  // directory so a tampered history entry can't coax us into unlinking
+  // system files; ENOENT is swallowed because the goal state (file gone)
+  // is already achieved.
+  private async unlinkItemFiles(item: HistoryItem): Promise<void> {
+    const paths = [item.filePath, item.annotatedFilePath].filter((p): p is string => !!p)
+    for (const p of paths) {
+      try {
+        const resolved = resolve(normalize(p))
+        if (resolved.startsWith(homedir())) await unlink(resolved)
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          console.error('[history] failed to unlink', p, err)
+        }
+      }
+    }
   }
 }
