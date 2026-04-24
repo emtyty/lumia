@@ -7,6 +7,7 @@ import { setOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { showNotification } from './notify'
+import { applyWatermark } from './watermark'
 
 /** Canonical folder for original captures (both images and videos). Not
  *  user-configurable — user-chosen locations are for the Save-As dialog only,
@@ -452,9 +453,15 @@ async function captureActiveMonitor(): Promise<string | void> {
   createOverlayWindows()
 }
 
-export async function sendCaptureToEditor(dataUrl: string, source: string) {
+export async function sendCaptureToEditor(dataUrlIn: string, source: string) {
   const mainWin = getMainWindow()
   if (!mainWin || mainWin.isDestroyed()) return
+
+  // Stamp the Lumia logo into the bottom-left before anything downstream
+  // sees the image — clipboard, on-disk original, thumbnail, and the
+  // Editor dataUrl all work off the watermarked copy so later exports
+  // carry it automatically.
+  const dataUrl = applyWatermark(dataUrlIn)
 
   try {
     const img = nativeImage.createFromDataURL(dataUrl)
