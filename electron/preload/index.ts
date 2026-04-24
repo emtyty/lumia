@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Capture
   captureScreenshot: (mode: CaptureMode) =>
     ipcRenderer.invoke('capture:screenshot', mode),
+  newCapture: () => ipcRenderer.invoke('capture:new'),
 
   // Recording
   getRecordingSources: () => ipcRenderer.invoke('record:getSources'),

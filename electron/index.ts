@@ -123,14 +123,15 @@ function createMainWindow(startHidden = false): BrowserWindow {
 
   // Intercept close: keep the app alive in the tray instead of exiting. Only
   // actually close when we're explicitly quitting (tray Quit / hotkey / IPC).
-  // Editor route additionally redirects to dashboard before hiding, so the next
-  // time the user opens the window they don't land back in a stale editor.
+  // On /editor, X is a "discard capture" button — navigate back to the
+  // dashboard and keep the window open instead of hiding to tray.
   win.on('close', (e) => {
     if (isQuitting) return
     e.preventDefault()
     if (currentRoute === '/editor') {
       currentRoute = '/dashboard'
       win.webContents.send('navigate', '/dashboard')
+      return
     }
     win.hide()
   })

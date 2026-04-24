@@ -67,8 +67,7 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
   }
 
   const items: MenuItemDef[] = [
-    { type: 'item', label: 'Capture Region', icon: 'crop_free', shortcut: shortcut('Ctrl+Shift+4'), action: () => navigate('/overlay') },
-    { type: 'item', label: 'Capture Fullscreen', icon: 'desktop_windows', shortcut: shortcut('Ctrl+Shift+3'), action: () => navigate('/dashboard') },
+    { type: 'item', label: 'New Capture', icon: 'add_a_photo', action: () => window.electronAPI?.newCapture() },
     { type: 'separator' },
     { type: 'item', label: 'History', icon: 'history', action: () => navigate('/history') },
     { type: 'item', label: 'Workflow', icon: 'rocket_launch', action: () => navigate('/workflow') },

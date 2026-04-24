@@ -51,22 +51,9 @@ export default function Editor() {
   const [videoName, setVideoName]         = useState<string>(initialState.name ?? '')
   const isVideo = kind === 'video'
 
-  type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor'
-  const CAPTURE_MODES: CaptureMode[] = ['region', 'window', 'fullscreen', 'active-monitor']
-  const isCaptureMode = (s: unknown): s is CaptureMode =>
-    typeof s === 'string' && (CAPTURE_MODES as string[]).includes(s)
-
-  const [lastMode, setLastMode] = useState<CaptureMode>(() => {
-    const fromNav = (location.state as { source?: string } | null)?.source
-    if (isCaptureMode(fromNav)) return fromNav
-    const stored = localStorage.getItem('lumia:lastCaptureMode')
-    return isCaptureMode(stored) ? stored : 'region'
-  })
-  useEffect(() => { localStorage.setItem('lumia:lastCaptureMode', lastMode) }, [lastMode])
-
   const triggerNewCapture = useCallback(() => {
-    window.electronAPI?.captureScreenshot(lastMode)
-  }, [lastMode])
+    window.electronAPI?.newCapture()
+  }, [])
   const [tool, setTool] = useState<Tool>('pen')
   const [color, setColor] = useState('#f87171')
   const [strokeWidth, setStrokeWidth] = useState(3)
@@ -140,19 +127,17 @@ export default function Editor() {
       setVideoName('')
       resetForNewImage(state.dataUrl)
     }
-    if (isCaptureMode(state.source)) setLastMode(state.source)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state])
 
   useEffect(() => {
-    window.electronAPI?.onCaptureReady(({ dataUrl, source }) => {
+    window.electronAPI?.onCaptureReady(({ dataUrl }) => {
       // capture:ready is screenshot-only — switch back to image mode if the
       // user happened to be viewing a video when the next capture landed.
       setKind('image')
       setVideoFilePath('')
       setVideoName('')
       resetForNewImage(dataUrl)
-      if (isCaptureMode(source)) setLastMode(source)
     })
     Promise.all([
       window.electronAPI?.getTemplates(),

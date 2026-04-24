@@ -1,7 +1,7 @@
 import { Tray, Menu, nativeImage, app } from 'electron'
 import { join } from 'path'
 import { getMainWindow, markQuitting } from './index'
-import { dispatchCapture } from './capture'
+import { dispatchLastCapture } from './capture'
 
 let tray: Tray | null = null
 
@@ -47,10 +47,7 @@ function buildMenu() {
   return Menu.buildFromTemplate([
     { label: 'Lumia', enabled: false },
     { type: 'separator' },
-    { label: 'Region',          accelerator: 'Ctrl+Shift+4', click: () => dispatchCapture('region') },
-    { label: 'Window',          accelerator: 'Ctrl+Shift+2', click: () => dispatchCapture('window') },
-    { label: 'Fullscreen',      accelerator: 'Ctrl+Shift+3', click: () => dispatchCapture('fullscreen') },
-    { label: 'Active Screen',   accelerator: 'Ctrl+Shift+1', click: () => dispatchCapture('active-monitor') },
+    { label: 'New Capture', click: () => { void dispatchLastCapture() } },
     { type: 'separator' },
     {
       label: 'Open Lumia',

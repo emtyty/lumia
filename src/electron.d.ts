@@ -14,12 +14,16 @@ interface AppSettings {
   googleDriveFolderId: string
   launchAtStartup: boolean
   historyRetentionDays: number
+  lastCaptureKind: 'image' | 'video'
+  lastImageMode: 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
+  lastVideoMode: 'region' | 'window' | 'screen'
 }
 
 declare global {
   interface Window {
     electronAPI: {
       captureScreenshot: (mode: 'fullscreen' | 'region' | 'window' | 'active-monitor') => Promise<string | void>
+      newCapture: () => Promise<void>
 
       // Recording
       getRecordingSources: () => Promise<{ id: string; name: string; thumbnail: string }[]>

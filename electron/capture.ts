@@ -88,8 +88,32 @@ export function dispatchCapture(mode: CaptureMode) {
   }
 }
 
+/** Re-invoke the mode the user most recently used. Branches on stored kind,
+ *  then on the specific image/video mode. Scrolling and video live in sibling
+ *  modules — loaded lazily to avoid import cycles with capture.ts. */
+export async function dispatchLastCapture() {
+  const { getSettings } = await import('./settings')
+  const s = getSettings()
+  if (s.lastCaptureKind === 'video') {
+    const { startVideoCapture } = await import('./video')
+    await startVideoCapture(s.lastVideoMode)
+    return
+  }
+  if (s.lastImageMode === 'scrolling') {
+    const main = getMainWindow()
+    if (main && !main.isDestroyed()) main.hide()
+    await new Promise(r => setTimeout(r, 200))
+    const { setOverlayMode } = await import('./scroll-capture')
+    setOverlayMode('scroll-region')
+    createOverlayWindows()
+    return
+  }
+  dispatchCapture(s.lastImageMode)
+}
+
 export function setupCapture() {
   ipcMain.handle('capture:screenshot', async (_e, mode: CaptureMode) => dispatchCapture(mode))
+  ipcMain.handle('capture:new', async () => dispatchLastCapture())
 
   ipcMain.handle('region:confirm', async (_e, payload: { dataUrl: string; rect: { x: number; y: number; width: number; height: number } }) => {
     const displayId = getOverlayDisplayId()

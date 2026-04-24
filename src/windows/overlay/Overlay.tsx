@@ -70,6 +70,18 @@ function ModeBar({
       ? (nextBase === 'region' ? 'video-region' : nextBase === 'window' ? 'video-window' : 'video-screen')
       : (nextBase === 'region' ? 'region' : nextBase === 'window' ? 'window-pick' : 'monitor-pick')
     window.electronAPI?.switchOverlayMode?.(next)
+    window.electronAPI?.setSetting?.(intent === 'record' ? 'lastVideoMode' : 'lastImageMode', nextBase === 'screen' && intent === 'capture' ? 'active-monitor' : nextBase)
+  }
+
+  const switchIntent = (nextIntent: Intent) => {
+    if (nextIntent === intent) return
+    // Region/Window map 1:1; capture's screen is 'monitor-pick', record's is 'video-screen'.
+    const safeBase: Base = base === 'region' || base === 'window' || base === 'screen' ? base : 'region'
+    const next: Mode = nextIntent === 'record'
+      ? (safeBase === 'region' ? 'video-region' : safeBase === 'window' ? 'video-window' : 'video-screen')
+      : (safeBase === 'region' ? 'region' : safeBase === 'window' ? 'window-pick' : 'monitor-pick')
+    window.electronAPI?.switchOverlayMode?.(next)
+    window.electronAPI?.setSetting?.('lastCaptureKind', nextIntent === 'record' ? 'video' : 'image')
   }
 
   const TabBtn = ({ value, label, tabIcon }: { value: Base; label: string; tabIcon: string }) => {
@@ -97,6 +109,26 @@ function ModeBar({
     )
   }
 
+  const IntentBtn = ({ value, label, iconName }: { value: Intent; label: string; iconName: string }) => {
+    const active = intent === value
+    return (
+      <button
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); switchIntent(value) }}
+        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 transition-all ${
+          active
+            ? (value === 'record' ? 'bg-red-500/20 text-red-200' : 'bg-primary/25 text-primary')
+            : 'text-slate-400 hover:text-white'
+        }`}
+        style={{ fontFamily: 'Manrope, sans-serif' }}
+      >
+        <span className="material-symbols-outlined text-[13px]">{iconName}</span>
+        {label}
+      </button>
+    )
+  }
+
   return (
     <div
       className="absolute top-8 left-1/2 -translate-x-1/2 flex items-center gap-3 glass-refractive rounded-full pl-1.5 pr-5 py-1.5"
@@ -112,6 +144,11 @@ function ModeBar({
           <span className="text-[10px] font-bold uppercase tracking-widest">REC</span>
         </div>
       )}
+      <div className="flex items-center gap-0.5 p-0.5 rounded-full bg-white/5 border border-white/10">
+        <IntentBtn value="capture" label="Image" iconName="photo_camera" />
+        <IntentBtn value="record"  label="Video" iconName="videocam" />
+      </div>
+      <div className="w-px h-4 bg-white/10" />
       <div className="flex items-center gap-1">
         <TabBtn value="region" label="Region" tabIcon="crop" />
         <TabBtn value="window" label="Window" tabIcon="web_asset" />

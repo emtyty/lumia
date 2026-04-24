@@ -75,7 +75,7 @@ export function Sidebar() {
   const themeLabel = themeMode === 'dark' ? 'Dark' : themeMode === 'light' ? 'Light' : 'System'
 
   const handleCapture = async () => {
-    await window.electronAPI?.captureScreenshot('region')
+    await window.electronAPI?.newCapture()
   }
 
   return (

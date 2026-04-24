@@ -89,6 +89,11 @@ export default function Dashboard() {
   useEffect(() => {
     window.electronAPI?.getHistory().then(items => setRecentItems(items.slice(0, 12)))
     window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
+    window.electronAPI?.getSettings().then(s => {
+      if (s?.lastCaptureKind === 'video' || s?.lastCaptureKind === 'image') {
+        setMediaKind(s.lastCaptureKind)
+      }
+    })
 
     window.electronAPI?.onCaptureReady(({ dataUrl, source }) => {
       navigate('/editor', { state: { dataUrl, source } })
@@ -117,7 +122,14 @@ export default function Dashboard() {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
+  const selectMediaKind = (kind: MediaKind) => {
+    setMediaKind(kind)
+    window.electronAPI?.setSetting('lastCaptureKind', kind)
+  }
+
   const handleCapture = async (mode: CaptureMode) => {
+    window.electronAPI?.setSetting('lastCaptureKind', 'image')
+    window.electronAPI?.setSetting('lastImageMode', mode)
     if (mode === 'scrolling') {
       await window.electronAPI?.startScrollCapture()
     } else if (mode === 'region') {
@@ -126,6 +138,12 @@ export default function Dashboard() {
       const dataUrl = await window.electronAPI?.captureScreenshot(mode) as string
       if (dataUrl) navigate('/editor', { state: { dataUrl, source: mode } })
     }
+  }
+
+  const handleVideo = (mode: VideoMode) => {
+    window.electronAPI?.setSetting('lastCaptureKind', 'video')
+    window.electronAPI?.setSetting('lastVideoMode', mode)
+    window.electronAPI?.startVideoCapture?.(mode)
   }
 
   const screenshots = recentItems.filter(i => i.type === 'screenshot')
@@ -162,7 +180,7 @@ export default function Dashboard() {
       <section>
         {/* Media kind toggle */}
         <div className="flex items-center justify-between mb-4">
-          <MediaKindToggle value={mediaKind} onChange={setMediaKind} />
+          <MediaKindToggle value={mediaKind} onChange={selectMediaKind} />
         </div>
 
         {mediaKind === 'image' ? (
@@ -224,7 +242,7 @@ export default function Dashboard() {
               return (
                 <button
                   key={mode}
-                  onClick={() => window.electronAPI?.startVideoCapture?.(mode)}
+                  onClick={() => handleVideo(mode)}
                   className="group flex items-center gap-3 px-3 py-3 rounded-xl
                              bg-white/[0.03] border border-white/[0.05]
                              hover:bg-tertiary/[0.08] hover:border-tertiary/20

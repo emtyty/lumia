@@ -3,6 +3,10 @@ import { access } from 'fs/promises'
 import { homedir } from 'os'
 import { join } from 'path'
 
+export type CaptureKind = 'image' | 'video'
+export type LastImageMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
+export type LastVideoMode = 'region' | 'window' | 'screen'
+
 export interface AppSettings {
   imgurClientId: string
   defaultSavePath: string
@@ -18,6 +22,9 @@ export interface AppSettings {
   googleDriveFolderId: string
   launchAtStartup: boolean
   historyRetentionDays: number
+  lastCaptureKind: CaptureKind
+  lastImageMode: LastImageMode
+  lastVideoMode: LastVideoMode
 }
 
 const store = new Store<AppSettings>({
@@ -36,7 +43,10 @@ const store = new Store<AppSettings>({
     googleDriveTokenExpiresAt: 0,
     googleDriveFolderId: '',
     launchAtStartup: true,
-    historyRetentionDays: 0
+    historyRetentionDays: 0,
+    lastCaptureKind: 'image',
+    lastImageMode: 'region',
+    lastVideoMode: 'region'
   }
 })
 
@@ -55,7 +65,10 @@ export function getSettings(): AppSettings {
     googleDriveTokenExpiresAt: store.get('googleDriveTokenExpiresAt'),
     googleDriveFolderId: store.get('googleDriveFolderId'),
     launchAtStartup: store.get('launchAtStartup'),
-    historyRetentionDays: store.get('historyRetentionDays')
+    historyRetentionDays: store.get('historyRetentionDays'),
+    lastCaptureKind: store.get('lastCaptureKind'),
+    lastImageMode: store.get('lastImageMode'),
+    lastVideoMode: store.get('lastVideoMode')
   }
 }
 
