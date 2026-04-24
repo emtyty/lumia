@@ -1,4 +1,4 @@
-import { desktopCapturer, ipcMain, screen, Notification, nativeImage, clipboard } from 'electron'
+import { desktopCapturer, ipcMain, screen, nativeImage, clipboard } from 'electron'
 import { homedir } from 'os'
 import { join } from 'path'
 import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays } from './index'
@@ -6,6 +6,7 @@ import { getWindowAtPointPhysical } from './native-input'
 import { setOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
+import { showNotification } from './notify'
 
 /** Canonical folder for original captures (both images and videos). Not
  *  user-configurable — user-chosen locations are for the Save-As dialog only,
@@ -484,5 +485,8 @@ export async function sendCaptureToEditor(dataUrl: string, source: string) {
   showMainWindow()
 
   const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : source === 'active-monitor' ? 'Screen' : 'All Screens'
-  new Notification({ title: 'ShareAnywhere', body: `${label} captured — copied to clipboard` }).show()
+  showNotification({
+    body: `${label} captured — copied to clipboard`,
+    thumbnailDataUrl: dataUrl,
+  })
 }

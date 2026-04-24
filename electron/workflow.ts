@@ -1,4 +1,4 @@
-import { clipboard, dialog, nativeImage, shell, Notification } from 'electron'
+import { clipboard, dialog, nativeImage, shell } from 'electron'
 import { writeFile, mkdir } from 'fs/promises'
 import { dirname, join } from 'path'
 import { homedir } from 'os'
@@ -11,6 +11,7 @@ import { getSettings, resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { getMainWindow } from './index'
+import { showNotification } from './notify'
 import { v4 as uuidv4 } from 'uuid'
 
 export class WorkflowEngine {
@@ -101,10 +102,10 @@ export class WorkflowEngine {
         if (uploaded > 0) parts.push(`Uploaded to ${uploaded} destination${uploaded > 1 ? 's' : ''}`)
         if (failed > 0) parts.push(`${failed} upload${failed > 1 ? 's' : ''} failed`)
 
-        new Notification({
-          title: 'ShareAnywhere',
-          body: parts.join(' · ') || 'Capture complete'
-        }).show()
+        showNotification({
+          body: parts.join(' · ') || 'Capture complete',
+          thumbnailDataUrl: imageData,
+        })
       }
     }
 

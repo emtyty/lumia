@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, screen, Notification } from 'electron'
+import { app, BrowserWindow, clipboard, desktopCapturer, dialog, ipcMain, screen } from 'electron'
 import { basename, dirname, extname, join } from 'path'
 import { homedir } from 'os'
 import {
@@ -10,6 +10,7 @@ import {
 } from './index'
 import { ORIGINALS_DIR } from './capture'
 import { resetOverlayMode, setOverlayMode } from './scroll-capture'
+import { showNotification } from './notify'
 import { resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
@@ -314,12 +315,10 @@ async function saveRecordingBlob(
     })
   }
 
-  try {
-    new Notification({
-      title: 'Lumia',
-      body: `Recording saved · ${Math.round(durationMs / 1000)}s`,
-    }).show()
-  } catch { /* ignore */ }
+  showNotification({
+    body: `Recording saved · ${Math.round(durationMs / 1000)}s`,
+    thumbnailDataUrl,
+  })
 
   return filePath
 }

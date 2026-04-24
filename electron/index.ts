@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme, Notification } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
 import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupVideo } from './video'
@@ -10,6 +10,7 @@ import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
 import { makeThumbnail } from './thumbnail'
+import { showNotification } from './notify'
 import type { HistoryItem } from './types'
 import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
 import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
@@ -84,8 +85,8 @@ function createMainWindow(startHidden = false): BrowserWindow {
   const isMac = process.platform === 'darwin'
   const isWin = process.platform === 'win32'
   const win = new BrowserWindow({
-    width: 1200,
-    height: 780,
+    width: 1250,
+    height: 700,
     minWidth: 900,
     minHeight: 600,
     backgroundColor: '#07070b',
@@ -574,7 +575,10 @@ app.whenReady().then(async () => {
         res,
       ]
       historyStore.update(id, { uploads })
-      try { new Notification({ title: 'Lumia', body: 'Link copied to clipboard' }).show() } catch { /* ignore */ }
+      showNotification({
+        body: 'Link copied to clipboard',
+        thumbnailDataUrl: item.thumbnailUrl,
+      })
     }
     return res
   })
