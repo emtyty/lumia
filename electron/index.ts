@@ -403,6 +403,18 @@ app.whenReady().then(async () => {
   const historyStore = new HistoryStore()
   historyStoreInstance = historyStore
 
+  // One-time upgrade cleanup. Bump HISTORY_CLEANUP_VERSION when the data
+  // model diverges from prior releases badly enough that wiping existing
+  // history + sidecar files is friendlier than trying to migrate. Runs
+  // once per bump (guarded inside HistoryStore), then never again.
+  const HISTORY_CLEANUP_VERSION = 1
+  try {
+    const wiped = await historyStore.runStartupCleanup(HISTORY_CLEANUP_VERSION)
+    if (wiped > 0) console.log(`[history] upgrade reset v${HISTORY_CLEANUP_VERSION} — removed ${wiped} legacy item(s)`)
+  } catch (err) {
+    console.error('[history] upgrade cleanup failed', err)
+  }
+
   // Background retention cleanup: prune on boot and then hourly. `days <= 0`
   // means keep forever, so the store skips the scan — cheap to keep running.
   // Prune unlinks the associated files on disk too (shared with the manual

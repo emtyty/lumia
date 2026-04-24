@@ -5,10 +5,10 @@ import { homedir } from 'os'
 import type { HistoryItem } from './types'
 
 export class HistoryStore {
-  private store: Store<{ items: HistoryItem[] }>
+  private store: Store<{ items: HistoryItem[]; cleanupVersion?: number }>
 
   constructor() {
-    this.store = new Store<{ items: HistoryItem[] }>({
+    this.store = new Store<{ items: HistoryItem[]; cleanupVersion?: number }>({
       name: 'history',
       defaults: { items: [] }
     })
@@ -61,6 +61,23 @@ export class HistoryStore {
     await Promise.all(pruned.map(it => this.unlinkItemFiles(it)))
     this.store.set('items', kept)
     return pruned.length
+  }
+
+  // One-time data reset for upgrade paths where on-disk formats changed
+  // enough that carrying the old history forward is worse than starting
+  // fresh (e.g. thumbnail payload switched from full dataUrls to JPEGs,
+  // annotation sidecar model added, settings shape reworked). Guarded by a
+  // `cleanupVersion` marker in history.json so it only runs once per bump:
+  // bump the target to rerun on the next release. Fresh installs hit this
+  // path too but trivially — no items to unlink, just seals the marker.
+  async runStartupCleanup(targetVersion: number): Promise<number> {
+    const current = (this.store.get('cleanupVersion') as number | undefined) ?? 0
+    if (current >= targetVersion) return 0
+    const items = this.store.get('items')
+    await Promise.all(items.map(it => this.unlinkItemFiles(it)))
+    this.store.set('items', [])
+    this.store.set('cleanupVersion', targetVersion)
+    return items.length
   }
 
   // Shared file cleanup for delete + prune. Bounded to the user's home
