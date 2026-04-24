@@ -80,8 +80,11 @@ export function setupCapture() {
     return overlaySourcePayloads.get(e.sender.id) ?? null
   })
 
-  // Window-pick mode: return window rect at screen coords
+  // Window-pick mode: return window rect at screen coords. Native HWND lookup
+  // + dipToScreenPoint/screenToDipRect are Windows-only — bail out on macOS so
+  // the overlay just sits idle instead of throwing on every hover tick.
   ipcMain.handle('window-pick:get-window-at', (_e, x: number, y: number) => {
+    if (process.platform !== 'win32') return null
     try {
       const displayId = getOverlayDisplayId()
       const allDisplays = screen.getAllDisplays()
