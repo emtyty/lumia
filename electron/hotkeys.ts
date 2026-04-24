@@ -1,6 +1,6 @@
 import { globalShortcut, app } from 'electron'
 import Store from 'electron-store'
-import { sendCaptureToEditor } from './capture'
+import { dispatchCapture } from './capture'
 import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
 import { startVideoCapture, requestStop as requestVideoStop, isRecordingActive } from './video'
 
@@ -9,10 +9,10 @@ interface HotkeyConfig {
 }
 
 const defaultHotkeys: HotkeyConfig = {
-  RectangleRegion:   'Ctrl+Shift+4',
-  PrintScreen:       'Ctrl+Shift+3',
+  RectangleRegion:   'Ctrl+Shift+1',
   ActiveWindow:      'Ctrl+Shift+2',
-  ActiveMonitor:     'Ctrl+Shift+1',
+  ActiveMonitor:     'Ctrl+Shift+3',
+  PrintScreen:       'Ctrl+Shift+4',
   ScrollingCapture:  'Ctrl+Shift+5',
   ScreenRecorder:    'Ctrl+Shift+R',
   StopScreenRecording: 'Ctrl+Shift+S',
@@ -51,13 +51,32 @@ export const ALL_ACTIONS = [
   'ToggleTrayMenu', 'ExitShareAnywhere', 'WorkflowPicker'
 ]
 
-const store = new Store<{ hotkeys: HotkeyConfig }>({
+// Bump this whenever the default capture-mode bindings change in a way that
+// should retake control from users who never hand-customized. On load, if the
+// stored version is stale we rewrite the capture bindings to the new defaults
+// while leaving recording/app hotkeys alone (those have stable defaults).
+const HOTKEY_SCHEMA_VERSION = 2
+const CAPTURE_ACTIONS = ['RectangleRegion', 'ActiveWindow', 'ActiveMonitor', 'PrintScreen', 'ScrollingCapture'] as const
+
+const store = new Store<{ hotkeys: HotkeyConfig; schemaVersion?: number }>({
   name: 'hotkeys',
   defaults: { hotkeys: defaultHotkeys }
 })
 
 export function getHotkeys(): HotkeyConfig {
+  // `has` reads the on-disk file directly, bypassing the `defaults` merge — so
+  // a missing key genuinely means "this install predates the schema bump".
+  const storedVersion = store.has('schemaVersion') ? store.get('schemaVersion') ?? 1 : 1
   const saved = store.get('hotkeys')
+  if (storedVersion < HOTKEY_SCHEMA_VERSION) {
+    // Migrate: overwrite the capture bindings with the new defaults, keep any
+    // other actions the user had customized (recording, open window, etc.).
+    const migrated: HotkeyConfig = { ...saved }
+    for (const action of CAPTURE_ACTIONS) migrated[action] = defaultHotkeys[action]
+    store.set('hotkeys', migrated)
+    store.set('schemaVersion', HOTKEY_SCHEMA_VERSION)
+    return { ...defaultHotkeys, ...migrated }
+  }
   // Merge defaults for any new actions not yet in the user's saved config
   return { ...defaultHotkeys, ...saved }
 }
@@ -71,15 +90,13 @@ export function saveHotkeys(hotkeys: HotkeyConfig) {
 export function setupHotkeys() {
   const hotkeys = getHotkeys()
 
-  const hideMain = (): Promise<void> => new Promise(resolve => {
-    const win = getMainWindow()
-    if (!win || win.isDestroyed()) { resolve(); return }
-    win.hide()
-    setTimeout(resolve, 200)
-  })
-
   let isCapturing = false
 
+  // Route capture hotkeys through the same `dispatchCapture` the Dashboard
+  // buttons invoke, so the behavior (overlay pickers, multi-display
+  // compositing, etc.) stays consistent across entry points. The lock guards
+  // against re-entrancy when the user mashes the hotkey or clicks during a
+  // running capture.
   const withLock = (fn: () => Promise<void>) => async () => {
     if (isCapturing) return
     if (getOverlayWindow()) return
@@ -88,68 +105,14 @@ export function setupHotkeys() {
   }
 
   const handlers: Record<string, () => void> = {
-    RectangleRegion: withLock(async () => {
-      await hideMain()
-      createOverlayWindows()
-    }),
-    PrintScreen: withLock(async () => {
-      const { desktopCapturer, screen } = await import('electron')
-      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
-      const cursorPoint = screen.getCursorScreenPoint()
-      const allDisplays = screen.getAllDisplays()
-      const d = screen.getDisplayNearestPoint(cursorPoint)
-      const sf = d.scaleFactor
-
-      await hideMain()
-
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
-      })
-      let source = sources.find(s => s.display_id === String(d.id))
-      if (!source) {
-        const idx = allDisplays.findIndex(disp => disp.id === d.id)
-        source = (idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
-      }
-      sendCaptureToEditor(source.thumbnail.toDataURL(), 'fullscreen')
-    }),
-    ActiveWindow: withLock(async () => {
-      await hideMain()
-      const { desktopCapturer } = await import('electron')
-      const sources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 1920, height: 1080 }
-      })
-      const filtered = sources.filter(s =>
-        !s.name.includes('ShareAnywhere') && !s.thumbnail.isEmpty()
-      )
-      if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
-    }),
-    ActiveMonitor: withLock(async () => {
-      const { desktopCapturer, screen } = await import('electron')
-      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
-      const cursorPoint = screen.getCursorScreenPoint()
-      const allDisplays = screen.getAllDisplays()
-      const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
-      const { width, height } = activeDisplay.size
-      const sf = activeDisplay.scaleFactor
-
-      await hideMain()
-
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: width * sf, height: height * sf }
-      })
-
-      let source = sources.find(s => s.display_id === String(activeDisplay.id))
-      if (!source) {
-        const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
-        source = (sources.length > 1 && idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
-      }
-      if (source) sendCaptureToEditor(source.thumbnail.toDataURL(), 'active-monitor')
-    }),
+    RectangleRegion: withLock(async () => { await dispatchCapture('region') }),
+    PrintScreen:     withLock(async () => { await dispatchCapture('fullscreen') }),
+    ActiveWindow:    withLock(async () => { await dispatchCapture('window') }),
+    ActiveMonitor:   withLock(async () => { await dispatchCapture('active-monitor') }),
     ScrollingCapture: withLock(async () => {
-      await hideMain()
+      const main = getMainWindow()
+      if (main && !main.isDestroyed()) main.hide()
+      await new Promise(r => setTimeout(r, 200))
       const { setOverlayMode } = await import('./scroll-capture')
       setOverlayMode('scroll-region')
       createOverlayWindows()

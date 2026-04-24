@@ -434,9 +434,10 @@ export default function Settings() {
 }
 
 const HOTKEY_REFERENCE = [
-  { action: 'Region Screenshot',   key: 'Ctrl+Shift+4' },
-  { action: 'Fullscreen',          key: 'Ctrl+Shift+3' },
+  { action: 'Region Screenshot',   key: 'Ctrl+Shift+1' },
   { action: 'Active Window',       key: 'Ctrl+Shift+2' },
+  { action: 'Screen',              key: 'Ctrl+Shift+3' },
+  { action: 'All Screens',         key: 'Ctrl+Shift+4' },
   { action: 'Scrolling Capture',   key: 'Ctrl+Shift+5' },
   { action: 'Screen Recorder',     key: 'Ctrl+Shift+R' },
   { action: 'GIF Recorder',        key: 'Ctrl+Shift+G' },

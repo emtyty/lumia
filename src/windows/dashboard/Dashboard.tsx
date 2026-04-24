@@ -25,8 +25,8 @@ const MODE_ACTION: Record<CaptureMode, string> = {
 const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
   { mode: 'region',         icon: 'crop',            label: 'Region' },
   { mode: 'window',         icon: 'web_asset',       label: 'Window' },
-  { mode: 'fullscreen',     icon: 'tv_displays',     label: 'Fullscreen' },
-  { mode: 'active-monitor', icon: 'monitor',         label: 'Active Screen' },
+  { mode: 'active-monitor', icon: 'monitor',         label: 'Screen' },
+  { mode: 'fullscreen',     icon: 'tv_displays',     label: 'All Screens' },
 ]
 
 const VIDEO_MODES: { mode: VideoMode; icon: string; label: string }[] = [

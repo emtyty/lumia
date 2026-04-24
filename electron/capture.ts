@@ -483,6 +483,6 @@ export async function sendCaptureToEditor(dataUrl: string, source: string) {
   mainWin.webContents.send('navigate', '/editor', { dataUrl, source })
   showMainWindow()
 
-  const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : source === 'active-monitor' ? 'Active Monitor' : 'Fullscreen'
+  const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : source === 'active-monitor' ? 'Screen' : 'All Screens'
   new Notification({ title: 'ShareAnywhere', body: `${label} captured — copied to clipboard` }).show()
 }
