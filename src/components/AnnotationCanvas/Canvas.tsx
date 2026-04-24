@@ -187,7 +187,6 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       redo,
       canUndo,
       canRedo,
-      clear,
     } = useHistory<DrawObject[]>([])
 
     // Rehydrate persisted annotations by replaying each shape as its own
@@ -208,10 +207,14 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const objectsRef = useRef(objects)
     useEffect(() => { objectsRef.current = objects }, [objects])
 
-    // Notify parent when undo/redo availability changes
+    // Notify parent on every commit. Depending on `canUndo`/`canRedo` alone
+    // would miss changes where those booleans don't toggle — e.g. after the
+    // first shape lands `canUndo` stays `true`, so every subsequent shape
+    // would be invisible to the parent and the Editor's debounced save would
+    // never be scheduled.
     useEffect(() => {
       onHistoryChange?.(canUndo, canRedo)
-    }, [canUndo, canRedo, onHistoryChange])
+    }, [objects, canUndo, canRedo, onHistoryChange])
 
     // ── Container sizing ──────────────────────────────────────────────────────
     useEffect(() => {
@@ -377,12 +380,21 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     const getObjects = useCallback((): DrawObject[] => objectsRef.current, [])
 
+    // User-initiated Clear: commit an empty state instead of resetting the
+    // history stack. That way the parent's `onHistoryChange` sees `canUndo`
+    // flip to `true` (so the Editor's debounced save fires and the sidecar
+    // PNG + thumbnail get regenerated from the original image), and the user
+    // can undo the clear to recover the shapes if it was accidental.
+    const clearViaCommit = useCallback(() => {
+      commitObjects([])
+    }, [commitObjects])
+
     // Expose imperative handle to parent
     useImperativeHandle(ref, () => ({
-      undo, redo, clear, canUndo, canRedo,
+      undo, redo, clear: clearViaCommit, canUndo, canRedo,
       zoomIn, zoomOut, zoomReset, zoomLevel: userZoom,
       toDataURL, toCanvas, toAnnotationsCanvas, getObjects,
-    }), [undo, redo, clear, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas, getObjects])
+    }), [undo, redo, clearViaCommit, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas, getObjects])
 
     // ── Export trigger (legacy path — kept for Editor's workflow buttons) ────
     useEffect(() => {

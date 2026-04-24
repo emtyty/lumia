@@ -402,7 +402,7 @@ export default function Dashboard() {
             <div className="h-[25px] inline-flex items-center rounded-full bg-white/5 border border-white/5 overflow-hidden">
               {([
                 { key: 'grid' as const, icon: 'view_module', label: 'Grid' },
-                { key: 'list' as const, icon: 'view_list', label: 'List' },
+                { key: 'list' as const, icon: 'list', label: 'List' },
               ]).map(({ key, icon, label }) => (
                 <button
                   key={key}

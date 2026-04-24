@@ -144,6 +144,8 @@ export default function Editor() {
     const nextKind: 'image' | 'video' = state.kind ?? (state.filePath ? 'video' : state.dataUrl ? 'image' : kind)
     setHistoryId(state.historyId)
     setInitialAnnotations(state.annotations)
+    userEditedRef.current = false
+    baselineObjectsLenRef.current = state.annotations?.length ?? 0
     if (nextKind === 'video') {
       setKind('video')
       setVideoFilePath(state.filePath ?? '')
@@ -170,6 +172,8 @@ export default function Editor() {
       // annotation context from a previously-opened history item.
       setHistoryId(undefined)
       setInitialAnnotations(undefined)
+      userEditedRef.current = false
+      baselineObjectsLenRef.current = 0
       resetForNewImage(dataUrl)
     })
     Promise.all([
@@ -283,7 +287,15 @@ export default function Editor() {
   // synchronously so work in progress isn't dropped when the debounce
   // doesn't reach its 600ms window.
   const annotationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingAnnotationSave = useRef<{ historyId: string; objects: AnnotationObject[] } | null>(null)
+  const pendingAnnotationSave = useRef<{ historyId: string; objects: AnnotationObject[]; flattenedDataUrl?: string } | null>(null)
+  // Suppress saves triggered by Canvas's replay of `initialAnnotations`. The
+  // replay fires before `useImage` has finished loading the background, so
+  // `stage.toDataURL()` at that moment captures the strokes on a transparent
+  // canvas — the resulting sidecar PNG would lose the original image. We
+  // only enable saves after a genuine user edit (objects diverge from the
+  // baseline length seeded from `initialAnnotations`).
+  const userEditedRef = useRef(false)
+  const baselineObjectsLenRef = useRef(0)
   useEffect(() => () => {
     if (annotationSaveTimer.current) {
       clearTimeout(annotationSaveTimer.current)
@@ -292,7 +304,7 @@ export default function Editor() {
     const pending = pendingAnnotationSave.current
     pendingAnnotationSave.current = null
     if (pending) {
-      window.electronAPI?.saveHistoryAnnotations(pending.historyId, pending.objects).catch(() => {})
+      window.electronAPI?.saveHistoryAnnotations(pending.historyId, pending.objects, pending.flattenedDataUrl).catch(() => {})
     }
   }, [])
 
@@ -306,11 +318,13 @@ export default function Editor() {
       key: string; templateId: string; destinationIndex?: number; actionType?: 'clipboard' | 'save'
     } : null
 
-    // Save is pure file I/O to a user-chosen path — never mutate history. For
-    // every other action (Copy, Share, workflow destinations) commit the
-    // current annotations + flattened sidecar so the next Editor session
-    // rehydrates the shapes and Dashboard surfaces see annotated pixels.
-    if (historyId && !isVideo && canvasRef.current && pending?.actionType !== 'save') {
+    // Every action (including Save) persists the current annotations +
+    // flattened sidecar so the next Editor session rehydrates the shapes and
+    // Dashboard surfaces see annotated pixels. Save's "pure file I/O" promise
+    // is about not creating a *new* history entry — `runInlineAction` doesn't
+    // touch the history store, so updating an existing item's annotations
+    // here is fine.
+    if (historyId && !isVideo && canvasRef.current) {
       if (annotationSaveTimer.current) { clearTimeout(annotationSaveTimer.current); annotationSaveTimer.current = null }
       pendingAnnotationSave.current = null  // action save supersedes any pending debounced save
       const objects = canvasRef.current.getObjects() as AnnotationObject[]
@@ -364,14 +378,29 @@ export default function Editor() {
     if (!u && !r) return
     if (historyId && !isVideo && canvasRef.current) {
       const objects = canvasRef.current.getObjects() as AnnotationObject[]
-      pendingAnnotationSave.current = { historyId, objects }
+      // Gate out Canvas replay: the first fire with objects.length matching
+      // the baseline is the rehydration of `initialAnnotations`, not a user
+      // edit. `useImage` is still loading the background at that point, so
+      // `toDataURL` would flatten strokes onto a transparent canvas. Once the
+      // user draws/edits/clears the object count diverges and we latch
+      // `userEditedRef` so every subsequent commit saves.
+      if (!userEditedRef.current) {
+        if (objects.length === baselineObjectsLenRef.current) return
+        userEditedRef.current = true
+      }
+      // Capture the flattened PNG synchronously here — at unmount the Konva
+      // stage may already be torn down, so stashing it now guarantees the
+      // sidecar survives a Back/close within the 600ms debounce window.
+      let flattenedDataUrl: string | undefined
+      try { flattenedDataUrl = canvasRef.current.toDataURL() } catch { /* stage unavailable */ }
+      pendingAnnotationSave.current = { historyId, objects, flattenedDataUrl }
       if (annotationSaveTimer.current) clearTimeout(annotationSaveTimer.current)
       annotationSaveTimer.current = setTimeout(() => {
         const pending = pendingAnnotationSave.current
         pendingAnnotationSave.current = null
         annotationSaveTimer.current = null
         if (pending) {
-          window.electronAPI?.saveHistoryAnnotations(pending.historyId, pending.objects).catch(() => {})
+          window.electronAPI?.saveHistoryAnnotations(pending.historyId, pending.objects, pending.flattenedDataUrl).catch(() => {})
         }
       }, 600)
     }
