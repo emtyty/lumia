@@ -410,7 +410,7 @@ function MediaKindToggle({ value, onChange }: { value: MediaKind; onChange: (v: 
     },
   ]
   return (
-    <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/[0.06]">
+    <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-white/[0.03] border border-white/10">
       {options.map(({ kind, icon, label, activeBg, activeBorder, activeIcon }) => {
         const active = value === kind
         return (
@@ -420,7 +420,7 @@ function MediaKindToggle({ value, onChange }: { value: MediaKind; onChange: (v: 
             className={`group flex items-center gap-2 px-3.5 py-1.5 rounded-lg transition-all duration-200 cursor-pointer border ${
               active
                 ? `${activeBg} ${activeBorder} shadow-[0_0_16px_rgba(0,0,0,0.2)]`
-                : 'border-transparent hover:bg-white/[0.04]'
+                : 'border-transparent hover:bg-white/[0.06] hover:border-white/20'
             }`}
           >
             <span
@@ -467,9 +467,16 @@ function CaptureCard({ item, onOpen }: { item: HistoryItem; onOpen: () => void }
           </div>
         )}
 
-        {/* Type badge */}
+        {/* Type badge — hardcoded pink so light mode doesn't render dark purple. */}
         {item.type === 'recording' && (
-          <span className="absolute top-2 left-2 text-[9px] font-bold uppercase tracking-wider text-tertiary bg-tertiary/15 backdrop-blur-sm px-2 py-0.5 rounded-md border border-tertiary/20">
+          <span
+            className="absolute top-2 left-2 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
+            style={{
+              color: '#ec4899',
+              backgroundColor: 'color-mix(in oklab, #ec4899 20%, transparent)',
+              borderColor: 'color-mix(in oklab, #ec4899 35%, transparent)',
+            }}
+          >
             Video
           </span>
         )}

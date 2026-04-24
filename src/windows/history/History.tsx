@@ -419,6 +419,35 @@ function HistoryCard({
           </div>
         )}
 
+        {/* Video badge on thumbnail. Hardcoded pink — reads well in both dark
+            and light themes. Tertiary would render dark purple in light mode. */}
+        {item.type === 'recording' && !isSelecting && (
+          <span
+            className="absolute top-2 left-2 z-10 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
+            style={{
+              color: '#ec4899',
+              backgroundColor: 'color-mix(in oklab, #ec4899 20%, transparent)',
+              borderColor: 'color-mix(in oklab, #ec4899 35%, transparent)',
+            }}
+          >
+            Video
+          </span>
+        )}
+
+        {/* Synced badge on thumbnail */}
+        {isUploaded && !isSelecting && (
+          <span
+            className="absolute top-2 right-2 z-10 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
+            style={{
+              color: 'var(--color-secondary)',
+              backgroundColor: 'color-mix(in oklab, var(--color-secondary) 18%, transparent)',
+              borderColor: 'color-mix(in oklab, var(--color-secondary) 30%, transparent)',
+            }}
+          >
+            Synced
+          </span>
+        )}
+
         {/* Play button overlay for recordings */}
         {item.type === 'recording' && !isSelecting && (
           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
@@ -442,17 +471,7 @@ function HistoryCard({
 
       {/* Info */}
       <div className="p-3">
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <p className="text-xs font-bold text-white truncate flex-1" style={{ fontFamily: 'Manrope, sans-serif' }}>{item.name}</p>
-          <div className="flex items-center gap-1.5">
-            {item.type === 'recording' && (
-              <span className="text-[8px] font-bold uppercase tracking-wider text-secondary bg-secondary/10 px-1.5 py-0.5 rounded-full flex-shrink-0">Video</span>
-            )}
-            {isUploaded && (
-              <span className="text-[8px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full flex-shrink-0">Synced</span>
-            )}
-          </div>
-        </div>
+        <p className="text-xs font-bold text-white truncate mb-1" style={{ fontFamily: 'Manrope, sans-serif' }}>{item.name}</p>
         <p className="text-[10px] text-slate-500 font-medium">{date}</p>
       </div>
     </div>
