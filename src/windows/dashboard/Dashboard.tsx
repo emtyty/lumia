@@ -726,15 +726,15 @@ function HistoryCard({
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-3 gap-2 z-10">
             {!missing && (
               <>
-                <OvlBtn icon="edit" label="Edit" onClick={stop(onOpen)} />
-                <OvlBtn icon="content_copy" label="Copy" onClick={stop(onCopy)} />
-                <OvlBtn icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} onClick={stop(onShare)} spinning={isSharing} />
+                <OvlBtn icon="edit" label="Edit" tint="blue" onClick={stop(onOpen)} />
+                <OvlBtn icon="content_copy" label="Copy" tint="emerald" onClick={stop(onCopy)} />
+                <OvlBtn icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} tint="sky" onClick={stop(onShare)} spinning={isSharing} />
                 {googleUrl && (
-                  <OvlBtn icon="cloud" label="Open Google link" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
+                  <OvlBtn icon="cloud" label="Open Google link" tint="amber" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
                 )}
               </>
             )}
-            <OvlBtn icon="delete" label="Delete" variant="danger" onClick={stop(onDelete)} />
+            <OvlBtn icon="delete" label="Delete" tint="red" onClick={stop(onDelete)} />
           </div>
         )}
       </div>
@@ -748,16 +748,23 @@ function HistoryCard({
   )
 }
 
-function OvlBtn({ icon, label, onClick, variant, spinning }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void; variant?: 'danger'; spinning?: boolean }) {
+// Pre-enumerated so Tailwind's JIT picks up each class combination at build
+// time — constructing class names via template strings gets purged.
+const OVL_TINTS: Record<OvlTint, string> = {
+  blue:    'bg-white/10 text-white/70 hover:bg-blue-500/30 hover:text-blue-300',
+  emerald: 'bg-white/10 text-white/70 hover:bg-emerald-500/30 hover:text-emerald-300',
+  sky:     'bg-white/10 text-white/70 hover:bg-sky-500/30 hover:text-sky-300',
+  amber:   'bg-white/10 text-white/70 hover:bg-amber-500/30 hover:text-amber-300',
+  red:     'bg-white/10 text-white/70 hover:bg-red-500/30 hover:text-red-300',
+}
+type OvlTint = 'blue' | 'emerald' | 'sky' | 'amber' | 'red'
+
+function OvlBtn({ icon, label, onClick, tint, spinning }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void; tint: OvlTint; spinning?: boolean }) {
   return (
     <button
       onClick={onClick}
       disabled={spinning}
-      className={`w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm transition-all duration-200 disabled:opacity-60 ${
-        variant === 'danger'
-          ? 'bg-white/10 text-white/70 hover:bg-red-500/30 hover:text-red-300'
-          : 'bg-white/10 text-white/70 hover:bg-white/25 hover:text-white hover:scale-110'
-      }`}
+      className={`w-8 h-8 rounded-full flex items-center justify-center backdrop-blur-sm transition-all duration-200 disabled:opacity-60 ${OVL_TINTS[tint]}`}
       title={label}
     >
       <span className={`material-symbols-outlined text-[16px] ${spinning ? 'animate-spin' : ''}`}>{icon}</span>

@@ -108,33 +108,38 @@ export function HistoryListRow({
         <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
           {!missing && (
             <>
-              <RowAction icon="edit" label="Edit" onClick={stop(onOpen)} />
-              <RowAction icon="content_copy" label="Copy" onClick={stop(onCopy)} />
-              <RowAction icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} onClick={stop(onShare)} spinning={isSharing} />
+              <RowAction icon="edit" label="Edit" tint="blue" onClick={stop(onOpen)} />
+              <RowAction icon="content_copy" label="Copy" tint="emerald" onClick={stop(onCopy)} />
+              <RowAction icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} tint="sky" onClick={stop(onShare)} spinning={isSharing} />
               {googleUrl && (
-                <RowAction icon="cloud" label="Open Google link" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
+                <RowAction icon="cloud" label="Open Google link" tint="amber" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
               )}
             </>
           )}
-          <button
-            onClick={stop(onDelete)}
-            className="p-1 rounded-md text-slate-600 hover:text-red-400 hover:bg-red-500/10 transition-all"
-            title="Delete"
-          >
-            <span className="material-symbols-outlined text-xs">delete</span>
-          </button>
+          <RowAction icon="delete" label="Delete" tint="red" onClick={stop(onDelete)} />
         </div>
       )}
     </div>
   )
 }
 
-function RowAction({ icon, label, onClick, spinning }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void; spinning?: boolean }) {
+// Pre-enumerated so Tailwind's JIT picks up each class combination at build
+// time — constructing class names via template strings gets purged.
+const ROW_TINTS: Record<RowTint, string> = {
+  blue:    'text-slate-600 hover:text-blue-400 hover:bg-blue-500/10',
+  emerald: 'text-slate-600 hover:text-emerald-400 hover:bg-emerald-500/10',
+  sky:     'text-slate-600 hover:text-sky-400 hover:bg-sky-500/10',
+  amber:   'text-slate-600 hover:text-amber-400 hover:bg-amber-500/10',
+  red:     'text-slate-600 hover:text-red-400 hover:bg-red-500/10',
+}
+type RowTint = 'blue' | 'emerald' | 'sky' | 'amber' | 'red'
+
+function RowAction({ icon, label, onClick, spinning, tint }: { icon: string; label: string; onClick: (e: ReactMouseEvent) => void; spinning?: boolean; tint: RowTint }) {
   return (
     <button
       onClick={onClick}
       disabled={spinning}
-      className="p-1 rounded-md text-slate-500 hover:text-white hover:bg-white/10 transition-all disabled:opacity-60"
+      className={`p-1 rounded-md transition-all disabled:opacity-60 ${ROW_TINTS[tint]}`}
       title={label}
     >
       <span className={`material-symbols-outlined text-xs ${spinning ? 'animate-spin' : ''}`}>{icon}</span>
