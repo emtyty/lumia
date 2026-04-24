@@ -22,6 +22,12 @@ const MODE_ACTION: Record<CaptureMode, string> = {
   scrolling: 'ScrollingCapture',
 }
 
+const VIDEO_MODE_ACTION: Record<VideoMode, string> = {
+  region: 'ScreenRecorder',
+  window: 'ScreenRecorderWindow',
+  screen: 'ScreenRecorderScreen',
+}
+
 const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
   { mode: 'region',         icon: 'crop',            label: 'Region' },
   { mode: 'window',         icon: 'web_asset',       label: 'Window' },
@@ -274,7 +280,7 @@ export default function Dashboard() {
         </div>
 
         {mediaKind === 'image' ? (
-          <div className="grid grid-cols-5 gap-2">
+          <div className="flex flex-wrap gap-2">
             {CAPTURE_MODES.map(({ mode, icon, label }) => {
               const accel = hotkeys[MODE_ACTION[mode]]
               const keys = accel ? parseShortcut(accel) : []
@@ -282,7 +288,7 @@ export default function Dashboard() {
                 <button
                   key={mode}
                   onClick={() => handleCapture(mode)}
-                  className="group flex items-center gap-3 px-3 py-3 rounded-xl
+                  className="group w-44 flex items-center gap-3 px-3 py-3 rounded-xl
                              bg-white/[0.03] border border-white/[0.05]
                              hover:bg-primary/[0.08] hover:border-primary/20
                              active:scale-[0.98] transition-all duration-200 cursor-pointer"
@@ -305,7 +311,7 @@ export default function Dashboard() {
             })}
             <button
               onClick={() => handleCapture('scrolling')}
-              className="group flex items-center gap-3 px-3 py-3 rounded-xl
+              className="group w-44 flex items-center gap-3 px-3 py-3 rounded-xl
                          bg-white/[0.03] border border-white/[0.05]
                          hover:bg-primary/[0.08] hover:border-primary/20
                          active:scale-[0.98] transition-all duration-200 cursor-pointer"
@@ -326,14 +332,14 @@ export default function Dashboard() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-3 gap-2">
+          <div className="flex flex-wrap gap-2">
             {VIDEO_MODES.map(({ mode, icon, label }) => {
-              const hotkey = mode === 'region' ? hotkeys.ScreenRecorder : undefined
+              const hotkey = hotkeys[VIDEO_MODE_ACTION[mode]]
               return (
                 <button
                   key={mode}
                   onClick={() => handleVideo(mode)}
-                  className="group flex items-center gap-3 px-3 py-3 rounded-xl
+                  className="group w-44 flex items-center gap-3 px-3 py-3 rounded-xl
                              bg-white/[0.03] border border-white/[0.05]
                              hover:bg-tertiary/[0.08] hover:border-tertiary/20
                              active:scale-[0.98] transition-all duration-200 cursor-pointer"

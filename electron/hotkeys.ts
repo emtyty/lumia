@@ -9,15 +9,18 @@ interface HotkeyConfig {
 }
 
 const defaultHotkeys: HotkeyConfig = {
-  RectangleRegion:   'Ctrl+Shift+1',
-  ActiveWindow:      'Ctrl+Shift+2',
-  ActiveMonitor:     'Ctrl+Shift+3',
-  PrintScreen:       'Ctrl+Shift+4',
-  ScrollingCapture:  'Ctrl+Shift+5',
-  ScreenRecorder:    'Ctrl+Shift+R',
-  StopScreenRecording: 'Ctrl+Shift+S',
-  OpenMainWindow:    'Ctrl+Shift+X',
-  WorkflowPicker:    'Ctrl+Shift+Q'
+  RectangleRegion:      'Ctrl+Shift+1',
+  ActiveWindow:         'Ctrl+Shift+2',
+  ActiveMonitor:        'Ctrl+Shift+3',
+  PrintScreen:          'Ctrl+Shift+4',
+  ScrollingCapture:     'Ctrl+Shift+5',
+  // `ScreenRecorder` kept as the "Region" video entry for backwards compat
+  // with saved configs from older releases.
+  ScreenRecorder:       'Ctrl+Shift+R',
+  ScreenRecorderWindow: 'Ctrl+Shift+W',
+  ScreenRecorderScreen: 'Ctrl+Shift+S',
+  OpenMainWindow:       'Ctrl+Shift+X',
+  WorkflowPicker:       'Ctrl+Shift+Q'
 }
 
 // All 75 action types from ShareX, user can assign any
@@ -53,10 +56,17 @@ export const ALL_ACTIONS = [
 
 // Bump this whenever the default capture-mode bindings change in a way that
 // should retake control from users who never hand-customized. On load, if the
-// stored version is stale we rewrite the capture bindings to the new defaults
-// while leaving recording/app hotkeys alone (those have stable defaults).
-const HOTKEY_SCHEMA_VERSION = 2
-const CAPTURE_ACTIONS = ['RectangleRegion', 'ActiveWindow', 'ActiveMonitor', 'PrintScreen', 'ScrollingCapture'] as const
+// stored version is stale we rewrite the capture/recorder bindings to the new
+// defaults while leaving app-level hotkeys alone (those have stable defaults).
+const HOTKEY_SCHEMA_VERSION = 3
+const CAPTURE_ACTIONS = [
+  'RectangleRegion', 'ActiveWindow', 'ActiveMonitor', 'PrintScreen', 'ScrollingCapture',
+  'ScreenRecorder', 'ScreenRecorderWindow', 'ScreenRecorderScreen',
+] as const
+// Actions that were removed in a migration — stripped from the saved config
+// so stale bindings don't linger and accidentally block new keys (e.g. S
+// was `StopScreenRecording` and is now `ScreenRecorderScreen`).
+const REMOVED_ACTIONS = ['StopScreenRecording'] as const
 
 const store = new Store<{ hotkeys: HotkeyConfig; schemaVersion?: number }>({
   name: 'hotkeys',
@@ -69,9 +79,10 @@ export function getHotkeys(): HotkeyConfig {
   const storedVersion = store.has('schemaVersion') ? store.get('schemaVersion') ?? 1 : 1
   const saved = store.get('hotkeys')
   if (storedVersion < HOTKEY_SCHEMA_VERSION) {
-    // Migrate: overwrite the capture bindings with the new defaults, keep any
-    // other actions the user had customized (recording, open window, etc.).
+    // Migrate: overwrite the capture/recorder bindings with the new defaults,
+    // drop actions that no longer exist, keep any app-level customizations.
     const migrated: HotkeyConfig = { ...saved }
+    for (const action of REMOVED_ACTIONS) delete migrated[action]
     for (const action of CAPTURE_ACTIONS) migrated[action] = defaultHotkeys[action]
     store.set('hotkeys', migrated)
     store.set('schemaVersion', HOTKEY_SCHEMA_VERSION)
@@ -117,14 +128,11 @@ export function setupHotkeys() {
       setOverlayMode('scroll-region')
       createOverlayWindows()
     }),
-    ScreenRecorder: () => {
-      // If recording is active, treat the hotkey as "stop" (matches Snipping Tool).
-      if (isRecordingActive()) { requestVideoStop(); return }
-      startVideoCapture('region')
-    },
-    StopScreenRecording: () => {
-      if (isRecordingActive()) requestVideoStop()
-    },
+    // All three video hotkeys toggle: pressing any of them while recording
+    // stops (matches Snipping Tool's UX), otherwise starts in that mode.
+    ScreenRecorder:       () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('region') },
+    ScreenRecorderWindow: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('window') },
+    ScreenRecorderScreen: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('screen') },
     OpenMainWindow: () => {
       const win = getMainWindow()
       win?.show()

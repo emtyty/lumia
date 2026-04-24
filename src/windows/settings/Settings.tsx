@@ -434,15 +434,15 @@ export default function Settings() {
 }
 
 const HOTKEY_REFERENCE = [
-  { action: 'Region Screenshot',   key: 'Ctrl+Shift+1' },
-  { action: 'Active Window',       key: 'Ctrl+Shift+2' },
-  { action: 'Screen',              key: 'Ctrl+Shift+3' },
-  { action: 'All Screens',         key: 'Ctrl+Shift+4' },
-  { action: 'Scrolling Capture',   key: 'Ctrl+Shift+5' },
-  { action: 'Screen Recorder',     key: 'Ctrl+Shift+R' },
-  { action: 'GIF Recorder',        key: 'Ctrl+Shift+G' },
-  { action: 'Stop Recording',      key: 'Ctrl+Shift+S' },
-  { action: 'Open Main Window',    key: 'Ctrl+Shift+X' },
+  { action: 'Region (Screenshot)',     key: 'Ctrl+Shift+1' },
+  { action: 'Window (Screenshot)',     key: 'Ctrl+Shift+2' },
+  { action: 'Screen (Screenshot)',     key: 'Ctrl+Shift+3' },
+  { action: 'All Screens (Screenshot)', key: 'Ctrl+Shift+4' },
+  { action: 'Scrolling (Screenshot)',  key: 'Ctrl+Shift+5' },
+  { action: 'Region (Video)',          key: 'Ctrl+Shift+R' },
+  { action: 'Window (Video)',          key: 'Ctrl+Shift+W' },
+  { action: 'Screen (Video)',          key: 'Ctrl+Shift+S' },
+  { action: 'Open Main Window',        key: 'Ctrl+Shift+X' },
 ]
 
 function Section({ id, title, icon, children }: { id: string; title: string; icon: string; children: React.ReactNode }) {
