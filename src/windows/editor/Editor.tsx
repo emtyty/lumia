@@ -738,14 +738,13 @@ export default function Editor() {
             <button
               title="AI blur sensitive info"
               onClick={() => { setShowAutoBlur(p => !p); if (!showAutoBlur && autoBlurRegions.length === 0) setShowAutoBlur(true) }}
-              className={`flex flex-col items-center justify-center gap-0.5 w-12 h-9 rounded-lg transition-all ${
+              className={`flex items-center justify-center w-9 h-9 rounded-lg transition-all ${
                 showAutoBlur
                   ? 'bg-orange-500/20 text-orange-400 shadow-[0_0_12px_rgba(251,146,60,0.15)]'
                   : 'text-slate-400 hover:text-orange-400 hover:bg-orange-500/10'
               }`}
             >
-              <span className="material-symbols-outlined text-[16px]">security</span>
-              <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>AI Blur</span>
+              <span className="material-symbols-outlined text-[18px]">security</span>
             </button>
           }
         />

@@ -84,14 +84,13 @@ export default function AnnotationToolBar({
                       key={id}
                       title={`${label} (${shortcut})`}
                       onClick={() => setTool(id)}
-                      className={`relative flex flex-col items-center justify-center gap-0.5 w-11 h-9 rounded-lg transition-all ${
+                      className={`relative flex items-center justify-center w-9 h-9 rounded-lg transition-all ${
                         tool === id
                           ? 'bg-primary/20 text-primary shadow-[0_0_12px_rgba(182,160,255,0.15)]'
                           : 'text-slate-400 hover:text-white hover:bg-white/10'
                       }`}
                     >
-                      <span className="material-symbols-outlined text-[16px]">{icon}</span>
-                      <span className="text-[9px] font-medium leading-none" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
+                      <span className="material-symbols-outlined text-[18px]">{icon}</span>
                     </button>
                   ))}
                 </div>
