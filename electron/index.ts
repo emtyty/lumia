@@ -9,6 +9,7 @@ import { setupScrollCapture, getOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
+import { makeThumbnail } from './thumbnail'
 import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
 import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
 import { autoUpdater } from 'electron-updater'
@@ -413,8 +414,32 @@ app.whenReady().then(async () => {
   const historyPruneTimer = setInterval(runHistoryPrune, HISTORY_PRUNE_INTERVAL_MS)
   app.on('will-quit', () => clearInterval(historyPruneTimer))
 
-  ipcMain.handle('history:get', () => historyStore.getAll())
+  ipcMain.handle('history:get', async () => {
+    const items = historyStore.getAll()
+    const { access } = await import('fs/promises')
+    // fs.access is microsecond-fast on SSDs; 200 parallel probes are trivial.
+    return Promise.all(items.map(async (item) => {
+      if (!item.filePath) return item
+      try {
+        await access(item.filePath)
+        return item
+      } catch {
+        return { ...item, fileMissing: true }
+      }
+    }))
+  })
   ipcMain.handle('history:delete', (_e, id: string) => historyStore.delete(id))
+  ipcMain.handle('history:cleanupMissing', async () => {
+    const items = historyStore.getAll()
+    const { access } = await import('fs/promises')
+    const orphanIds: string[] = []
+    await Promise.all(items.map(async (item) => {
+      if (!item.filePath) return
+      try { await access(item.filePath) } catch { orphanIds.push(item.id) }
+    }))
+    for (const id of orphanIds) historyStore.delete(id)
+    return orphanIds.length
+  })
   ipcMain.handle('history:openFile', (_e, filePath: string) => {
     const { resolve, normalize } = require('path')
     const { homedir } = require('os')
@@ -440,10 +465,35 @@ app.whenReady().then(async () => {
         await writeFile(filePath, Buffer.from(base64, 'base64'))
         item = { ...item, name: item.name ?? filename, filePath }
       }
+      // Replace the full dataUrl with a compact thumbnail. `filePath` is the
+      // source of truth for the full image — dataUrl is never stored.
+      if (item && typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/')) {
+        const { dataUrl, thumbnailUrl, ...rest } = item
+        item = { ...rest, thumbnailUrl: thumbnailUrl ?? makeThumbnail(dataUrl) }
+      }
     } catch (err) {
       console.error('[history:addCapture] failed to persist original', err)
     }
     return historyStore.add(item)
+  })
+  ipcMain.handle('history:readAsDataUrl', async (_e, filePath: string) => {
+    const { readFile } = await import('fs/promises')
+    const { resolve, normalize, extname } = await import('path')
+    const { homedir } = await import('os')
+    const normalized = resolve(normalize(filePath))
+    if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+    const ext = extname(normalized).toLowerCase()
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png'
+    try {
+      const buf = await readFile(normalized)
+      return `data:${mime};base64,${buf.toString('base64')}`
+    } catch (err: unknown) {
+      // File deleted between history:get's fs.access probe and this read —
+      // return null so renderer can refresh into the orphan state instead of
+      // surfacing an ENOENT handler error on stderr.
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw err
+    }
   })
 
   // IPC: Overlay mode (scroll-region vs region)

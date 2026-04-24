@@ -25,6 +25,24 @@ type EditorState = {
 // the VideoAnnotator shares the same palette, so keeping them here would just
 // invite drift.
 
+// MediaRecorder writes WebM progressively and omits the duration cue, so on
+// playback `video.duration === Infinity` and the scrubber breaks. Seeking to
+// an absurdly large timestamp forces the browser to scan the whole file;
+// when it finds the real end a `durationchange` fires with a finite value and
+// we rewind to 0. Runs once per <video> instance.
+function fixWebmDuration(e: React.SyntheticEvent<HTMLVideoElement>) {
+  const v = e.currentTarget
+  if (Number.isFinite(v.duration) && v.duration > 0) return
+  const onDurChange = () => {
+    if (Number.isFinite(v.duration) && v.duration > 0) {
+      v.removeEventListener('durationchange', onDurChange)
+      v.currentTime = 0
+    }
+  }
+  v.addEventListener('durationchange', onDurChange)
+  v.currentTime = 1e101
+}
+
 function relativeTime(ts: number): string {
   const diff = Date.now() - ts
   const mins = Math.floor(diff / 60000)
@@ -72,7 +90,7 @@ export default function Editor() {
   const [canRedo, setCanRedo] = useState(false)
   const [zoomLevel, setZoomLevel] = useState(1)
   const [clipboardHistory, setClipboardHistory] = useState<
-    { id: string; dataUrl: string; name: string; timestamp: number }[]
+    { id: string; thumbnailUrl: string; filePath?: string; legacyDataUrl?: string; name: string; timestamp: number }[]
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
   const [showAutoBlur, setShowAutoBlur] = useState(false)
@@ -156,11 +174,32 @@ export default function Editor() {
     window.electronAPI?.getHistory().then((items: HistoryItem[]) => {
       setClipboardHistory(
         items
-          .filter((i) => i.type === 'screenshot' && i.dataUrl)
+          .filter((i) => i.type === 'screenshot' && !i.fileMissing && (i.thumbnailUrl || i.dataUrl))
           .slice(0, 20)
-          .map((i) => ({ id: i.id, dataUrl: i.dataUrl!, name: i.name, timestamp: i.timestamp })),
+          .map((i) => ({
+            id: i.id,
+            thumbnailUrl: (i.thumbnailUrl ?? i.dataUrl)!,
+            filePath: i.filePath,
+            legacyDataUrl: i.filePath ? undefined : i.dataUrl,
+            name: i.name,
+            timestamp: i.timestamp,
+          })),
       )
     })
+  }, [])
+
+  const loadClipboardItem = useCallback(async (entry: { id: string; filePath?: string; legacyDataUrl?: string }) => {
+    if (entry.filePath) {
+      try {
+        const dataUrl = await window.electronAPI?.readHistoryFile(entry.filePath)
+        if (dataUrl) return dataUrl
+        // null → file disappeared between getHistory and click. Drop the
+        // entry from the panel so the next click doesn't repeat the miss.
+        setClipboardHistory(prev => prev.filter(c => c.id !== entry.id))
+        return undefined
+      } catch { /* fall through to legacy */ }
+    }
+    return entry.legacyDataUrl
   }, [])
 
   useEffect(() => {
@@ -476,6 +515,7 @@ export default function Editor() {
                 controls
                 playsInline
                 preload="auto"
+                onLoadedMetadata={fixWebmDuration}
                 className="w-full h-full object-contain"
                 style={{ maxHeight: '100%' }}
               />
@@ -546,22 +586,23 @@ export default function Editor() {
                 clipboardHistory.map((item) => (
                   <div
                     key={item.id}
-                    className={`group/clip flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all ${
-                      item.dataUrl === imageDataUrl
-                        ? 'bg-primary/10 border border-primary/20'
-                        : 'bg-white/[0.02] hover:bg-white/[0.06] border border-transparent'
-                    }`}
-                    onClick={() => resetForNewImage(item.dataUrl)}
+                    className="group/clip flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all bg-white/[0.02] hover:bg-white/[0.06] border border-transparent"
+                    onClick={async () => {
+                      const dataUrl = await loadClipboardItem(item)
+                      if (dataUrl) resetForNewImage(dataUrl)
+                    }}
                   >
-                    <img src={item.dataUrl} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" draggable={false} />
+                    <img src={item.thumbnailUrl} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" draggable={false} />
                     <div className="flex-1 min-w-0">
                       <p className="text-[11px] text-slate-300 truncate font-medium">{item.name}</p>
                       <p className="text-[9px] text-slate-600 mt-0.5">{relativeTime(item.timestamp)}</p>
                     </div>
                     <button
-                      onClick={(e) => {
+                      onClick={async (e) => {
                         e.stopPropagation()
-                        window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)
+                        const dataUrl = await loadClipboardItem(item)
+                        if (!dataUrl) return
+                        window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
                         showToast('Copied to clipboard', 'check_circle')
                       }}
                       className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"

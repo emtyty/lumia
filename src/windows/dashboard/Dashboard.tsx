@@ -5,7 +5,6 @@ import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
 import { UpdateNotification } from '../../components/UpdateNotification'
 import { DateGroupedGrid } from '../../components/DateGroupedGrid'
 import { HistoryListRow } from '../../components/HistoryListRow'
-import { useLocalVideoUrl } from '../../hooks/useLocalVideoUrl'
 
 type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
 type VideoMode = 'region' | 'window' | 'screen'
@@ -85,7 +84,6 @@ export default function Dashboard() {
   )
   const [isSelecting, setIsSelecting] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
-  const [previewItem, setPreviewItem] = useState<HistoryItem | null>(null)
 
   useEffect(() => {
     window.electronAPI?.getHistory().then(setRecentItems)
@@ -202,13 +200,44 @@ export default function Dashboard() {
     setSelectedIds(new Set())
   }
 
-  const openItem = (item: HistoryItem) => {
+  // Refresh `recentItems` — used after a race where a file disappears between
+  // the boot-time fs.access probe and the user's click, so the UI flips from
+  // "clickable" to orphan state on the next interaction.
+  const refreshHistory = useCallback(async () => {
+    const items = await window.electronAPI?.getHistory()
+    if (items) setRecentItems(items)
+  }, [])
+
+  const openItem = async (item: HistoryItem) => {
+    if (item.fileMissing) return
     if (item.type === 'recording') {
-      setPreviewItem(item)
-    } else {
-      navigate('/editor', { state: { kind: 'image', dataUrl: item.dataUrl, source: 'history' } })
+      navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })
+      return
     }
+    let dataUrl: string | null | undefined = item.dataUrl
+    if (!dataUrl && item.filePath) {
+      dataUrl = await window.electronAPI?.readHistoryFile(item.filePath) ?? null
+      if (dataUrl === null) { await refreshHistory(); return }
+    }
+    if (!dataUrl) return
+    navigate('/editor', { state: { kind: 'image', dataUrl, source: 'history' } })
   }
+
+  const copyItem = async (item: HistoryItem) => {
+    if (item.fileMissing || item.type !== 'screenshot') return
+    let dataUrl: string | null | undefined = item.dataUrl
+    if (!dataUrl && item.filePath) {
+      dataUrl = await window.electronAPI?.readHistoryFile(item.filePath) ?? null
+      if (dataUrl === null) { await refreshHistory(); return }
+    }
+    if (dataUrl) window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
+  }
+
+  const missingCount = useMemo(() => recentItems.filter(i => i.fileMissing).length, [recentItems])
+  const handleCleanupMissing = useCallback(async () => {
+    const removed = await window.electronAPI?.cleanupMissingHistory()
+    if (removed && removed > 0) await refreshHistory()
+  }, [refreshHistory])
 
   // Persist view mode
   useEffect(() => {
@@ -458,6 +487,20 @@ export default function Dashboard() {
               </button>
             </div>
 
+            {/* Cleanup missing — only visible when orphans exist. One click
+                 removes every entry whose file is gone from disk. */}
+            {missingCount > 0 && (
+              <button
+                onClick={handleCleanupMissing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/10 text-amber-400 hover:bg-amber-500/20 border border-amber-500/20 transition-all"
+                style={{ fontFamily: 'Manrope, sans-serif' }}
+                title="Remove history entries whose files no longer exist"
+              >
+                <span className="material-symbols-outlined text-sm">cleaning_services</span>
+                Clean up {missingCount} missing
+              </button>
+            )}
+
             {/* Select toggle */}
             <button
               onClick={() => isSelecting ? exitSelection() : setIsSelecting(true)}
@@ -516,7 +559,7 @@ export default function Dashboard() {
                   onAnnotate={() => navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })}
                   onDelete={() => handleDelete(item.id)}
                   onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
-                  onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
+                  onCopy={() => copyItem(item)}
                 />
               )}
               emptyState={<EmptyState search={search} filter={filter} onClear={() => setSearch('')} />}
@@ -538,7 +581,7 @@ export default function Dashboard() {
                   onAnnotate={() => navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })}
                   onDelete={() => handleDelete(item.id)}
                   onOpenFile={() => item.filePath && window.electronAPI?.openHistoryFile(item.filePath)}
-                  onCopy={() => item.type === 'screenshot' && item.dataUrl && window.electronAPI?.runWorkflow('builtin-clipboard', item.dataUrl)}
+                  onCopy={() => copyItem(item)}
                 />
               )}
               emptyState={<EmptyState search={search} filter={filter} onClear={() => setSearch('')} />}
@@ -546,18 +589,6 @@ export default function Dashboard() {
           )}
         </div>
       </section>
-
-      {previewItem && (
-        <VideoPreviewModal
-          item={previewItem}
-          onClose={() => setPreviewItem(null)}
-          onAnnotate={() => {
-            const item = previewItem
-            setPreviewItem(null)
-            navigate('/editor', { state: { kind: 'video', filePath: item.filePath, name: item.name } })
-          }}
-        />
-      )}
 
       {showScrollCapture && <ScrollCaptureDialog onClose={() => setShowScrollCapture(false)} />}
     </div>
@@ -668,20 +699,26 @@ function HistoryCard({
   })
   const isUploaded = item.uploads?.some(u => u.success)
   const uploadUrl = item.uploads?.find(u => u.success && u.url)?.url
+  const missing = item.fileMissing
 
   const stop = (fn: () => void) => (e: ReactMouseEvent) => { e.stopPropagation(); fn() }
 
   return (
     <div
-      className={`group glass-card rounded-lg cursor-pointer transition-all duration-300 relative ${
+      className={`group glass-card rounded-lg transition-all duration-300 relative ${
+        missing && !isSelecting ? 'opacity-50' : ''
+      } ${
+        missing ? 'cursor-default' : 'cursor-pointer'
+      } ${
         isSelected ? 'ring-2 ring-primary/50' : ''
       }`}
-      onClick={isSelecting ? onToggleSelect : onOpen}
+      onClick={isSelecting ? onToggleSelect : (missing ? undefined : onOpen)}
+      title={missing ? 'File no longer exists on disk' : undefined}
     >
       {/* Thumbnail */}
       <div className="aspect-video bg-slate-950 relative overflow-hidden rounded-t-lg">
-        {item.dataUrl ? (
-          <img src={item.dataUrl} className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500 opacity-90 group-hover:opacity-100" />
+        {(item.thumbnailUrl ?? item.dataUrl) ? (
+          <img src={item.thumbnailUrl ?? item.dataUrl} className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-500 opacity-90 group-hover:opacity-100" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <span className="material-symbols-outlined text-slate-700 text-4xl">{item.type === 'recording' ? 'videocam' : 'image'}</span>
@@ -719,7 +756,7 @@ function HistoryCard({
         )}
 
         {/* Synced badge */}
-        {isUploaded && !isSelecting && (
+        {isUploaded && !isSelecting && !missing && (
           <span
             className="absolute top-2 right-2 z-10 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm"
             style={{
@@ -732,6 +769,13 @@ function HistoryCard({
           </span>
         )}
 
+        {/* Missing file badge */}
+        {missing && !isSelecting && (
+          <span className="absolute top-2 right-2 z-10 text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md border backdrop-blur-sm text-amber-300 bg-amber-500/20 border-amber-400/30">
+            Missing
+          </span>
+        )}
+
         {/* Play button overlay for recordings */}
         {item.type === 'recording' && !isSelecting && (
           <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
@@ -741,13 +785,18 @@ function HistoryCard({
           </div>
         )}
 
-        {/* Hover overlay with actions */}
+        {/* Hover overlay with actions. Missing-file cards collapse to Delete
+             only so the user can prune the orphan without chasing dead links. */}
         {!isSelecting && (
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-end justify-center pb-3 gap-2 z-10">
-            <OvlBtn icon={item.type === 'recording' ? 'draw' : 'edit'} label={item.type === 'recording' ? 'Annotate' : 'Edit'} onClick={stop(item.type === 'recording' ? onAnnotate : onOpen)} />
-            {item.type === 'screenshot' && <OvlBtn icon="content_copy" label="Copy" onClick={stop(onCopy)} />}
-            {item.filePath && <OvlBtn icon="folder_open" label="Folder" onClick={stop(onOpenFile)} />}
-            {uploadUrl && <OvlBtn icon="open_in_new" label="Link" onClick={stop(() => window.electronAPI?.openExternal(uploadUrl))} />}
+            {!missing && (
+              <>
+                <OvlBtn icon={item.type === 'recording' ? 'draw' : 'edit'} label={item.type === 'recording' ? 'Annotate' : 'Edit'} onClick={stop(item.type === 'recording' ? onAnnotate : onOpen)} />
+                {item.type === 'screenshot' && <OvlBtn icon="content_copy" label="Copy" onClick={stop(onCopy)} />}
+                {item.filePath && <OvlBtn icon="folder_open" label="Folder" onClick={stop(onOpenFile)} />}
+                {uploadUrl && <OvlBtn icon="open_in_new" label="Link" onClick={stop(() => window.electronAPI?.openExternal(uploadUrl))} />}
+              </>
+            )}
             <OvlBtn icon="delete" label="Delete" variant="danger" onClick={stop(onDelete)} />
           </div>
         )}
@@ -778,48 +827,3 @@ function OvlBtn({ icon, label, onClick, variant }: { icon: string; label: string
   )
 }
 
-/* ── Video Preview Modal ── */
-
-function VideoPreviewModal({ item, onClose, onAnnotate }: { item: HistoryItem; onClose: () => void; onAnnotate: () => void }) {
-  const videoRef = useRef<HTMLVideoElement>(null)
-  const videoSrc = useLocalVideoUrl(item.filePath)
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
-  return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70]" onClick={onClose}>
-      <div className="glass-refractive rounded-3xl overflow-hidden shadow-2xl max-w-4xl w-full mx-8" onClick={e => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/5">
-          <p className="text-sm font-bold text-white truncate max-w-xs" style={{ fontFamily: 'Manrope, sans-serif' }}>{item.name}</p>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={onAnnotate}
-              className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-white transition-all"
-              style={{ fontFamily: 'Manrope, sans-serif' }}
-            >
-              <span className="material-symbols-outlined text-sm">draw</span>
-              Annotate
-            </button>
-            <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
-              <span className="material-symbols-outlined">close</span>
-            </button>
-          </div>
-        </div>
-        <div className="bg-black">
-          <video
-            ref={videoRef}
-            src={videoSrc}
-            controls
-            autoPlay
-            className="w-full max-h-[70vh]"
-            style={{ display: 'block' }}
-          />
-        </div>
-      </div>
-    </div>
-  )
-}

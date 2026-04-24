@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import fixWebmDuration from 'fix-webm-duration'
 
 interface RecordingTarget {
   kind: 'region' | 'window' | 'screen'
@@ -208,8 +209,17 @@ export default function RecorderHost() {
     const chunks = chunksRef.current
     chunksRef.current = []
     const durationMs = accumulatedMsRef.current
-    const blob = new Blob(chunks, { type: 'video/webm' })
+    let blob = new Blob(chunks, { type: 'video/webm' })
     teardownStreams()
+
+    // MediaRecorder streams WebM progressively and never writes the duration
+    // cue, so without this patch `<video>.duration` is Infinity and no player
+    // (Lumia, VLC, browsers) can show a correct timeline. Inject the real
+    // duration into the EBML header before the file touches disk.
+    if (durationMs > 0) {
+      try { blob = await fixWebmDuration(blob, durationMs, { logger: false }) }
+      catch { /* fall back to unpatched blob — still playable, just no duration */ }
+    }
 
     let thumbnail = ''
     try { thumbnail = await extractThumbnail(blob) } catch { /* ignore */ }

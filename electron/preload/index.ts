@@ -30,6 +30,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteHistoryItem: (id: string) => ipcRenderer.invoke('history:delete', id),
   openHistoryFile: (filePath: string) => ipcRenderer.invoke('history:openFile', filePath),
   addHistoryItem: (item: unknown) => ipcRenderer.invoke('history:addCapture', item),
+  readHistoryFile: (filePath: string) => ipcRenderer.invoke('history:readAsDataUrl', filePath),
+  cleanupMissingHistory: () => ipcRenderer.invoke('history:cleanupMissing'),
 
   // Hotkeys
   getHotkeys: () => ipcRenderer.invoke('hotkeys:get'),

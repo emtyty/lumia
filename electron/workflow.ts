@@ -11,6 +11,7 @@ import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
 import { getSettings, resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
+import { makeThumbnail } from './thumbnail'
 import { getMainWindow } from './index'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -114,7 +115,7 @@ export class WorkflowEngine {
       id: uuidv4(),
       timestamp: Date.now(),
       name: `capture-${localTimestamp()}`,
-      dataUrl: imageData,
+      thumbnailUrl: makeThumbnail(imageData),
       filePath: result.savedPath,
       type: 'screenshot',
       uploads: result.uploads

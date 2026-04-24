@@ -41,6 +41,8 @@ declare global {
       deleteHistoryItem: (id: string) => Promise<boolean>
       openHistoryFile: (filePath: string) => Promise<void>
       addHistoryItem: (item: import('./types').HistoryItem) => Promise<void>
+      readHistoryFile: (filePath: string) => Promise<string | null>
+      cleanupMissingHistory: () => Promise<number>
 
       getHotkeys: () => Promise<Record<string, string>>
       getSettings: () => Promise<AppSettings>

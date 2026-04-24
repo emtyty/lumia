@@ -25,14 +25,21 @@ export function HistoryListRow({
 
   const stop = (fn: () => void) => (e: ReactMouseEvent) => { e.stopPropagation(); fn() }
 
+  const missing = item.fileMissing
+
   return (
     <div
-      className={`group flex items-center gap-4 px-4 py-2.5 rounded-xl transition-all cursor-pointer ${
+      className={`group flex items-center gap-4 px-4 py-2.5 rounded-xl transition-all ${
+        missing && !isSelecting ? 'opacity-50' : ''
+      } ${
+        missing ? 'cursor-default' : 'cursor-pointer'
+      } ${
         isSelected
           ? 'bg-primary/10 border border-primary/20'
           : 'bg-white/[0.02] border border-transparent hover:bg-white/5 hover:border-white/5'
       }`}
-      onClick={isSelecting ? onToggleSelect : onOpen}
+      onClick={isSelecting ? onToggleSelect : (missing ? undefined : onOpen)}
+      title={missing ? 'File no longer exists on disk' : undefined}
     >
       {/* Checkbox */}
       {isSelecting && (
@@ -50,8 +57,8 @@ export function HistoryListRow({
 
       {/* Thumbnail */}
       <div className="w-10 h-10 rounded-lg bg-slate-900 overflow-hidden flex-shrink-0 border border-white/5">
-        {item.dataUrl ? (
-          <img src={item.dataUrl} className="w-full h-full object-cover" />
+        {(item.thumbnailUrl ?? item.dataUrl) ? (
+          <img src={item.thumbnailUrl ?? item.dataUrl} className="w-full h-full object-cover" />
         ) : (
           <div className="w-full h-full flex items-center justify-center">
             <span className="material-symbols-outlined text-slate-700 text-sm">
@@ -75,6 +82,13 @@ export function HistoryListRow({
         </span>
       )}
 
+      {/* Missing file badge */}
+      {missing && (
+        <span className="text-[8px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-full flex-shrink-0">
+          Missing
+        </span>
+      )}
+
       {/* Upload status */}
       {isUploaded && (
         <span className="text-[8px] font-bold uppercase tracking-wider text-primary bg-primary/10 px-1.5 py-0.5 rounded-full flex-shrink-0">
@@ -88,18 +102,23 @@ export function HistoryListRow({
       {/* Size */}
       <span className="text-[10px] text-slate-600 w-14 text-right flex-shrink-0">{size}</span>
 
-      {/* Inline actions — visible on hover */}
+      {/* Inline actions — visible on hover. Missing-file rows only expose
+          Delete so users can prune orphans without chasing dead links. */}
       {!isSelecting && (
         <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-          <RowAction icon={item.type === 'recording' ? 'draw' : 'edit'} label={item.type === 'recording' ? 'Annotate' : 'Edit'} onClick={stop(item.type === 'recording' ? onAnnotate : onOpen)} />
-          {item.type === 'screenshot' && (
-            <RowAction icon="content_copy" label="Copy" onClick={stop(onCopy)} />
-          )}
-          {item.filePath && (
-            <RowAction icon="folder_open" label="Folder" onClick={stop(onOpenFile)} />
-          )}
-          {uploadUrl && (
-            <RowAction icon="open_in_new" label="Link" onClick={stop(() => window.electronAPI?.openExternal(uploadUrl))} />
+          {!missing && (
+            <>
+              <RowAction icon={item.type === 'recording' ? 'draw' : 'edit'} label={item.type === 'recording' ? 'Annotate' : 'Edit'} onClick={stop(item.type === 'recording' ? onAnnotate : onOpen)} />
+              {item.type === 'screenshot' && (
+                <RowAction icon="content_copy" label="Copy" onClick={stop(onCopy)} />
+              )}
+              {item.filePath && (
+                <RowAction icon="folder_open" label="Folder" onClick={stop(onOpenFile)} />
+              )}
+              {uploadUrl && (
+                <RowAction icon="open_in_new" label="Link" onClick={stop(() => window.electronAPI?.openExternal(uploadUrl))} />
+              )}
+            </>
           )}
           <button
             onClick={stop(onDelete)}

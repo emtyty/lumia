@@ -131,34 +131,39 @@ function ModeBar({
 
   return (
     <div
-      className="absolute top-8 left-1/2 -translate-x-1/2 flex items-center gap-3 glass-refractive rounded-full pl-1.5 pr-5 py-1.5"
-      onMouseDown={(e) => e.stopPropagation()}
-      onMouseMove={(e) => e.stopPropagation()}
-      onMouseUp={(e) => e.stopPropagation()}
-      onClick={(e) => e.stopPropagation()}
+      className="absolute top-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
       style={{ fontFamily: 'Manrope, sans-serif' }}
     >
-      {intent === 'record' && (
-        <div className="ml-2 mr-1 flex items-center gap-1.5 text-red-400">
-          <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
-          <span className="text-[10px] font-bold uppercase tracking-widest">REC</span>
+      <div
+        className="flex items-center gap-3 glass-refractive rounded-full pl-1.5 pr-3 py-1.5"
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseMove={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {intent === 'record' && (
+          <div className="ml-2 mr-1 flex items-center gap-1.5 text-red-400">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+            <span className="text-[10px] font-bold uppercase tracking-widest">REC</span>
+          </div>
+        )}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-full bg-white/5 border border-white/10">
+          <IntentBtn value="capture" label="Image" iconName="photo_camera" />
+          <IntentBtn value="record"  label="Video" iconName="videocam" />
         </div>
-      )}
-      <div className="flex items-center gap-0.5 p-0.5 rounded-full bg-white/5 border border-white/10">
-        <IntentBtn value="capture" label="Image" iconName="photo_camera" />
-        <IntentBtn value="record"  label="Video" iconName="videocam" />
+        <div className="w-px h-4 bg-white/10" />
+        <div className="flex items-center gap-1">
+          <TabBtn value="region" label="Region" tabIcon="crop" />
+          <TabBtn value="window" label="Window" tabIcon="web_asset" />
+          <TabBtn value="screen" label="Screen" tabIcon="monitor" />
+        </div>
       </div>
-      <div className="w-px h-4 bg-white/10" />
-      <div className="flex items-center gap-1">
-        <TabBtn value="region" label="Region" tabIcon="crop" />
-        <TabBtn value="window" label="Window" tabIcon="web_asset" />
-        <TabBtn value="screen" label="Screen" tabIcon="monitor" />
+
+      {/* Hint on its own row — never fights for space with the controls. */}
+      <div className="flex items-center gap-2 glass-refractive rounded-full px-4 py-1 whitespace-nowrap">
+        <span className="material-symbols-outlined text-sm text-white">{icon}</span>
+        <span className="text-xs font-semibold text-white">{hint}</span>
       </div>
-      <div className="w-px h-4 bg-white/10" />
-      <span className="text-sm font-semibold text-white flex items-center gap-2">
-        <span className="material-symbols-outlined text-sm">{icon}</span>
-        {hint}
-      </span>
     </div>
   )
 }

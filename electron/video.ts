@@ -12,6 +12,7 @@ import { ORIGINALS_DIR } from './capture'
 import { resetOverlayMode, setOverlayMode } from './scroll-capture'
 import { resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
+import { makeThumbnail } from './thumbnail'
 
 const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 const OVERLAY_GONE_DELAY_MS = 120
@@ -307,7 +308,7 @@ async function saveRecordingBlob(
       timestamp: Date.now(),
       name: filename,
       filePath,
-      dataUrl: thumbnailDataUrl,
+      thumbnailUrl: makeThumbnail(thumbnailDataUrl),
       type: 'recording',
       uploads: [],
     })

@@ -5,6 +5,7 @@ import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore,
 import { getWindowAtPointPhysical } from './native-input'
 import { setOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
+import { makeThumbnail } from './thumbnail'
 
 /** Canonical folder for original captures (both images and videos). Not
  *  user-configurable — user-chosen locations are for the Save-As dialog only,
@@ -472,7 +473,7 @@ export async function sendCaptureToEditor(dataUrl: string, source: string) {
         timestamp: Date.now(),
         name: saved?.filename ?? `capture-${ts}`,
         filePath: saved?.filePath,
-        dataUrl,
+        thumbnailUrl: makeThumbnail(dataUrl),
         type: 'screenshot',
         uploads: []
       })

@@ -49,6 +49,10 @@ export interface HistoryItem {
   size?: number
   type: 'screenshot' | 'recording'
   uploads: UploadResult[]
+  // Set by main on history:get when filePath is missing from disk. Never
+  // persisted — the store keeps items even when files are gone so the user
+  // can clean them up explicitly.
+  fileMissing?: boolean
 }
 
 // ── OCR & Auto-Blur ──────────────────────────────────────────────
