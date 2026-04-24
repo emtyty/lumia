@@ -32,24 +32,10 @@ const MAX_IMAGE_WIDTH = 1024
  * is all we can guarantee.
  */
 export function showNotification(opts: NotifyOptions): void {
-  if (!Notification.isSupported()) {
-    console.warn('[notify] Notifications not supported on this platform')
-    return
-  }
+  if (!Notification.isSupported()) return
 
   const title = opts.title ?? DEFAULT_TITLE
   const imagePath = prepareImagePath(opts.thumbnailDataUrl, opts.thumbnailPath)
-
-  // On Windows, fire a toastXml variant with a hero image when we have
-  // one. If WinRT rejects the XML (bad AUMID, malformed path, etc.) the
-  // `failed` event lets us fall back to a plain text toast so the user
-  // at least sees something instead of silent nothing.
-  const trySend = (notif: Notification, label: string): void => {
-    notif.on('show', () => console.log(`[notify] shown (${label})`))
-    notif.on('failed', (_e, err) => console.error(`[notify] failed (${label})`, err))
-    notif.on('close', () => console.log(`[notify] closed (${label})`))
-    notif.show()
-  }
 
   // toastXml hero images only render reliably in packaged builds: Windows
   // Push Notifications needs an AUMID that was registered through a Start
@@ -62,17 +48,16 @@ export function showNotification(opts: NotifyOptions): void {
     if (useToastXml && imagePath) {
       const xml = buildToastXml(title, opts.body, imagePath)
       const n = new Notification({ toastXml: xml })
+      // If WinRT rejects the XML (bad AUMID, malformed path, etc.), fall
+      // back to a plain text toast so the user still sees something.
       n.on('failed', () => {
-        console.warn('[notify] toastXml failed — falling back to plain toast')
-        trySend(new Notification({ title, body: opts.body, icon: imagePath }), 'fallback')
+        new Notification({ title, body: opts.body, icon: imagePath }).show()
       })
-      trySend(n, 'toastXml')
+      n.show()
       return
     }
-    trySend(new Notification({ title, body: opts.body, icon: imagePath }), 'plain')
-  } catch (err) {
-    console.error('[notify] show threw', err)
-  }
+    new Notification({ title, body: opts.body, icon: imagePath }).show()
+  } catch { /* silent */ }
 }
 
 // Resolve a usable on-disk image path. If we're given an inline data URL
@@ -92,8 +77,7 @@ function prepareImagePath(dataUrl?: string, filePath?: string): string | undefin
     const tempPath = join(app.getPath('temp'), `lumia-notif-${randomUUID()}.png`)
     writeFileSync(tempPath, buf)
     return tempPath
-  } catch (err) {
-    console.error('[notify] image prep failed', err)
+  } catch {
     return undefined
   }
 }
