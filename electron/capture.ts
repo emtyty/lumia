@@ -45,6 +45,14 @@ function findSourceForDisplay(
 // Map webContentsId → source payload for overlay pull
 const overlaySourcePayloads = new Map<number, { sourceId: string; scaleFactor: number }>()
 
+// Cache last window-pick physical rect so confirm can crop in physical pixels
+// directly. Avoids the DIP round-trip which introduces sub-pixel drift and,
+// for maximized windows, can expose the ~8px invisible resize border that
+// DWM rolls into the frame bounds.
+let lastWindowPickPhysical: {
+  x: number; y: number; width: number; height: number; displayId: number
+} | null = null
+
 export function dispatchCapture(mode: CaptureMode) {
   switch (mode) {
     case 'fullscreen':      return captureFullscreen()
@@ -89,19 +97,45 @@ export function setupCapture() {
       const raw = getWindowAtPointPhysical(physPt.x, physPt.y)
       if (!raw) return null
 
-      // Convert back to Electron's screen-DIP via screenToDipRect. When passed
-      // no window, Electron uses the display nearest the rect for the sf.
-      const dipRect = screen.screenToDipRect(null as never, {
-        x: raw.x, y: raw.y, width: raw.width, height: raw.height,
-      })
+      // Clip physical rect to the display's physical bounds. Maximized windows
+      // on Win10/11 extend ~8px beyond the monitor edges (the invisible resize
+      // border baked into DWM's frame bounds) — without this clip the crop
+      // would include wallpaper/other monitor content at the edges.
+      const displayPhysOrigin = screen.dipToScreenPoint({ x: display.bounds.x, y: display.bounds.y })
+      const sf = display.scaleFactor || 1
+      const displayPhysW = Math.round(display.size.width  * sf)
+      const displayPhysH = Math.round(display.size.height * sf)
 
-      // Round to nearest int — floor/ceil would systematically expand the rect
-      // and the crop would pick up a few extra pixels of wallpaper past the edge.
+      // Win11 apps have ~8 DIP rounded corners; DWM's rectangular frame bounds
+      // encloses them so wallpaper pokes through the 4 corners of the crop.
+      // Inset by a couple physical px to bite past the corner curvature without
+      // eating visible window content.
+      const cornerInset = Math.max(1, Math.round(2 * sf))
+      const pLeft   = Math.max(displayPhysOrigin.x, raw.x + cornerInset)
+      const pTop    = Math.max(displayPhysOrigin.y, raw.y + cornerInset)
+      const pRight  = Math.min(displayPhysOrigin.x + displayPhysW, raw.x + raw.width  - cornerInset)
+      const pBottom = Math.min(displayPhysOrigin.y + displayPhysH, raw.y + raw.height - cornerInset)
+      if (pRight <= pLeft || pBottom <= pTop) return null
+
+      // Convert clipped physical → DIP for the overlay highlight.
+      const dipRect = screen.screenToDipRect(null as never, {
+        x: pLeft, y: pTop, width: pRight - pLeft, height: pBottom - pTop,
+      })
       const left   = Math.max(display.bounds.x, Math.round(dipRect.x))
       const top    = Math.max(display.bounds.y, Math.round(dipRect.y))
       const right  = Math.min(display.bounds.x + display.bounds.width,  Math.round(dipRect.x + dipRect.width))
       const bottom = Math.min(display.bounds.y + display.bounds.height, Math.round(dipRect.y + dipRect.height))
       if (right <= left || bottom <= top) return null
+
+      // Cache the clipped physical rect for the confirm handler to crop against.
+      lastWindowPickPhysical = {
+        x: pLeft,
+        y: pTop,
+        width: pRight - pLeft,
+        height: pBottom - pTop,
+        displayId: display.id,
+      }
+
       return {
         x: left - display.bounds.x,
         y: top - display.bounds.y,
@@ -114,14 +148,19 @@ export function setupCapture() {
     }
   })
 
-  // Window-pick confirm: capture the rect same as region
+  // Window-pick confirm: crop against the cached physical rect so we don't lose
+  // pixels to the DIP→physical round-trip.
   ipcMain.handle('window-pick:confirm', async (_e, rect: { x: number; y: number; width: number; height: number }) => {
-    const displayId = getOverlayDisplayId()
+    const overlayId = getOverlayDisplayId()
+    const cached = lastWindowPickPhysical
+    lastWindowPickPhysical = null
     const { resetOverlayMode } = await import('./scroll-capture')
     resetOverlayMode()
     closeAllOverlays()
     await waitForOverlayGone()
-    const dataUrl = await captureRect(rect, displayId)
+    const dataUrl = cached
+      ? await capturePhysicalRect(cached)
+      : await captureRect(rect, overlayId)
     await sendCaptureToEditor(dataUrl, 'window')
     return dataUrl
   })
@@ -263,6 +302,36 @@ async function captureWindow(): Promise<void> {
 async function captureRegion(): Promise<void> {
   await hideMainWindow()
   createOverlayWindows()
+}
+
+// Crop directly in physical pixels against the target display's native
+// thumbnail. Takes a rect in virtual-screen physical coords (the same space
+// getWindowAtPointPhysical returns).
+async function capturePhysicalRect(rect: { x: number; y: number; width: number; height: number; displayId: number }): Promise<string> {
+  const allDisplays = screen.getAllDisplays()
+  const target = allDisplays.find(d => d.id === rect.displayId) ?? screen.getPrimaryDisplay()
+  const sf = target.scaleFactor || 1
+  const physW = Math.max(1, Math.round(target.size.width  * sf))
+  const physH = Math.max(1, Math.round(target.size.height * sf))
+  const sources = await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: physW, height: physH } })
+  const fullImg = findSourceForDisplay(sources, allDisplays, target.id).thumbnail
+  const fullSize = fullImg.getSize()
+
+  // Map virtual-screen physical → display-local physical (thumbnail-local).
+  const displayPhysOrigin = screen.dipToScreenPoint({ x: target.bounds.x, y: target.bounds.y })
+  const localX = rect.x - displayPhysOrigin.x
+  const localY = rect.y - displayPhysOrigin.y
+
+  // If the capturer returned a different size than we requested, scale linearly.
+  const sx = fullSize.width  / physW
+  const sy = fullSize.height / physH
+
+  const cropX = Math.max(0, Math.round(localX * sx))
+  const cropY = Math.max(0, Math.round(localY * sy))
+  const cropW = Math.max(1, Math.min(fullSize.width  - cropX, Math.round(rect.width  * sx)))
+  const cropH = Math.max(1, Math.min(fullSize.height - cropY, Math.round(rect.height * sy)))
+
+  return fullImg.crop({ x: cropX, y: cropY, width: cropW, height: cropH }).toDataURL()
 }
 
 async function captureRect(rect: { x: number; y: number; width: number; height: number }, displayId?: number | null): Promise<string> {
