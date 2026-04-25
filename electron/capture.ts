@@ -472,12 +472,17 @@ export async function sendCaptureToEditor(dataUrlIn: string, source: string) {
   // Editor's Save button is a separate flow that writes to a user-chosen path.
   const saved = await saveOriginalImage(dataUrl)
 
+  // Capture the new entry's id so the Editor knows it's already in history.
+  // Without this, a follow-up runWorkflow(...) sees historyId=undefined and the
+  // workflow engine adds a *second* row instead of merging uploads into this one.
+  let historyId: string | undefined
   try {
     const historyStore = getHistoryStore()
     if (historyStore) {
       const ts = localTimestamp()
+      const id: string = require('crypto').randomUUID()
       historyStore.add({
-        id: require('crypto').randomUUID(),
+        id,
         timestamp: Date.now(),
         name: saved?.filename ?? `capture-${ts}`,
         filePath: saved?.filePath,
@@ -485,10 +490,11 @@ export async function sendCaptureToEditor(dataUrlIn: string, source: string) {
         type: 'screenshot',
         uploads: []
       })
+      historyId = id
     }
   } catch { /* silent */ }
 
-  mainWin.webContents.send('navigate', '/editor', { dataUrl, source })
+  mainWin.webContents.send('navigate', '/editor', { dataUrl, source, historyId })
   showMainWindow()
 
   const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : source === 'active-monitor' ? 'Screen' : 'All Screens'
