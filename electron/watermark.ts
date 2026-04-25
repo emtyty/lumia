@@ -1,4 +1,4 @@
-import { nativeImage } from 'electron'
+import { app, nativeImage } from 'electron'
 import { join } from 'path'
 
 /**
@@ -17,7 +17,12 @@ import { join } from 'path'
  * this on the main process capture path where it belongs.
  */
 
-const LOGO_PATH = join(__dirname, '../../resources/icons/png/icon.png')
+// Dev: resources/ lives next to out/ on disk, so __dirname/../../resources works.
+// Prod: only out/ is bundled into app.asar; the logo is shipped via
+// electron-builder's extraResources and lives at process.resourcesPath/icons/...
+const LOGO_PATH = app.isPackaged
+  ? join(process.resourcesPath, 'icons/png/icon.png')
+  : join(__dirname, '../../resources/icons/png/icon.png')
 const LOGO_SIZE_PCT = 0.025
 const LOGO_OPACITY = 0.1
 const LOGO_MARGIN_PCT = 0.15 // fraction of logo width, hugs the corner

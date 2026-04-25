@@ -20,6 +20,8 @@ extraResources:
     filter:
       - "**/*.png"
       - "**/*.ico"
+  - from: resources/icons/png/icon.png
+    to: icons/png/icon.png
 
 directories:
   buildResources: resources
