@@ -12,6 +12,7 @@ import RecordingBorder from './windows/recording-border/RecordingBorder'
 import RecorderHost from './windows/recorder-host/RecorderHost'
 import { AboutDialog } from './components/AboutDialog'
 import { ReleaseNotesDialog } from './components/ReleaseNotesDialog'
+import { UpdateNotification } from './components/UpdateNotification'
 
 const STANDALONE_ROUTES = ['/overlay', '/recording-toolbar', '/recording-border', '/recorder-host']
 
@@ -73,6 +74,7 @@ export default function App() {
       </div>
       <AboutDialog />
       <ReleaseNotesDialog />
+      <UpdateNotification />
     </div>
   )
 }

@@ -69,8 +69,8 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
   const items: MenuItemDef[] = [
     { type: 'item', label: 'New Capture', icon: 'add_a_photo', action: () => window.electronAPI?.newCapture() },
     { type: 'separator' },
-    { type: 'item', label: 'Workflow', icon: 'rocket_launch', action: () => navigate('/workflow') },
     { type: 'item', label: 'Settings', icon: 'settings', action: () => navigate('/settings') },
+    { type: 'item', label: 'Check for Updates', icon: 'system_update', action: () => window.dispatchEvent(new Event('app:check-update')) },
     { type: 'separator' },
     { type: 'item', label: 'About Lumia', icon: 'info', action: () => window.dispatchEvent(new Event('app:show-about')) },
     { type: 'item', label: 'Quit Lumia', icon: 'power_settings_new', action: () => window.electronAPI?.quitApp() },

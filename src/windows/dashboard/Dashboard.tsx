@@ -2,7 +2,6 @@ import { useState, useEffect, useMemo, useCallback, type MouseEvent as ReactMous
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
-import { UpdateNotification } from '../../components/UpdateNotification'
 import { DateGroupedGrid } from '../../components/DateGroupedGrid'
 import { HistoryListRow } from '../../components/HistoryListRow'
 import { copyHistoryItem, shareHistoryItem } from '../../lib/history-actions'
@@ -269,7 +268,6 @@ export default function Dashboard() {
               : `${screenshots.length} screenshot${screenshots.length !== 1 ? 's' : ''} · ${recordings.length} recording${recordings.length !== 1 ? 's' : ''}`}
           </p>
         </div>
-        <UpdateNotification />
       </header>
 
       {/* ── Capture Actions ── */}

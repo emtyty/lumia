@@ -79,7 +79,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRecorderOpen: (cb: () => void) => { ipcRenderer.on('recorder:open', cb) },
   onRecorderStop: (cb: () => void) => { ipcRenderer.on('recorder:stop', cb) },
   onUpdateDownloaded: (cb: (version: string) => void) => { ipcRenderer.on('update:downloaded', (_e, version: string) => cb(version)) },
+  onUpdateStatus: (cb: (data: { status: string; version?: string; percent?: number; error?: string }) => void) => {
+    ipcRenderer.on('update:status', (_e, data) => cb(data))
+  },
   installUpdate: () => ipcRenderer.invoke('update:install'),
+  checkForUpdates: () => ipcRenderer.invoke('update:check'),
   onAbout: (cb: () => void) => { ipcRenderer.on('app:about', () => cb()) },
   getAppVersion: () => ipcRenderer.invoke('app:version'),
 

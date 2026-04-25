@@ -140,7 +140,14 @@ declare global {
       showOpenDialog: (opts: unknown) => Promise<{ filePaths: string[]; canceled: boolean }>
 
       onUpdateDownloaded: (cb: (version: string) => void) => void
+      onUpdateStatus: (cb: (data: {
+        status: 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error'
+        version?: string
+        percent?: number
+        error?: string
+      }) => void) => void
       installUpdate: () => Promise<void>
+      checkForUpdates: () => Promise<{ ok: boolean; dev?: boolean; error?: string }>
       getAppVersion: () => Promise<string>
       onAbout: (cb: () => void) => void
 

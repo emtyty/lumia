@@ -318,7 +318,10 @@ if (isDev) {
 }
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId('Lumia')
+  // Must match `appId` in electron-builder.yml — NSIS registers the Start
+  // Menu shortcut under that AUMID, and WinRT silently drops toasts when
+  // the runtime AUMID doesn't match the shortcut.
+  app.setAppUserModelId('com.lumia.app')
 }
 
 app.whenReady().then(async () => {
@@ -353,20 +356,37 @@ app.whenReady().then(async () => {
   })
 
   // Auto-update
+  const sendUpdateStatus = (status: string, payload: Record<string, unknown> = {}) => {
+    mainWindow?.webContents.send('update:status', { status, ...payload })
+  }
+
   autoUpdater.on('error', (err) => {
     console.error('[autoUpdater] error:', err)
+    sendUpdateStatus('error', { error: String(err?.message ?? err) })
   })
-  autoUpdater.on('checking-for-update', () => console.log('[autoUpdater] checking...'))
-  autoUpdater.on('update-available', (info) => console.log('[autoUpdater] update available:', info.version))
-  autoUpdater.on('update-not-available', () => console.log('[autoUpdater] up to date'))
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[autoUpdater] checking...')
+    sendUpdateStatus('checking')
+  })
+  autoUpdater.on('update-available', (info) => {
+    console.log('[autoUpdater] update available:', info.version)
+    sendUpdateStatus('available', { version: info.version })
+  })
+  autoUpdater.on('update-not-available', () => {
+    console.log('[autoUpdater] up to date')
+    sendUpdateStatus('not-available')
+  })
   autoUpdater.on('download-progress', (p) => {
     console.log(`[autoUpdater] downloading ${Math.round(p.percent)}% (${p.transferred}/${p.total})`)
+    sendUpdateStatus('downloading', { percent: p.percent })
   })
   autoUpdater.on('update-downloaded', (info) => {
     console.log('[autoUpdater] update downloaded:', info.version)
     mainWindow?.webContents.send('update:downloaded', info.version)
+    sendUpdateStatus('downloaded', { version: info.version })
   })
 
+  const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
   if (!isDev) {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
@@ -374,9 +394,29 @@ app.whenReady().then(async () => {
     autoUpdater.checkForUpdates().catch((err) => {
       console.error('[autoUpdater] checkForUpdates failed:', err)
     })
+    setInterval(() => {
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.error('[autoUpdater] periodic check failed:', err)
+      })
+    }, UPDATE_CHECK_INTERVAL_MS)
   }
   ipcMain.handle('update:install', () => {
     autoUpdater.quitAndInstall()
+  })
+  ipcMain.handle('update:check', async () => {
+    if (isDev) {
+      sendUpdateStatus('checking')
+      setTimeout(() => sendUpdateStatus('not-available'), 400)
+      return { ok: true, dev: true }
+    }
+    try {
+      await autoUpdater.checkForUpdates()
+      return { ok: true }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      sendUpdateStatus('error', { error: message })
+      return { ok: false, error: message }
+    }
   })
 
   ipcMain.handle('app:version', () => app.getVersion())
