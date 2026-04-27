@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Hotkeys
   getHotkeys: () => ipcRenderer.invoke('hotkeys:get'),
+  getDefaultHotkeys: () => ipcRenderer.invoke('hotkeys:getDefaults'),
+  setHotkeys: (hotkeys: Record<string, string>) => ipcRenderer.invoke('hotkeys:set', hotkeys),
+  resetHotkeys: () => ipcRenderer.invoke('hotkeys:reset'),
+  setHotkeyRecording: (recording: boolean) => ipcRenderer.invoke('hotkeys:setRecording', recording),
 
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),

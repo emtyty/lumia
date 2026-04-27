@@ -3,7 +3,7 @@ import { join } from 'path'
 import { setupCapture } from './capture'
 import { setupVideo } from './video'
 import { registerOverlayHwnd, unregisterOverlayHwnd } from './native-input'
-import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
+import { setupHotkeys, teardownHotkeys, getHotkeys, saveHotkeys, resetHotkeys, defaultHotkeys, type HotkeyConfig } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
 import { setupScrollCapture, getOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
@@ -690,6 +690,19 @@ app.whenReady().then(async () => {
 
   // IPC: Settings
   ipcMain.handle('hotkeys:get', () => getHotkeys())
+  ipcMain.handle('hotkeys:getDefaults', () => ({ ...defaultHotkeys }))
+  ipcMain.handle('hotkeys:set', (_e, hotkeys: HotkeyConfig) => {
+    saveHotkeys(hotkeys)
+    return getHotkeys()
+  })
+  ipcMain.handle('hotkeys:reset', () => resetHotkeys())
+  // Renderer toggles this while the Settings UI is recording a new binding,
+  // so existing global shortcuts don't fire (and double-bind) on the keys
+  // the user is pressing to set the new combo.
+  ipcMain.handle('hotkeys:setRecording', (_e, recording: boolean) => {
+    if (recording) teardownHotkeys()
+    else setupHotkeys()
+  })
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => {
     setSetting(key, value as AppSettings[typeof key])

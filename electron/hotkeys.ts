@@ -4,11 +4,11 @@ import { dispatchCapture } from './capture'
 import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
 import { startVideoCapture, requestStop as requestVideoStop, isRecordingActive } from './video'
 
-interface HotkeyConfig {
+export interface HotkeyConfig {
   [action: string]: string
 }
 
-const defaultHotkeys: HotkeyConfig = {
+export const defaultHotkeys: HotkeyConfig = {
   RectangleRegion:      'Ctrl+Shift+1',
   ActiveWindow:         'Ctrl+Shift+2',
   ActiveMonitor:        'Ctrl+Shift+3',
@@ -94,6 +94,14 @@ export function saveHotkeys(hotkeys: HotkeyConfig) {
   store.set('hotkeys', hotkeys)
   teardownHotkeys()
   setupHotkeys()
+}
+
+export function resetHotkeys(): HotkeyConfig {
+  store.set('hotkeys', { ...defaultHotkeys })
+  store.set('schemaVersion', HOTKEY_SCHEMA_VERSION)
+  teardownHotkeys()
+  setupHotkeys()
+  return { ...defaultHotkeys }
 }
 
 export function setupHotkeys() {

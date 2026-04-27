@@ -43,6 +43,10 @@ declare global {
       saveHistoryAnnotations: (id: string, annotations: import('./types').AnnotationObject[], flattenedDataUrl?: string) => Promise<import('./types').HistoryItem | null>
 
       getHotkeys: () => Promise<Record<string, string>>
+      getDefaultHotkeys: () => Promise<Record<string, string>>
+      setHotkeys: (hotkeys: Record<string, string>) => Promise<Record<string, string>>
+      resetHotkeys: () => Promise<Record<string, string>>
+      setHotkeyRecording: (recording: boolean) => Promise<void>
       getSettings: () => Promise<AppSettings>
       setSetting: (key: keyof AppSettings, value: unknown) => Promise<void>
 

@@ -343,18 +343,10 @@ export default function Settings() {
 
             {/* Hotkeys */}
             <Section id="hotkeys" title="Keyboard Shortcuts" icon="keyboard">
-              <div className="space-y-1">
-                {HOTKEY_REFERENCE.map(({ action, key }) => (
-                  <div key={action} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
-                    <span className="text-xs font-medium text-slate-300" style={{ fontFamily: 'Manrope, sans-serif' }}>{action}</span>
-                    <kbd className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[11px] font-mono text-slate-400">{key}</kbd>
-                  </div>
-                ))}
-              </div>
+              <HotkeyEditor />
               <p className="text-[11px] text-slate-500 mt-3">
-                Tip: while a recording is in progress, pressing any of the video hotkeys (Ctrl+Shift+6 / 7 / 8) stops the recording instead of starting a new one.
+                Tip: while a recording is in progress, pressing any of the video hotkeys stops it instead of starting a new one.
               </p>
-              <p className="text-[11px] text-slate-500 mt-2">Hotkey rebinding coming in a future release.</p>
             </Section>
 
           </div>
@@ -364,16 +356,185 @@ export default function Settings() {
   )
 }
 
-const HOTKEY_REFERENCE = [
-  { action: 'Region (Screenshot)',     key: 'Ctrl+Shift+1' },
-  { action: 'Window (Screenshot)',     key: 'Ctrl+Shift+2' },
-  { action: 'Screen (Screenshot)',     key: 'Ctrl+Shift+3' },
-  { action: 'All Screens (Screenshot)', key: 'Ctrl+Shift+4' },
-  { action: 'Scrolling (Screenshot)',  key: 'Ctrl+Shift+5' },
-  { action: 'Region (Video)',          key: 'Ctrl+Shift+6' },
-  { action: 'Window (Video)',          key: 'Ctrl+Shift+7' },
-  { action: 'Screen (Video)',          key: 'Ctrl+Shift+8' },
+const HOTKEY_ROWS: { action: string; label: string }[] = [
+  { action: 'RectangleRegion',      label: 'Region (Screenshot)' },
+  { action: 'ActiveWindow',         label: 'Window (Screenshot)' },
+  { action: 'ActiveMonitor',        label: 'Screen (Screenshot)' },
+  { action: 'PrintScreen',          label: 'All Screens (Screenshot)' },
+  { action: 'ScrollingCapture',     label: 'Scrolling (Screenshot)' },
+  { action: 'ScreenRecorder',       label: 'Region (Video)' },
+  { action: 'ScreenRecorderWindow', label: 'Window (Video)' },
+  { action: 'ScreenRecorderScreen', label: 'Screen (Video)' },
 ]
+
+// Map a browser KeyboardEvent.code to the key portion of an Electron accelerator.
+// Returns null when the key isn't a usable hotkey target (modifier-only, dead key, etc.).
+function codeToAcceleratorKey(code: string, key: string): string | null {
+  if (code.startsWith('Digit')) return code.slice(5)
+  if (code.startsWith('Numpad')) {
+    const tail = code.slice(6)
+    if (/^\d$/.test(tail)) return `num${tail}`
+    if (tail === 'Add') return 'numadd'
+    if (tail === 'Subtract') return 'numsub'
+    if (tail === 'Multiply') return 'nummult'
+    if (tail === 'Divide') return 'numdiv'
+    if (tail === 'Decimal') return 'numdec'
+    if (tail === 'Enter') return 'Return'
+  }
+  if (code.startsWith('Key')) return code.slice(3)
+  if (/^F\d{1,2}$/.test(code)) return code
+  switch (code) {
+    case 'Space':       return 'Space'
+    case 'Enter':       return 'Return'
+    case 'Tab':         return 'Tab'
+    case 'Backspace':   return 'Backspace'
+    case 'Delete':      return 'Delete'
+    case 'Insert':      return 'Insert'
+    case 'Home':        return 'Home'
+    case 'End':         return 'End'
+    case 'PageUp':      return 'PageUp'
+    case 'PageDown':    return 'PageDown'
+    case 'ArrowUp':     return 'Up'
+    case 'ArrowDown':   return 'Down'
+    case 'ArrowLeft':   return 'Left'
+    case 'ArrowRight':  return 'Right'
+    case 'Comma':       return ','
+    case 'Period':      return '.'
+    case 'Slash':       return '/'
+    case 'Backslash':   return '\\'
+    case 'Semicolon':   return ';'
+    case 'Quote':       return '\''
+    case 'BracketLeft': return '['
+    case 'BracketRight':return ']'
+    case 'Minus':       return '-'
+    case 'Equal':       return '='
+    case 'Backquote':   return '`'
+  }
+  // Modifier-only events have key like "Control"/"Shift"/"Alt"/"Meta" — reject.
+  if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph'].includes(key)) return null
+  return null
+}
+
+function eventToAccelerator(e: React.KeyboardEvent | KeyboardEvent): string | null {
+  const key = codeToAcceleratorKey(e.code, e.key)
+  if (!key) return null
+  const parts: string[] = []
+  if (e.ctrlKey)  parts.push('Ctrl')
+  if (e.metaKey)  parts.push(navigator.platform.toLowerCase().includes('mac') ? 'Cmd' : 'Super')
+  if (e.altKey)   parts.push('Alt')
+  if (e.shiftKey) parts.push('Shift')
+  parts.push(key)
+  return parts.join('+')
+}
+
+function isAcceleratorValid(accel: string): boolean {
+  // F-keys are fine alone; everything else needs at least one modifier so it
+  // doesn't steal a plain keystroke globally.
+  if (/^F\d{1,2}$/.test(accel)) return true
+  return /\+/.test(accel) && /^(Ctrl|Cmd|Super|Alt|Shift)\+/.test(accel)
+}
+
+function HotkeyEditor() {
+  const [hotkeys, setHotkeys] = useState<Record<string, string>>({})
+  const [recordingAction, setRecordingAction] = useState<string | null>(null)
+  const [error, setError] = useState<string>('')
+
+  useEffect(() => {
+    window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
+  }, [])
+
+  // Capture key events while recording. Window-level so the user doesn't have
+  // to keep focus on the button. Also pauses global shortcuts in main so the
+  // existing bindings don't fire on whatever keys the user is pressing.
+  useEffect(() => {
+    if (!recordingAction) return
+    void window.electronAPI?.setHotkeyRecording(true)
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // Esc with no modifiers cancels the recording.
+      if (e.code === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        setRecordingAction(null)
+        setError('')
+        return
+      }
+      const accel = eventToAccelerator(e)
+      if (!accel) return // pure modifier press — keep listening
+      if (!isAcceleratorValid(accel)) {
+        setError('Shortcut must include Ctrl, Cmd, Alt, or Shift (or be an F-key).')
+        return
+      }
+      const dupe = Object.entries(hotkeys).find(([a, k]) => a !== recordingAction && k === accel)
+      if (dupe) {
+        const dupeLabel = HOTKEY_ROWS.find(r => r.action === dupe[0])?.label ?? dupe[0]
+        setError(`Already used by "${dupeLabel}". Pick a different combination.`)
+        return
+      }
+      const next = { ...hotkeys, [recordingAction]: accel }
+      setHotkeys(next)
+      setRecordingAction(null)
+      setError('')
+      window.electronAPI?.setHotkeys(next).then(saved => { if (saved) setHotkeys(saved) })
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      void window.electronAPI?.setHotkeyRecording(false)
+    }
+  }, [recordingAction, hotkeys])
+
+  const handleReset = async () => {
+    const restored = await window.electronAPI?.resetHotkeys()
+    if (restored) setHotkeys(restored)
+    setRecordingAction(null)
+    setError('')
+  }
+
+  return (
+    <>
+      <div className="space-y-1">
+        {HOTKEY_ROWS.map(({ action, label }) => {
+          const isRecording = recordingAction === action
+          const current = hotkeys[action] ?? ''
+          return (
+            <div key={action} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
+              <span className="text-xs font-medium text-slate-300" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setError('')
+                  setRecordingAction(isRecording ? null : action)
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-mono border transition-colors ${
+                  isRecording
+                    ? 'bg-primary/20 border-primary/50 text-primary animate-pulse'
+                    : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                }`}
+              >
+                {isRecording ? 'Press keys… (Esc to cancel)' : current || 'Click to set'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {error && (
+        <p className="text-[11px] text-red-400 mt-3">{error}</p>
+      )}
+      <div className="flex items-center gap-3 mt-3">
+        <p className="text-[11px] text-slate-500 flex-1">
+          Click a shortcut, then press the new combination. Must include Ctrl, Cmd, Alt, or Shift.
+        </p>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="shrink-0 self-center text-[11px] font-medium text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg border border-white/10 hover:bg-white/5 whitespace-nowrap"
+        >
+          Reset to defaults
+        </button>
+      </div>
+    </>
+  )
+}
 
 function Section({ id, title, icon, children }: { id: string; title: string; icon: string; children: React.ReactNode }) {
   return (
