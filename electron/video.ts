@@ -300,7 +300,7 @@ async function saveRecordingBlob(
   buffer: ArrayBuffer | Uint8Array | Buffer,
   thumbnailDataUrl: string,
   durationMs: number,
-): Promise<string> {
+): Promise<{ filePath: string; historyId?: string }> {
   const { writeFile, mkdir } = await import('fs/promises')
 
   // Originals (images + videos) live in a single fixed location. The user's
@@ -325,11 +325,15 @@ async function saveRecordingBlob(
 
   await writeFile(filePath, bytes)
 
-  // History entry
+  // History entry. Capture the id so the editor can pass it through to
+  // runWorkflow — without it, a follow-up Upload R2 lands in the "no
+  // historyId" branch and creates a duplicate entry.
+  let historyId: string | undefined
   const historyStore = getHistoryStore()
   if (historyStore) {
+    const id: string = require('crypto').randomUUID()
     historyStore.add({
-      id: require('crypto').randomUUID(),
+      id,
       timestamp: Date.now(),
       name: filename,
       filePath,
@@ -337,6 +341,7 @@ async function saveRecordingBlob(
       type: 'recording',
       uploads: [],
     })
+    historyId = id
   }
 
   showNotification({
@@ -344,7 +349,7 @@ async function saveRecordingBlob(
     thumbnailDataUrl,
   })
 
-  return filePath
+  return { filePath, historyId }
 }
 
 // ── Setup IPC ──────────────────────────────────────────────────────────────
@@ -506,7 +511,7 @@ export function setupVideo() {
   // RecorderHost saves final blob
   ipcMain.handle('recorder:save-blob', async (_e, buffer: ArrayBuffer, thumbnailDataUrl: string, durationMs: number) => {
     try {
-      const filePath = await saveRecordingBlob(buffer, thumbnailDataUrl, durationMs)
+      const { filePath, historyId } = await saveRecordingBlob(buffer, thumbnailDataUrl, durationMs)
       sendToToolbar('toolbar:state', { phase: 'done' })
 
       // Open the freshly-saved recording in the video annotator (same pattern
@@ -522,6 +527,7 @@ export function setupVideo() {
             kind: 'video',
             filePath,
             name: basename(filePath),
+            historyId,
           })
         }
         closeRecordingSession()
