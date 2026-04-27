@@ -468,6 +468,12 @@ app.whenReady().then(async () => {
     }, UPDATE_CHECK_INTERVAL_MS)
   }
   ipcMain.handle('update:install', () => {
+    // Must set isQuitting before quitAndInstall — electron-updater triggers
+    // app.quit() internally, and our before-quit handler hides to tray
+    // unless isQuitting is true, which would silently swallow the restart.
+    updateDownloaded = false
+    cancelAutoInstall()
+    isQuitting = true
     autoUpdater.quitAndInstall()
   })
   ipcMain.handle('update:check', async () => {
