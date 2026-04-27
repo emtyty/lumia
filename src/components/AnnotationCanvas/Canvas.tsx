@@ -69,6 +69,10 @@ export interface CanvasHandle {
   /** Current list of annotation shapes — plain data, JSON-serializable. Used
    *  by history persistence so annotations survive across Editor sessions. */
   getObjects: () => DrawObject[]
+  /** Append shapes programmatically as a single undo step. Caller-provided
+   *  ids are replaced with fresh canvas-namespaced ones so Konva node lookup
+   *  stays consistent. */
+  addObjects: (objs: Omit<DrawObject, 'id'>[]) => void
 }
 
 interface Props {
@@ -526,12 +530,21 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       commitObjects([])
     }, [commitObjects])
 
+    // Programmatic append: one history entry covers the whole batch so a
+    // single Undo removes them all together (used by auto-blur to inject
+    // detected regions as Konva blur shapes).
+    const addObjects = useCallback((objs: Omit<DrawObject, 'id'>[]) => {
+      if (objs.length === 0) return
+      const stamped: DrawObject[] = objs.map(o => ({ ...o, id: uid() }))
+      commitObjects([...objectsRef.current, ...stamped])
+    }, [commitObjects])
+
     // Expose imperative handle to parent
     useImperativeHandle(ref, () => ({
       undo, redo, clear: clearViaCommit, canUndo, canRedo,
       zoomIn, zoomOut, zoomReset, zoomLevel: userZoom,
-      toDataURL, toCanvas, toAnnotationsCanvas, getObjects,
-    }), [undo, redo, clearViaCommit, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas, getObjects])
+      toDataURL, toCanvas, toAnnotationsCanvas, getObjects, addObjects,
+    }), [undo, redo, clearViaCommit, canUndo, canRedo, zoomIn, zoomOut, zoomReset, userZoom, toDataURL, toCanvas, toAnnotationsCanvas, getObjects, addObjects])
 
     // ── Export trigger (legacy path — kept for Editor's workflow buttons) ────
     useEffect(() => {

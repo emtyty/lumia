@@ -230,8 +230,6 @@ export function detectSensitiveData(
   if (words.length === 0) return []
 
   const { text, spans } = buildTextWithMapping(words)
-  console.log('[sensitive-detect] OCR words:', words.map(w => w.text))
-  console.log('[sensitive-detect] Joined text:', JSON.stringify(text))
   const regions: SensitiveRegion[] = []
 
   for (const def of PATTERNS) {
@@ -265,13 +263,21 @@ export function detectSensitiveData(
   return deduplicateRegions(regions)
 }
 
+// Two genuinely-distinct occurrences of the same secret (e.g. an email shown
+// twice on the same screen) yield non-overlapping bboxes — both must survive
+// dedup. The threshold only catches the same instance picked up by multiple
+// patterns (e.g. an AWS key matching both the AWS-specific and the generic
+// `api_key=...` patterns), where the smaller bbox is contained inside the
+// larger one and the min-area ratio approaches 1.
+const DEDUP_OVERLAP_THRESHOLD = 0.85
+
 function deduplicateRegions(regions: SensitiveRegion[]): SensitiveRegion[] {
   const result: SensitiveRegion[] = []
 
   for (const region of regions) {
     const isDuplicate = result.some(existing =>
       existing.category === region.category &&
-      bboxOverlap(existing.bbox, region.bbox) > 0.5
+      bboxOverlap(existing.bbox, region.bbox) > DEDUP_OVERLAP_THRESHOLD
     )
     if (!isDuplicate) result.push(region)
   }

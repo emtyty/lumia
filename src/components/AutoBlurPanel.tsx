@@ -46,14 +46,12 @@ interface Props {
   regions: SensitiveRegion[]
   selectedIds: Set<string>
   scanning: boolean
-  canUndo: boolean
   ocrTimeMs?: number
   onToggleRegion: (id: string) => void
   onSelectAll: () => void
   onDeselectAll: () => void
   onApplyBlur: () => void
   onScan: () => void
-  onUndo: () => void
   onClose: () => void
 }
 
@@ -61,14 +59,12 @@ export function AutoBlurPanel({
   regions,
   selectedIds,
   scanning,
-  canUndo,
   ocrTimeMs,
   onToggleRegion,
   onSelectAll,
   onDeselectAll,
   onApplyBlur,
   onScan,
-  onUndo,
   onClose
 }: Props) {
   // Group regions by category
@@ -126,17 +122,6 @@ export function AutoBlurPanel({
               <span className="material-symbols-outlined text-sm">search</span>
               Scan Image
             </button>
-
-            {/* Undo previous blur */}
-            {canUndo && (
-              <button
-                onClick={onUndo}
-                className="flex items-center gap-1.5 text-[10px] text-slate-500 hover:text-white transition-colors"
-              >
-                <span className="material-symbols-outlined text-xs">undo</span>
-                Undo last blur
-              </button>
-            )}
           </div>
         )}
 
@@ -249,18 +234,6 @@ export function AutoBlurPanel({
             <span className="material-symbols-outlined text-sm">blur_on</span>
             Blur Selected ({selectedIds.size})
           </button>
-
-          {/* Undo */}
-          {canUndo && (
-            <button
-              onClick={onUndo}
-              className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-xl text-[10px] font-semibold text-slate-500 hover:text-white bg-white/[0.03] hover:bg-white/[0.06] border border-white/5 transition-all"
-              style={{ fontFamily: 'Manrope, sans-serif' }}
-            >
-              <span className="material-symbols-outlined text-xs">undo</span>
-              Undo Last Blur
-            </button>
-          )}
         </div>
       )}
     </div>

@@ -136,7 +136,6 @@ declare global {
 
       // OCR & Auto-Blur
       ocrScan: (dataUrl: string) => Promise<import('@/types').AutoBlurResult>
-      ocrApplyBlur: (dataUrl: string, regions: import('@/types').SensitiveRegion[], blockSize?: number) => Promise<string>
 
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<void>

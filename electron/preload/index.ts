@@ -178,8 +178,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // OCR & Auto-Blur
   ocrScan: (dataUrl: string) =>
     ipcRenderer.invoke('ocr:scan', dataUrl),
-  ocrApplyBlur: (dataUrl: string, regions: unknown[], blockSize?: number) =>
-    ipcRenderer.invoke('ocr:apply-blur', dataUrl, regions, blockSize),
 
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),

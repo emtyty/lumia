@@ -112,7 +112,6 @@ export default function Editor() {
   const [autoBlurSelected, setAutoBlurSelected] = useState<Set<string>>(new Set())
   const [autoBlurOcrTime, setAutoBlurOcrTime] = useState<number>()
   const [, setAutoBlurDetectTime] = useState<number>()
-  const [autoBlurHistory, setAutoBlurHistory] = useState<string[]>([])
 
   // Video is view-only here — plain HTML5 <video controls> for playback. Save
   // / Copy / Upload R2 operate on the source file directly, not on frames.
@@ -129,7 +128,6 @@ export default function Editor() {
     setExportTrigger(0)
     setAutoBlurRegions([])
     setAutoBlurSelected(new Set())
-    setAutoBlurHistory([])
     setAutoBlurScanning(false)
     setAutoBlurOcrTime(undefined)
     setAutoBlurDetectTime(undefined)
@@ -436,35 +434,25 @@ export default function Editor() {
     }
   }, [imageDataUrl, autoBlurScanning, showToast])
 
-  const handleApplyAutoBlur = useCallback(async () => {
+  const handleApplyAutoBlur = useCallback(() => {
     const selected = autoBlurRegions.filter(r => autoBlurSelected.has(r.id))
     if (selected.length === 0) return
-    try {
-      const blurred = await window.electronAPI?.ocrApplyBlur(imageDataUrl, selected, 10)
-      if (blurred) {
-        setAutoBlurHistory(prev => [...prev, imageDataUrl])
-        setImageDataUrl(blurred)
-        setAutoBlurRegions([])
-        setAutoBlurSelected(new Set())
-        showToast(`Blurred ${selected.length} region${selected.length > 1 ? 's' : ''}`, 'blur_on')
-      }
-    } catch {
-      showToast('Failed to apply blur', 'error', 'error')
-    }
-  }, [autoBlurRegions, autoBlurSelected, imageDataUrl, showToast])
-
-  const handleAutoBlurUndo = useCallback(() => {
-    setAutoBlurHistory(prev => {
-      if (prev.length === 0) return prev
-      const next = [...prev]
-      const restored = next.pop()!
-      setImageDataUrl(restored)
-      setAutoBlurRegions([])
-      setAutoBlurSelected(new Set())
-      showToast('Blur undone', 'undo')
-      return next
-    })
-  }, [showToast])
+    // Inject detected regions as Konva blur annotations — non-destructive,
+    // re-editable, and merged into the canvas's undo stack as one entry.
+    const objs: Omit<DrawObject, 'id'>[] = selected.map(r => ({
+      type: 'blur',
+      x: r.bbox.x,
+      y: r.bbox.y,
+      width: r.bbox.width,
+      height: r.bbox.height,
+      color: '#000000',
+      strokeWidth: 6,
+    }))
+    canvasRef.current?.addObjects(objs)
+    setAutoBlurRegions([])
+    setAutoBlurSelected(new Set())
+    showToast(`Blurred ${selected.length} region${selected.length > 1 ? 's' : ''}`, 'blur_on')
+  }, [autoBlurRegions, autoBlurSelected, showToast])
 
   /* ── Empty state (no source at all — covers both image and video modes) ── */
   const hasSource = isVideo ? !!videoFilePath : !!imageDataUrl
@@ -666,7 +654,6 @@ export default function Editor() {
               regions={autoBlurRegions}
               selectedIds={autoBlurSelected}
               scanning={autoBlurScanning}
-              canUndo={autoBlurHistory.length > 0}
               ocrTimeMs={autoBlurOcrTime}
               onToggleRegion={(id) => setAutoBlurSelected(prev => {
                 const next = new Set(prev)
@@ -677,7 +664,6 @@ export default function Editor() {
               onDeselectAll={() => setAutoBlurSelected(new Set())}
               onApplyBlur={handleApplyAutoBlur}
               onScan={handleAutoBlurScan}
-              onUndo={handleAutoBlurUndo}
               onClose={() => setShowAutoBlur(false)}
             />
           </aside>

@@ -778,13 +778,11 @@ app.whenReady().then(async () => {
   })
 
   // IPC: OCR & Auto-Blur
+  // Pixel-level blur application is gone — auto-blur regions are injected as
+  // re-editable Konva annotations on the renderer side, not flattened here.
   ipcMain.handle('ocr:scan', async (_e, dataUrl: string) => {
     const { scanForSensitiveData } = await import('./auto-blur')
     return scanForSensitiveData(dataUrl)
-  })
-  ipcMain.handle('ocr:apply-blur', async (_e, dataUrl: string, regions: import('./types').SensitiveRegion[], blockSize?: number) => {
-    const { applyBlurToImage } = await import('./auto-blur')
-    return applyBlurToImage(dataUrl, regions, blockSize)
   })
 
   // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
