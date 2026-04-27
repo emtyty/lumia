@@ -101,6 +101,12 @@ const uid = () => `obj-${++idCounter}-${Date.now()}`
 // disappears entirely.
 const PAN_MIN_VISIBLE = 80
 
+// Stroke-width slider doubles as the blur-intensity control when the blur
+// tool is selected. Map slider value (1–20) to a CSS blur radius in px.
+function blurRadiusFromStrokeWidth(sw: number | undefined): number {
+  return Math.max(2, Math.round((sw ?? 6) * 2))
+}
+
 function clampPan(
   pan: { x: number; y: number },
   containerW: number,
@@ -124,21 +130,12 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     // ── Background ────────────────────────────────────────────────────────────
     const imageDataUrl = background.kind === 'image' ? background.dataUrl : ''
     const [bgImage] = useImage(imageDataUrl)
-    const [blurredBg, setBlurredBg] = useState<HTMLCanvasElement | null>(null)
-
-    // Pre-compute a blurred version of the image once on load. Blur tool samples
-    // from this canvas so mouse-drag doesn't trigger a new filter pass.
-    useEffect(() => {
-      if (background.kind !== 'image' || !bgImage) { setBlurredBg(null); return }
-      const c = document.createElement('canvas')
-      c.width  = bgImage.width
-      c.height = bgImage.height
-      const ctx = c.getContext('2d')
-      if (!ctx) return
-      ctx.filter = 'blur(12px)'
-      ctx.drawImage(bgImage, 0, 0)
-      setBlurredBg(c)
-    }, [bgImage, background.kind])
+    // Blur tool re-uses the stroke-width slider as a blur-intensity control.
+    // We cache one pre-blurred canvas per radius so dragging the slider only
+    // costs a single CSS-filter pass per new value, not one per mouse move.
+    const blurCacheRef = useRef<Map<number, HTMLCanvasElement>>(new Map())
+    const [blurCacheVersion, setBlurCacheVersion] = useState(0)
+    void blurCacheVersion  // referenced by Konva render reads — forces redraw on cache growth
 
     // For video: repaint the Konva layer on every new frame. The KonvaImage's
     // `image` prop keeps the same HTMLVideoElement reference, so React/Konva
@@ -235,6 +232,41 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     const objectsRef = useRef(objects)
     useEffect(() => { objectsRef.current = objects }, [objects])
+
+    // Drop cached blurs whenever the source image swaps so stale radii from a
+    // previous bitmap don't leak in. The populate effect below refills as
+    // soon as render asks for a radius.
+    useEffect(() => {
+      blurCacheRef.current.clear()
+      setBlurCacheVersion(v => v + 1)
+    }, [bgImage])
+
+    // Populate the blur cache whenever a new radius is needed — either by an
+    // existing blur object on the canvas or by the live tool/slider preview.
+    // Each entry is a CSS-blur pass over the source image, so the work is
+    // cheap and amortised across re-renders.
+    useEffect(() => {
+      if (background.kind !== 'image' || !bgImage) return
+      const needed = new Set<number>()
+      for (const obj of objects) {
+        if (obj.type === 'blur') needed.add(blurRadiusFromStrokeWidth(obj.strokeWidth))
+      }
+      if (tool === 'blur') needed.add(blurRadiusFromStrokeWidth(strokeWidth))
+      let added = false
+      for (const r of needed) {
+        if (blurCacheRef.current.has(r)) continue
+        const c = document.createElement('canvas')
+        c.width  = bgImage.width
+        c.height = bgImage.height
+        const ctx = c.getContext('2d')
+        if (!ctx) continue
+        ctx.filter = `blur(${r}px)`
+        ctx.drawImage(bgImage, 0, 0)
+        blurCacheRef.current.set(r, c)
+        added = true
+      }
+      if (added) setBlurCacheVersion(v => v + 1)
+    }, [bgImage, background.kind, objects, tool, strokeWidth])
 
     // Notify parent on every commit. Depending on `canUndo`/`canRedo` alone
     // would miss changes where those booleans don't toggle — e.g. after the
@@ -696,6 +728,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       if (obj.type === 'blur') {
         const bx = obj.x ?? 0, by = obj.y ?? 0
         const bw = obj.width ?? 0, bh = obj.height ?? 0
+        const radius = blurRadiusFromStrokeWidth(obj.strokeWidth)
+        const blurredBg = blurCacheRef.current.get(radius) ?? null
         // Video background has no pre-blurred sample — fall through to the
         // placeholder frosted rect. (Video blur is a v1.5 feature.)
         if (!blurredBg || bw <= 0 || bh <= 0) {
