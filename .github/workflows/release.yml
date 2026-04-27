@@ -47,6 +47,12 @@ jobs:
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
+      # Rebuild Swift helpers as universal binaries so the same DMG works on
+      # both arm64 and x86_64 Macs. Committed binaries (if any) are only used
+      # for local dev — CI always produces fresh universal ones here.
+      - name: Compile macOS Swift helpers (universal)
+        run: bash build/compile-mac-helpers.sh
+
       - name: Package & publish to GitHub Releases
         run: pnpm exec electron-builder --mac --publish always
         env:

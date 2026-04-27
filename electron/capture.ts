@@ -3,6 +3,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays } from './index'
 import { getWindowAtPointPhysical } from './native-input'
+import { getMacWindowAtPoint } from './mac-window-pick'
 import { setOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
@@ -133,10 +134,45 @@ export function setupCapture() {
     return overlaySourcePayloads.get(e.sender.id) ?? null
   })
 
-  // Window-pick mode: return window rect at screen coords. Native HWND lookup
-  // + dipToScreenPoint/screenToDipRect are Windows-only — bail out on macOS so
-  // the overlay just sits idle instead of throwing on every hover tick.
-  ipcMain.handle('window-pick:get-window-at', (_e, x: number, y: number) => {
+  // Window-pick mode: return window rect at screen coords.
+  //
+  // Windows: HWND lookup via WindowFromPoint, then DIP/physical conversions.
+  // macOS:   delegated to the Swift CGWindowList helper (see mac-window-pick.ts).
+  ipcMain.handle('window-pick:get-window-at', async (_e, x: number, y: number) => {
+    if (process.platform === 'darwin') {
+      try {
+        const displayId = getOverlayDisplayId()
+        const allDisplays = screen.getAllDisplays()
+        const display = allDisplays.find(d => d.id === displayId) ?? screen.getPrimaryDisplay()
+
+        // Overlay-local DIP → screen-DIP. macOS uses points throughout (Quartz
+        // global coords match Electron's display.bounds), so no scale-factor dance.
+        const screenX = x + display.bounds.x
+        const screenY = y + display.bounds.y
+
+        const rect = await getMacWindowAtPoint(screenX, screenY)
+        if (!rect) return null
+
+        // Clip to overlay's display so the highlight (and downstream crop)
+        // never extends past the visible area when a window spans displays.
+        const left   = Math.max(display.bounds.x, Math.round(rect.x))
+        const top    = Math.max(display.bounds.y, Math.round(rect.y))
+        const right  = Math.min(display.bounds.x + display.bounds.width,  Math.round(rect.x + rect.width))
+        const bottom = Math.min(display.bounds.y + display.bounds.height, Math.round(rect.y + rect.height))
+        if (right <= left || bottom <= top) return null
+
+        return {
+          x: left - display.bounds.x,
+          y: top - display.bounds.y,
+          width: right - left,
+          height: bottom - top,
+        }
+      } catch (err: any) {
+        console.error('[window-pick mac] error:', err?.message ?? err)
+        return null
+      }
+    }
+
     if (process.platform !== 'win32') return null
     try {
       const displayId = getOverlayDisplayId()
