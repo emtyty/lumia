@@ -1001,7 +1001,7 @@ app.whenReady().then(async () => {
     const { writeFile, mkdir } = await import('fs/promises')
     const { homedir } = await import('os')
     const { join } = await import('path')
-    const dir = join(homedir(), 'Videos', 'ShareAnywhere')
+    const dir = join(homedir(), 'Videos', 'Lumia')
     await mkdir(dir, { recursive: true })
     const filePath = join(dir, filename)
     await writeFile(filePath, Buffer.from(buffer))

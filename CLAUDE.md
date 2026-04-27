@@ -107,7 +107,7 @@ Releases are produced by **GitHub Actions** (`.github/workflows/release.yml`), n
 - **Main window**: 1250×700 (min 900×600), frameless, `#07070b` background. macOS uses `hiddenInset` titlebar with traffic lights at `{x:18, y:20}`; Windows uses native overlay controls (`titleBarOverlay`).
 - **Overlay windows**: One transparent fullscreen `BrowserWindow` per display, `alwaysOnTop: 'pop-up-menu'`, `setVisibleOnAllWorkspaces(true)`. A 100 ms cursor-poll switches the "active" overlay as the cursor moves between displays; inactive overlays use `setIgnoreMouseEvents(true, { forward: true })` to pass clicks through to the active one. The `overlay:drawing` IPC locks the active display while the user is drawing a region so the cursor poll can't yank focus mid-drag.
 - **Recording windows**: `RecorderHost` (hidden, owns the stream), `RecordingToolbar` (floating controls), `RecordingBorder` (visual outline) — all created and torn down by `video.ts`.
-- **Close behavior**: clicking close on the main window hides to tray; on `/editor` it instead navigates back to `/dashboard` (X is "discard capture" there). Real quit only via tray menu / `ExitShareAnywhere` hotkey / explicit `markQuitting()`.
+- **Close behavior**: clicking close on the main window hides to tray; on `/editor` it instead navigates back to `/dashboard` (X is "discard capture" there). Real quit only via tray menu / `ExitLumia` hotkey / explicit `markQuitting()`.
 - **Single-instance lock**: `app.requestSingleInstanceLock()` prevents Chromium cache lock errors when relaunching while the tray instance is still alive.
 
 ### Persistence (electron-store)

@@ -49,22 +49,23 @@ export const ALL_ACTIONS = [
   // App
   'DisableHotkeys', 'OpenScreenshotsFolder',
   'OpenHistory', 'OpenImageHistory', 'ToggleActionsToolbar',
-  'ToggleTrayMenu', 'ExitShareAnywhere'
+  'ToggleTrayMenu', 'ExitLumia'
 ]
 
 // Bump this whenever the default capture-mode bindings change in a way that
 // should retake control from users who never hand-customized. On load, if the
 // stored version is stale we rewrite the capture/recorder bindings to the new
 // defaults while leaving app-level hotkeys alone (those have stable defaults).
-const HOTKEY_SCHEMA_VERSION = 5
+const HOTKEY_SCHEMA_VERSION = 6
 const CAPTURE_ACTIONS = [
   'RectangleRegion', 'ActiveWindow', 'ActiveMonitor', 'PrintScreen', 'ScrollingCapture',
   'ScreenRecorder', 'ScreenRecorderWindow', 'ScreenRecorderScreen',
 ] as const
-// Actions that were removed in a migration — stripped from the saved config
-// so stale bindings don't linger and accidentally block new keys (e.g. S
-// was `StopScreenRecording` and is now `ScreenRecorderScreen`).
-const REMOVED_ACTIONS = ['StopScreenRecording', 'OpenMainWindow', 'WorkflowPicker'] as const
+// Actions that were removed (or renamed) in a migration — stripped from the
+// saved config so stale bindings don't linger and accidentally block new keys
+// (e.g. S was `StopScreenRecording` and is now `ScreenRecorderScreen`).
+// `ExitShareAnywhere` was renamed to `ExitLumia` after the rebrand.
+const REMOVED_ACTIONS = ['StopScreenRecording', 'OpenMainWindow', 'WorkflowPicker', 'ExitShareAnywhere'] as const
 
 const store = new Store<{ hotkeys: HotkeyConfig; schemaVersion?: number }>({
   name: 'hotkeys',
@@ -139,7 +140,7 @@ export function setupHotkeys() {
     ScreenRecorder:       () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('region') },
     ScreenRecorderWindow: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('window') },
     ScreenRecorderScreen: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('screen') },
-    ExitShareAnywhere: () => { markQuitting(); app.quit() }
+    ExitLumia: () => { markQuitting(); app.quit() }
   }
 
   for (const [action, shortcut] of Object.entries(hotkeys)) {
