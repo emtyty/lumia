@@ -14,6 +14,7 @@ import { showNotification } from './notify'
 import type { HistoryItem } from './types'
 import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
 import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
+import { preflightPermissions } from './permissions'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log'
 
@@ -394,6 +395,18 @@ app.whenReady().then(async () => {
   setupHotkeys()
   setupTray()
   setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
+
+  // Surface OS permission prompts (Screen Recording / Microphone / Accessibility
+  // on macOS, Microphone on Windows) at startup rather than mid-capture. Skip
+  // when launched hidden at boot — we'll preflight when the user surfaces the
+  // window via the tray. Small delay so the dashboard paints first.
+  if (!startHidden) {
+    setTimeout(() => { void preflightPermissions(mainWindow) }, 1500)
+  } else if (mainWindow) {
+    mainWindow.once('show', () => {
+      setTimeout(() => { void preflightPermissions(mainWindow) }, 800)
+    })
+  }
 
   // IPC: Overlay drawing state — lock active display while user is drawing
   ipcMain.on('overlay:drawing', (_e, drawing: boolean) => {
