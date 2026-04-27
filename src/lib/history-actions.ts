@@ -27,7 +27,9 @@ export async function copyHistoryItem(
     dataUrl = (await window.electronAPI?.readHistoryFile(sourcePath)) ?? null
     if (dataUrl === null) { await refreshHistory(); return }
   }
-  if (dataUrl) window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
+  // Pass item.id as historyId so the workflow engine merges into the
+  // existing entry instead of creating a duplicate row for a Copy action.
+  if (dataUrl) window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl, undefined, item.id)
 }
 
 export async function shareHistoryItem(

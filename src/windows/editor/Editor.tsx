@@ -93,7 +93,16 @@ export default function Editor() {
   const [canRedo, setCanRedo] = useState(false)
   const [zoomLevel, setZoomLevel] = useState(1)
   const [clipboardHistory, setClipboardHistory] = useState<
-    { id: string; thumbnailUrl: string; filePath?: string; legacyDataUrl?: string; name: string; timestamp: number }[]
+    {
+      id: string
+      thumbnailUrl: string
+      filePath?: string
+      annotatedFilePath?: string
+      legacyDataUrl?: string
+      name: string
+      timestamp: number
+      annotations?: AnnotationObject[]
+    }[]
   >([])
   const [showClipPanel, setShowClipPanel] = useState(false)
   const [showAutoBlur, setShowAutoBlur] = useState(false)
@@ -195,18 +204,23 @@ export default function Editor() {
             id: i.id,
             thumbnailUrl: (i.thumbnailUrl ?? i.dataUrl)!,
             filePath: i.filePath,
+            annotatedFilePath: i.annotatedFilePath,
             legacyDataUrl: i.filePath ? undefined : i.dataUrl,
             name: i.name,
             timestamp: i.timestamp,
+            annotations: i.annotations,
           })),
       )
     })
   }, [])
 
-  const loadClipboardItem = useCallback(async (entry: { id: string; filePath?: string; legacyDataUrl?: string }) => {
-    if (entry.filePath) {
+  const loadClipboardItem = useCallback(async (entry: { id: string; filePath?: string; annotatedFilePath?: string; legacyDataUrl?: string }) => {
+    // Prefer the annotated sidecar so switching back to a history item shows
+    // the user's edited version, not the untouched original.
+    const sourcePath = entry.annotatedFilePath ?? entry.filePath
+    if (sourcePath) {
       try {
-        const dataUrl = await window.electronAPI?.readHistoryFile(entry.filePath)
+        const dataUrl = await window.electronAPI?.readHistoryFile(sourcePath)
         if (dataUrl) return dataUrl
         // null → file disappeared between getHistory and click. Drop the
         // entry from the panel so the next click doesn't repeat the miss.
@@ -693,7 +707,17 @@ export default function Editor() {
                     className="group/clip flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all bg-white/[0.02] hover:bg-white/[0.06] border border-transparent"
                     onClick={async () => {
                       const dataUrl = await loadClipboardItem(item)
-                      if (dataUrl) resetForNewImage(dataUrl)
+                      if (!dataUrl) return
+                      // Switching the editor to a different history item: re-tag
+                      // historyId + annotations so subsequent Upload/Save flows
+                      // target this entry instead of leaking into whichever item
+                      // the editor was previously on (or creating a duplicate
+                      // when no historyId was set).
+                      setHistoryId(item.id)
+                      setInitialAnnotations(item.annotations)
+                      userEditedRef.current = false
+                      baselineObjectsLenRef.current = item.annotations?.length ?? 0
+                      resetForNewImage(dataUrl)
                     }}
                   >
                     <img src={item.thumbnailUrl} className="w-10 h-10 rounded-lg object-cover flex-shrink-0 border border-white/10" draggable={false} />
@@ -706,7 +730,9 @@ export default function Editor() {
                         e.stopPropagation()
                         const dataUrl = await loadClipboardItem(item)
                         if (!dataUrl) return
-                        window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl)
+                        // Pass item.id so the workflow merges into the existing
+                        // entry instead of inserting a duplicate row.
+                        window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl, undefined, item.id)
                         showToast('Copied to clipboard', 'check_circle')
                       }}
                       className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
