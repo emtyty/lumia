@@ -86,6 +86,17 @@ function cancelAutoInstall() {
   autoInstallTimer = null
 }
 
+/** Track the dock icon to the main window's visibility on macOS: hidden when
+ *  the window is closed to tray, visible when the window is open. Without
+ *  this, the dock shortcut sticks around pointing at "nothing", and reopening
+ *  via the tray leaves a stale dock icon behind. No-op on Windows/Linux. */
+function syncDockVisibility() {
+  if (process.platform !== 'darwin') return
+  const visible = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
+  if (visible) app.dock?.show().catch(() => { /* ignore */ })
+  else app.dock?.hide()
+}
+
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
 export function getOverlayWindow() {
@@ -179,8 +190,8 @@ function createMainWindow(startHidden = false): BrowserWindow {
 
   // After the window goes to the tray, schedule install of any pending update.
   // Cancelled if the user surfaces the window again within the grace window.
-  win.on('hide', scheduleAutoInstall)
-  win.on('show', cancelAutoInstall)
+  win.on('hide', () => { scheduleAutoInstall(); syncDockVisibility() })
+  win.on('show', () => { cancelAutoInstall(); syncDockVisibility() })
 
   win.on('closed', () => { mainWindow = null })
   return win
@@ -378,13 +389,11 @@ app.whenReady().then(async () => {
   const startHidden = wasLaunchedAtStartup()
   mainWindow = createMainWindow(startHidden)
 
-  // macOS: force the dock icon to stay visible. Without this, the app could
-  // appear to be "running invisibly in the menubar only" if some other code
-  // path called dock.hide() — and macOS users expect dock + right-click Quit
-  // to be the canonical quit affordance, not the menubar tray menu.
-  if (process.platform === 'darwin') {
-    app.dock?.show().catch(() => {})
-  }
+  // macOS: dock icon tracks main-window visibility (see syncDockVisibility).
+  // For a normal launch the window is visible → dock visible. For login-item
+  // startup (startHidden) the window is hidden → dock hidden too, so the
+  // user only sees Lumia in the menubar tray as expected.
+  syncDockVisibility()
 
   // Keep the OS login-item entry in sync with the stored preference on every
   // launch (covers app moves, reinstalls, and settings changed while offline).
