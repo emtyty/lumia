@@ -8,16 +8,20 @@ import type { HistoryItem } from '../types'
 // history after a mutation (orphan flips, new uploads) — keeps the UI honest
 // without each caller reimplementing that glue.
 
+export interface CopyResult { ok: boolean; error?: string }
+export interface ShareResult { ok: boolean; url?: string; error?: string }
+
 export async function copyHistoryItem(
   item: HistoryItem,
   refreshHistory: () => Promise<void>,
-): Promise<void> {
-  if (item.fileMissing) return
+): Promise<CopyResult> {
+  if (item.fileMissing) return { ok: false, error: 'File missing on disk' }
   // Video: copy the file reference to clipboard (file on Win/Mac, path on
   // Linux). Image: copy the pixels via the builtin-clipboard workflow.
   if (item.type === 'recording') {
-    if (item.filePath) await window.electronAPI?.videoCopyFile?.(item.filePath)
-    return
+    if (!item.filePath) return { ok: false, error: 'No source file' }
+    const res = await window.electronAPI?.videoCopyFile?.(item.filePath)
+    return { ok: !!res?.ok, error: res?.error }
   }
   let dataUrl: string | null | undefined = item.dataUrl
   // Prefer the annotated sidecar so Copy mirrors what Share sends out — the
@@ -25,22 +29,25 @@ export async function copyHistoryItem(
   const sourcePath = item.annotatedFilePath ?? item.filePath
   if (!dataUrl && sourcePath) {
     dataUrl = (await window.electronAPI?.readHistoryFile(sourcePath)) ?? null
-    if (dataUrl === null) { await refreshHistory(); return }
+    if (dataUrl === null) { await refreshHistory(); return { ok: false, error: 'File missing on disk' } }
   }
+  if (!dataUrl) return { ok: false, error: 'No image data' }
   // Pass item.id as historyId so the workflow engine merges into the
   // existing entry instead of creating a duplicate row for a Copy action.
-  if (dataUrl) window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl, undefined, item.id)
+  await window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl, undefined, item.id)
+  return { ok: true }
 }
 
 export async function shareHistoryItem(
   item: HistoryItem,
   refreshHistory: () => Promise<void>,
-): Promise<void> {
-  if (item.fileMissing || !item.filePath) return
-  await window.electronAPI?.shareHistoryR2(item.id)
+): Promise<ShareResult> {
+  if (item.fileMissing || !item.filePath) return { ok: false, error: 'File missing on disk' }
+  const res = await window.electronAPI?.shareHistoryR2(item.id)
   // Repopulate so the "Synced" badge flips on and the repeat-share fast path
   // in main has an up-to-date uploads array to short-circuit against.
   await refreshHistory()
+  return { ok: !!res?.success, url: res?.url, error: res?.error }
 }
 
 export function getGoogleLink(item: HistoryItem): string | undefined {

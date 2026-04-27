@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, type MouseEvent as ReactMouseEvent } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { HistoryItem } from '../../types'
 import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
@@ -86,6 +86,13 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isBulkDeleting, setIsBulkDeleting] = useState(false)
   const [sharingId, setSharingId] = useState<string | null>(null)
+  const [toast, setToast] = useState<{ message: string; icon: string; type: 'success' | 'error' } | null>(null)
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const showToast = useCallback((message: string, icon: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    setToast({ message, icon, type })
+    toastTimerRef.current = setTimeout(() => setToast(null), 2500)
+  }, [])
 
   useEffect(() => {
     window.electronAPI?.getHistory().then(setRecentItems)
@@ -211,13 +218,22 @@ export default function Dashboard() {
     navigate('/editor', { state: { kind: 'image', dataUrl, source: 'history', historyId: item.id, annotations: item.annotations } })
   }
 
-  const copyItem = (item: HistoryItem) => copyHistoryItem(item, refreshHistory)
+  const copyItem = async (item: HistoryItem) => {
+    const r = await copyHistoryItem(item, refreshHistory)
+    if (r.ok) {
+      showToast(item.type === 'recording' ? 'Video copied' : 'Copied to clipboard', 'content_copy')
+    } else {
+      showToast(r.error ?? 'Copy failed', 'error', 'error')
+    }
+  }
 
   const shareItem = async (item: HistoryItem) => {
     if (sharingId) return
     setSharingId(item.id)
     try {
-      await shareHistoryItem(item, refreshHistory)
+      const r = await shareHistoryItem(item, refreshHistory)
+      if (r.ok) showToast('Uploaded — link copied', 'check_circle')
+      else      showToast(r.error ?? 'Upload failed', 'error', 'error')
     } finally {
       setSharingId(null)
     }
@@ -252,6 +268,16 @@ export default function Dashboard() {
 
   return (
     <div className="h-full flex flex-col">
+      {/* ── Toast ── */}
+      {toast && (
+        <div className={`fixed top-12 left-1/2 -translate-x-1/2 z-[80] flex items-center gap-2 px-4 py-2 backdrop-blur-xl border rounded-xl shadow-lg animate-slide-up ${
+          toast.type === 'error' ? 'bg-red-500/20 border-red-500/30' : 'bg-emerald-500/20 border-emerald-500/30'
+        }`}>
+          <span className={`material-symbols-outlined text-sm ${toast.type === 'error' ? 'text-red-400' : 'text-emerald-400'}`}>{toast.icon}</span>
+          <span className="text-xs font-semibold text-white" style={{ fontFamily: 'Manrope, sans-serif' }}>{toast.message}</span>
+        </div>
+      )}
+
       <div className="px-8 pt-8 space-y-8 flex-shrink-0">
 
       {/* ── Greeting + Update ── */}
