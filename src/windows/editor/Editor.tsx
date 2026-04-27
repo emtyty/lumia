@@ -704,7 +704,7 @@ export default function Editor() {
                 clipboardHistory.map((item) => (
                   <div
                     key={item.id}
-                    className="group/clip flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all bg-white/[0.02] hover:bg-white/[0.06] border border-transparent"
+                    className="flex items-center gap-2.5 p-2 rounded-xl cursor-pointer transition-all bg-white/[0.02] hover:bg-white/[0.06] border border-transparent"
                     onClick={async () => {
                       const dataUrl = await loadClipboardItem(item)
                       if (!dataUrl) return
@@ -725,21 +725,6 @@ export default function Editor() {
                       <p className="text-[11px] text-slate-300 truncate font-medium">{item.name}</p>
                       <p className="text-[9px] text-slate-600 mt-0.5">{relativeTime(item.timestamp)}</p>
                     </div>
-                    <button
-                      onClick={async (e) => {
-                        e.stopPropagation()
-                        const dataUrl = await loadClipboardItem(item)
-                        if (!dataUrl) return
-                        // Pass item.id so the workflow merges into the existing
-                        // entry instead of inserting a duplicate row.
-                        window.electronAPI?.runWorkflow('builtin-clipboard', dataUrl, undefined, item.id)
-                        showToast('Copied to clipboard', 'check_circle')
-                      }}
-                      className="opacity-0 group-hover/clip:opacity-100 p-1.5 rounded-lg bg-white/10 hover:bg-primary/20 text-slate-400 hover:text-primary transition-all flex-shrink-0"
-                      title="Copy to clipboard"
-                    >
-                      <span className="material-symbols-outlined text-xs">content_copy</span>
-                    </button>
                   </div>
                 ))
               )}
