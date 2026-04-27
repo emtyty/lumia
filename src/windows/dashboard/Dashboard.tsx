@@ -121,11 +121,12 @@ export default function Dashboard() {
     window.electronAPI?.setSetting('lastImageMode', mode)
     if (mode === 'scrolling') {
       await window.electronAPI?.startScrollCapture()
-    } else if (mode === 'region') {
-      await window.electronAPI?.captureScreenshot('region')
     } else {
-      const dataUrl = await window.electronAPI?.captureScreenshot(mode) as string
-      if (dataUrl) navigate('/editor', { state: { dataUrl, source: mode } })
+      // Main drives navigation via `sendCaptureToEditor` (sends a `navigate`
+      // event with historyId so subsequent uploads merge into the new entry
+      // instead of creating a duplicate). Don't navigate again here — that
+      // overwrites the state and drops the historyId.
+      await window.electronAPI?.captureScreenshot(mode)
     }
   }
 

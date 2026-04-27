@@ -30,10 +30,13 @@ export default function ScrollCaptureDialog({ onClose }: Props) {
           return
         }
 
-        // Add to history
+        // Add to history. Capture the id so the Editor can pass it through
+        // to runWorkflow — without it, a follow-up Upload R2 lands in the
+        // "no historyId" branch and creates a duplicate entry.
+        const historyId = crypto.randomUUID()
         try {
           await window.electronAPI?.addHistoryItem({
-            id: crypto.randomUUID(),
+            id: historyId,
             timestamp: Date.now(),
             name: `scroll-capture-${new Date().toISOString().replace(/[:.]/g, '-')}`,
             dataUrl,
@@ -44,7 +47,7 @@ export default function ScrollCaptureDialog({ onClose }: Props) {
           // History add is non-critical — continue
         }
 
-        navigate('/editor', { state: { dataUrl, source: 'scrolling' } })
+        navigate('/editor', { state: { dataUrl, source: 'scrolling', historyId } })
         onClose()
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
