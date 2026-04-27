@@ -45,8 +45,45 @@ let overlayPollTimer: ReturnType<typeof setInterval> | null = null
 let overlayDrawingInProgress = false
 let currentRoute = '/dashboard'
 let isQuitting = false
+// Set by the autoUpdater 'update-downloaded' handler. Allows the install to
+// happen the moment the user drops the app to the tray instead of waiting
+// for an explicit Quit / next launch.
+let updateDownloaded = false
+let autoInstallTimer: ReturnType<typeof setTimeout> | null = null
+// Grace window between "user hid the app" and "we restart the app to install".
+// Long enough that a brief Cmd+H (Mac) or accidental close-to-tray (Windows)
+// doesn't nuke whatever the user is about to come back to. Short enough that
+// a genuinely-idle tray instance picks up the update before the next session.
+const AUTO_INSTALL_GRACE_MS = 30 * 1000
 
 export function markQuitting() { isQuitting = true }
+
+/** Schedule a quit-and-install for an already-downloaded update, but only if
+ *  the window stays hidden for the full grace window. Called from
+ *  `update-downloaded` and from the main window's 'hide' event. */
+function scheduleAutoInstall() {
+  if (autoInstallTimer) clearTimeout(autoInstallTimer)
+  autoInstallTimer = null
+  if (!updateDownloaded) return
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) return
+  autoInstallTimer = setTimeout(() => {
+    autoInstallTimer = null
+    // Re-check: user may have surfaced the window during the grace window.
+    if (!updateDownloaded) return
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) return
+    console.log('[autoUpdater] grace period elapsed with window hidden — installing update')
+    updateDownloaded = false
+    isQuitting = true
+    autoUpdater.quitAndInstall()
+  }, AUTO_INSTALL_GRACE_MS)
+}
+
+/** Called when the window becomes visible again — cancel any pending install
+ *  so the user isn't kicked out the moment after they reopen. */
+function cancelAutoInstall() {
+  if (autoInstallTimer) clearTimeout(autoInstallTimer)
+  autoInstallTimer = null
+}
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
@@ -138,6 +175,11 @@ function createMainWindow(startHidden = false): BrowserWindow {
     }
     win.hide()
   })
+
+  // After the window goes to the tray, schedule install of any pending update.
+  // Cancelled if the user surfaces the window again within the grace window.
+  win.on('hide', scheduleAutoInstall)
+  win.on('show', cancelAutoInstall)
 
   win.on('closed', () => { mainWindow = null })
   return win
@@ -335,6 +377,14 @@ app.whenReady().then(async () => {
   const startHidden = wasLaunchedAtStartup()
   mainWindow = createMainWindow(startHidden)
 
+  // macOS: force the dock icon to stay visible. Without this, the app could
+  // appear to be "running invisibly in the menubar only" if some other code
+  // path called dock.hide() — and macOS users expect dock + right-click Quit
+  // to be the canonical quit affordance, not the menubar tray menu.
+  if (process.platform === 'darwin') {
+    app.dock?.show().catch(() => {})
+  }
+
   // Keep the OS login-item entry in sync with the stored preference on every
   // launch (covers app moves, reinstalls, and settings changed while offline).
   applyLaunchAtStartup(getSettings().launchAtStartup)
@@ -384,6 +434,10 @@ app.whenReady().then(async () => {
     console.log('[autoUpdater] update downloaded:', info.version)
     mainWindow?.webContents.send('update:downloaded', info.version)
     sendUpdateStatus('downloaded', { version: info.version })
+    updateDownloaded = true
+    // If the user already has the app minimized to tray, the grace window
+    // starts now — install if they don't surface the window within it.
+    scheduleAutoInstall()
   })
 
   const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
@@ -1051,7 +1105,17 @@ app.whenReady().then(async () => {
   })
 })
 
-app.on('before-quit', () => { isQuitting = true })
+app.on('before-quit', (e) => {
+  // If we initiated the quit ourselves (tray Quit / ExitLumia hotkey
+  // / app:quit IPC), `isQuitting` is already true and we let it through.
+  if (isQuitting) return
+  // Otherwise this is Cmd+Q / dock right-click → Quit on macOS, or the
+  // taskbar Close on Windows. Treat it as "hide to tray" — the user can
+  // fully exit via the tray menu's Quit item. Mirrors how WhatsApp and
+  // similar tray-resident apps behave.
+  e.preventDefault()
+  mainWindow?.hide()
+})
 
 app.on('window-all-closed', () => {
   // Keep app running in the tray instead of quitting when windows close.
