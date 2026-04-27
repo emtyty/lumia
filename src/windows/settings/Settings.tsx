@@ -351,7 +351,10 @@ export default function Settings() {
                   </div>
                 ))}
               </div>
-              <p className="text-[11px] text-slate-500 mt-3">Hotkey rebinding coming in a future release.</p>
+              <p className="text-[11px] text-slate-500 mt-3">
+                Tip: while a recording is in progress, pressing any of the video hotkeys (Ctrl+Shift+6 / 7 / 8) stops the recording instead of starting a new one.
+              </p>
+              <p className="text-[11px] text-slate-500 mt-2">Hotkey rebinding coming in a future release.</p>
             </Section>
 
           </div>
@@ -367,10 +370,9 @@ const HOTKEY_REFERENCE = [
   { action: 'Screen (Screenshot)',     key: 'Ctrl+Shift+3' },
   { action: 'All Screens (Screenshot)', key: 'Ctrl+Shift+4' },
   { action: 'Scrolling (Screenshot)',  key: 'Ctrl+Shift+5' },
-  { action: 'Region (Video)',          key: 'Ctrl+Shift+R' },
-  { action: 'Window (Video)',          key: 'Ctrl+Shift+W' },
-  { action: 'Screen (Video)',          key: 'Ctrl+Shift+S' },
-  { action: 'Open Main Window',        key: 'Ctrl+Shift+X' },
+  { action: 'Region (Video)',          key: 'Ctrl+Shift+6' },
+  { action: 'Window (Video)',          key: 'Ctrl+Shift+7' },
+  { action: 'Screen (Video)',          key: 'Ctrl+Shift+8' },
 ]
 
 function Section({ id, title, icon, children }: { id: string; title: string; icon: string; children: React.ReactNode }) {

@@ -28,9 +28,9 @@ Every shortcut uses `Ctrl+Shift` (no conflicts with macOS `Cmd+Shift` system bin
 
 | Mode | Default Shortcut |
 |---|---|
-| Record Region | `Ctrl+Shift+R` |
-| Record Window | `Ctrl+Shift+W` |
-| Record Screen | `Ctrl+Shift+S` |
+| Record Region | `Ctrl+Shift+6` |
+| Record Window | `Ctrl+Shift+7` |
+| Record Screen | `Ctrl+Shift+8` |
 
 While recording, a floating toolbar offers Pause / Resume / Mic toggle / Stop / Cancel, and a thin border outlines the recorded region. Pressing any record hotkey while a recording is active stops it (Snipping Tool-style toggle). Microphone is pre-acquired so the toggle is instant; recordings save as `.webm` with a corrected duration header.
 
@@ -71,7 +71,7 @@ save to disk                                        OS share
 
 - Multi-destination uploads run in parallel via `Promise.allSettled` — one failure never blocks the others
 - Two built-in templates ship by default (**Copy to Clipboard**, **Annotate & Share Link**); create unlimited custom templates
-- Set any template as **active** — that's what the global Workflow Picker hotkey (`Ctrl+Shift+Q`) and the editor's Share button use
+- Set any template as **active** — that's what the editor's Share button uses
 - Re-sharing from history merges new uploads into the existing entry instead of duplicating it
 
 ### Sharing Destinations
@@ -267,7 +267,7 @@ Published artifacts go to `emtyty/lumia` GitHub Releases. Installed copies poll 
 | **Copy to Clipboard** | capture → copy to clipboard → notify |
 | **Annotate & Share Link** | capture → annotate → save (via editor's Save button) → upload to R2 + Google Drive (parallel) → copy first URL → notify |
 
-Built-in templates cannot be deleted. Set any template as the active workflow on the Workflow page — the active template is what the editor's Share button and the `Ctrl+Shift+Q` Workflow Picker invoke.
+Built-in templates cannot be deleted. Set any template as the active workflow on the Workflow page — the active template is what the editor's Share button invokes.
 
 ---
 

@@ -16,11 +16,9 @@ const defaultHotkeys: HotkeyConfig = {
   ScrollingCapture:     'Ctrl+Shift+5',
   // `ScreenRecorder` kept as the "Region" video entry for backwards compat
   // with saved configs from older releases.
-  ScreenRecorder:       'Ctrl+Shift+R',
-  ScreenRecorderWindow: 'Ctrl+Shift+W',
-  ScreenRecorderScreen: 'Ctrl+Shift+S',
-  OpenMainWindow:       'Ctrl+Shift+X',
-  WorkflowPicker:       'Ctrl+Shift+Q'
+  ScreenRecorder:       'Ctrl+Shift+6',
+  ScreenRecorderWindow: 'Ctrl+Shift+7',
+  ScreenRecorderScreen: 'Ctrl+Shift+8'
 }
 
 // All 75 action types from ShareX, user can assign any
@@ -49,16 +47,16 @@ export const ALL_ACTIONS = [
   'ClipboardViewer', 'BorderlessWindow', 'ActiveWindowBorderless',
   'ActiveWindowTopMost', 'InspectWindow', 'MonitorTest',
   // App
-  'DisableHotkeys', 'OpenMainWindow', 'OpenScreenshotsFolder',
+  'DisableHotkeys', 'OpenScreenshotsFolder',
   'OpenHistory', 'OpenImageHistory', 'ToggleActionsToolbar',
-  'ToggleTrayMenu', 'ExitShareAnywhere', 'WorkflowPicker'
+  'ToggleTrayMenu', 'ExitShareAnywhere'
 ]
 
 // Bump this whenever the default capture-mode bindings change in a way that
 // should retake control from users who never hand-customized. On load, if the
 // stored version is stale we rewrite the capture/recorder bindings to the new
 // defaults while leaving app-level hotkeys alone (those have stable defaults).
-const HOTKEY_SCHEMA_VERSION = 3
+const HOTKEY_SCHEMA_VERSION = 5
 const CAPTURE_ACTIONS = [
   'RectangleRegion', 'ActiveWindow', 'ActiveMonitor', 'PrintScreen', 'ScrollingCapture',
   'ScreenRecorder', 'ScreenRecorderWindow', 'ScreenRecorderScreen',
@@ -66,7 +64,7 @@ const CAPTURE_ACTIONS = [
 // Actions that were removed in a migration — stripped from the saved config
 // so stale bindings don't linger and accidentally block new keys (e.g. S
 // was `StopScreenRecording` and is now `ScreenRecorderScreen`).
-const REMOVED_ACTIONS = ['StopScreenRecording'] as const
+const REMOVED_ACTIONS = ['StopScreenRecording', 'OpenMainWindow', 'WorkflowPicker'] as const
 
 const store = new Store<{ hotkeys: HotkeyConfig; schemaVersion?: number }>({
   name: 'hotkeys',
@@ -133,11 +131,6 @@ export function setupHotkeys() {
     ScreenRecorder:       () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('region') },
     ScreenRecorderWindow: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('window') },
     ScreenRecorderScreen: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('screen') },
-    OpenMainWindow: () => {
-      const win = getMainWindow()
-      win?.show()
-      win?.focus()
-    },
     ExitShareAnywhere: () => { markQuitting(); app.quit() }
   }
 

@@ -128,9 +128,9 @@ Four isolated stores under the OS userData dir:
 
 ### Hotkey defaults (Ctrl+Shift+…)
 
-`1` Region · `2` Active Window · `3` Active Monitor · `4` Full Screen · `5` Scrolling · `R` Record Region · `W` Record Window · `S` Record Screen · `X` Open Main Window · `Q` Workflow Picker
+`1` Region · `2` Active Window · `3` Active Monitor · `4` Full Screen · `5` Scrolling · `6` Record Region · `7` Record Window · `8` Record Screen
 
-`HOTKEY_SCHEMA_VERSION` (currently 3) gates capture/recorder defaults migration; user-customized app-level bindings (OpenMainWindow, etc.) are preserved across bumps. Removed actions are stripped via `REMOVED_ACTIONS`.
+`HOTKEY_SCHEMA_VERSION` (currently 5) gates capture/recorder defaults migration; user-customized app-level bindings are preserved across bumps. Removed actions are stripped via `REMOVED_ACTIONS`.
 
 ### Design System — Liquid Glass
 

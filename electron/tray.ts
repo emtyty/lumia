@@ -51,7 +51,6 @@ function buildMenu() {
     { type: 'separator' },
     {
       label: 'Open Lumia',
-      accelerator: 'Ctrl+Shift+X',
       click: () => {
         const win = getMainWindow()
         if (win) { win.show(); win.focus() }
