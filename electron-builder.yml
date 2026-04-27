@@ -105,8 +105,14 @@ mac:
   # prompting the user, which silently breaks the mic toggle during recording.
   extendInfo:
     NSMicrophoneUsageDescription: "Lumia uses the microphone to capture narration when you record your screen with audio."
+  # electron-updater on macOS requires a .zip artifact — latest-mac.yml lists
+  # the .zip as the primary update file, and the .dmg cannot be applied as an
+  # in-place update. Without `zip` here, auto-update fails with "file not
+  # found" even though the DMG uploads fine.
   target:
     - target: dmg
+      arch: [x64, arm64]
+    - target: zip
       arch: [x64, arm64]
 
 
