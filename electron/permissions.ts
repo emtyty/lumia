@@ -68,7 +68,106 @@ async function nudgeToSettings(opts: NudgeOpts): Promise<void> {
   }
 }
 
+// ── Relaunch coordination ────────────────────────────────────────────────────
+// Several macOS permissions (Screen Recording, Accessibility) only take effect
+// after the app process restarts — TCC caches the previous denial inside the
+// running process. We collect grants across the whole preflight chain and
+// prompt for ONE relaunch at the end, instead of one per permission.
+
+const PERMISSION_LABEL: Record<DialogKey, string> = {
+  'mac-screen': 'Screen Recording',
+  'mac-microphone': 'Microphone',
+  'mac-accessibility': 'Accessibility',
+  'win-microphone': 'Microphone',
+}
+
+/** Permissions whose new state only takes effect after a process relaunch. */
+const RELAUNCH_REQUIRED: ReadonlySet<DialogKey> = new Set<DialogKey>([
+  'mac-screen',
+  'mac-accessibility',
+])
+
+function isPermissionGranted(key: DialogKey): boolean {
+  switch (key) {
+    case 'mac-screen': return systemPreferences.getMediaAccessStatus('screen') === 'granted'
+    case 'mac-microphone': return systemPreferences.getMediaAccessStatus('microphone') === 'granted'
+    case 'mac-accessibility': return systemPreferences.isTrustedAccessibilityClient(false)
+    case 'win-microphone': return systemPreferences.getMediaAccessStatus('microphone') === 'granted'
+  }
+}
+
+/**
+ * After preflight, watch for the user to return to Lumia. On focus,
+ * check whether any permission that was non-granted at startup has since
+ * flipped to granted. If at least one of those requires a relaunch, show
+ * a single consolidated relaunch prompt.
+ *
+ * The watcher is one-shot — once the prompt is shown (Relaunch or Later),
+ * we stop listening to avoid nagging.
+ */
+function setupRelaunchWatcher(parent: BrowserWindow | null, watched: DialogKey[]): void {
+  if (watched.length === 0) return
+  let done = false
+  const cleanup = () => {
+    if (done) return
+    done = true
+    app.removeListener('browser-window-focus', onFocus)
+    app.removeListener('activate', onFocus)
+    clearTimeout(timeoutId)
+  }
+  const onFocus = () => {
+    if (done) return
+    const newlyGranted = watched.filter(isPermissionGranted)
+    const needsRelaunch = newlyGranted.filter((k) => RELAUNCH_REQUIRED.has(k))
+    if (needsRelaunch.length === 0) return
+    cleanup()
+    void promptRelaunch(parent, needsRelaunch)
+  }
+  const timeoutId = setTimeout(cleanup, 30 * 60 * 1000)
+  app.on('browser-window-focus', onFocus)
+  app.on('activate', onFocus)
+  // The user may already have granted everything before we got here (e.g.
+  // they finished granting while preflight was still mid-chain). Check once
+  // on the next tick so we don't miss it.
+  setImmediate(onFocus)
+}
+
+async function promptRelaunch(parent: BrowserWindow | null, keys: DialogKey[]): Promise<void> {
+  const lines = keys.map((k) => `• ${PERMISSION_LABEL[k]}`).join('\n')
+  const opts = {
+    type: 'info' as const,
+    message: 'Relaunch Lumia to apply new permissions',
+    detail: `These permissions were enabled and only take effect after a restart:\n\n${lines}`,
+    buttons: ['Relaunch now', 'Later'],
+    defaultId: 0,
+    cancelId: 1,
+  }
+  const choice = parent && !parent.isDestroyed()
+    ? await dialog.showMessageBox(parent, opts)
+    : await dialog.showMessageBox(opts)
+  if (choice.response === 0) {
+    app.relaunch()
+    app.exit(0)
+  }
+}
+
 // ── macOS preflights ───────────────────────────────────────────────────────
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+
+/**
+ * Poll until the predicate returns true, or until the deadline. Used to
+ * serialize OS prompts that don't await the user's response — without this,
+ * preflight runs all three permission flows back-to-back and the dialogs
+ * stack on top of each other, so the user dismisses one and misses the rest.
+ */
+async function waitUntil(predicate: () => boolean, timeoutMs: number, pollMs = 400): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (predicate()) return
+    await sleep(pollMs)
+  }
+}
 
 async function preflightMacScreenRecording(parent: BrowserWindow | null): Promise<void> {
   const status = systemPreferences.getMediaAccessStatus('screen')
@@ -82,10 +181,18 @@ async function preflightMacScreenRecording(parent: BrowserWindow | null): Promis
     try {
       await desktopCapturer.getSources({ types: ['screen'], thumbnailSize: { width: 1, height: 1 } })
     } catch { /* prompt is now visible — nothing to do */ }
-    return
+    // desktopCapturer returns immediately, so wait for the OS prompt to be
+    // dismissed (status leaves 'not-determined') before falling through to
+    // the next preflight — otherwise the next prompt stacks on top.
+    await waitUntil(
+      () => systemPreferences.getMediaAccessStatus('screen') !== 'not-determined',
+      90_000,
+    )
+    if (systemPreferences.getMediaAccessStatus('screen') === 'granted') return
+    // Fall through to the nudge so the user has a clear path to Settings
+    // even if they dismissed the system prompt with "Deny".
   }
 
-  // 'denied' or 'restricted'
   await nudgeToSettings({
     key: 'mac-screen',
     parent,
@@ -100,9 +207,11 @@ async function preflightMacMicrophone(parent: BrowserWindow | null): Promise<voi
   if (status === 'granted') return
 
   if (status === 'not-determined') {
-    // Native macOS prompt — returns immediately, the user dialog is async.
+    // askForMediaAccess returns a Promise that does resolve when the user
+    // responds, so this naturally serializes against the next preflight.
     try { await systemPreferences.askForMediaAccess('microphone') } catch { /* ignore */ }
-    return
+    if (systemPreferences.getMediaAccessStatus('microphone') === 'granted') return
+    // Fall through to the nudge for the 'denied' branch.
   }
 
   await nudgeToSettings({
@@ -115,14 +224,13 @@ async function preflightMacMicrophone(parent: BrowserWindow | null): Promise<voi
 }
 
 async function preflightMacAccessibility(parent: BrowserWindow | null): Promise<void> {
-  // No 'not-determined' state for AX — it's a binary trusted/not-trusted.
-  // Passing `true` makes the system show its prompt if not yet trusted,
-  // and returns the current trusted state.
-  const trusted = systemPreferences.isTrustedAccessibilityClient(true)
-  if (trusted) return
+  // Read-only check first. We deliberately skip the OS-level prompt
+  // (`isTrustedAccessibilityClient(true)`) because it doesn't await the
+  // user's response — it would race against the other preflights and the
+  // user would lose track of which dialog goes with which permission.
+  // Our own modal nudge is sequential and clearer.
+  if (systemPreferences.isTrustedAccessibilityClient(false)) return
 
-  // The system prompt above appears once per app install. On subsequent
-  // launches with the user still ungranted, we surface our own dialog.
   await nudgeToSettings({
     key: 'mac-accessibility',
     parent,
@@ -174,6 +282,14 @@ export async function preflightPermissions(parent: BrowserWindow | null): Promis
   // proactive prompts in dev, but still nudge on `denied` so devs notice.
   const isDev = !app.isPackaged
 
+  // Snapshot which permissions are not granted at startup. Anything in this
+  // set that flips to `granted` while preflight runs (or shortly after) is
+  // a candidate for the "needs relaunch" prompt at the end.
+  const allKeys: DialogKey[] = process.platform === 'darwin'
+    ? ['mac-screen', 'mac-microphone', 'mac-accessibility']
+    : process.platform === 'win32' ? ['win-microphone'] : []
+  const watched = allKeys.filter((k) => !isPermissionGranted(k))
+
   try {
     if (process.platform === 'darwin') {
       if (!isDev) await preflightMacScreenRecording(parent)
@@ -191,6 +307,12 @@ export async function preflightPermissions(parent: BrowserWindow | null): Promis
   } catch (err) {
     console.warn('[permissions] preflight error:', err)
   }
+
+  // After all preflights, watch for any of the originally-non-granted
+  // permissions to flip to granted. If at least one of those requires a
+  // relaunch (Screen Recording, Accessibility), prompt for ONE consolidated
+  // restart instead of restarting after each individual grant.
+  setupRelaunchWatcher(parent, watched)
 }
 
 // ── Dev-mode helper: only nudge on explicit denial, never auto-prompt ─────
