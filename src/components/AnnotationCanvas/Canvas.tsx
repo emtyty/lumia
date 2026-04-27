@@ -96,6 +96,26 @@ interface Props {
 let idCounter = 0
 const uid = () => `obj-${++idCounter}-${Date.now()}`
 
+// Pan can drift the stage off-screen if unconstrained. Keep at least this many
+// pixels of the stage edge visible inside the container so the canvas never
+// disappears entirely.
+const PAN_MIN_VISIBLE = 80
+
+function clampPan(
+  pan: { x: number; y: number },
+  containerW: number,
+  containerH: number,
+  stageW: number,
+  stageH: number,
+): { x: number; y: number } {
+  const maxX = Math.max(0, (containerW + stageW) / 2 - PAN_MIN_VISIBLE)
+  const maxY = Math.max(0, (containerH + stageH) / 2 - PAN_MIN_VISIBLE)
+  return {
+    x: Math.max(-maxX, Math.min(maxX, pan.x)),
+    y: Math.max(-maxY, Math.min(maxY, pan.y)),
+  }
+}
+
 const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
   function AnnotationCanvas(
     { background, tool, color, strokeWidth, onExport, exportTrigger = 0, onHistoryChange, onZoomChange, readOnly = false, initialObjects },
@@ -170,14 +190,23 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const zoomIn  = useCallback(() => setUserZoom(z => clampZoom(z + 0.1)), [])
     const zoomOut = useCallback(() => setUserZoom(z => clampZoom(z - 0.1)), [])
     const zoomReset = useCallback(() => { setUserZoom(1); setPanOffset({ x: 0, y: 0 }) }, [])
+    // Latest userZoom for handlers in long-lived effects (wheel, mousedown).
+    const userZoomRef = useRef(1)
+    useEffect(() => { userZoomRef.current = userZoom }, [userZoom])
 
-    // ── Pan (right-click drag) ────────────────────────────────────────────────
+    // ── Pan (right-click drag, Space+left-click drag, two-finger touchpad swipe) ──
     const [panOffset, setPanOffset] = useState({ x: 0, y: 0 })
     const panOffsetRef = useRef(panOffset)
     useEffect(() => { panOffsetRef.current = panOffset }, [panOffset])
     const [isPanningState, setIsPanningState] = useState(false)
     const isPanning = useRef(false)
     const panStart  = useRef({ x: 0, y: 0 })
+    // Space-bar held → cursor flips to grab and left-click starts pan (Figma
+    // convention). Ref so the mousedown handler sees the latest value without
+    // re-binding listeners on every keypress.
+    const [spaceHeld, setSpaceHeld] = useState(false)
+    const spaceHeldRef = useRef(false)
+    useEffect(() => { spaceHeldRef.current = spaceHeld }, [spaceHeld])
 
     // ── History ───────────────────────────────────────────────────────────────
     const {
@@ -256,41 +285,69 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     useEffect(() => { onZoomChange?.(userZoom) }, [userZoom, onZoomChange])
 
-    // Scroll-to-zoom, anchored at cursor
+    // Wheel handling — Figma convention:
+    //   Ctrl/Cmd+wheel (and trackpad pinch, which Chromium translates to
+    //     ctrlKey+wheel) → zoom anchored at cursor
+    //   wheel without modifier (and two-finger trackpad swipe) → pan
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
       const onWheel = (e: WheelEvent) => {
         e.preventDefault()
+
+        if (e.ctrlKey || e.metaKey) {
+          const rect = el.getBoundingClientRect()
+          const mx = e.clientX - rect.left
+          const my = e.clientY - rect.top
+          const pan = panOffsetRef.current
+
+          setUserZoom(prevZoom => {
+            // Trackpad pinch sends small deltaY (~5-15) per event at high
+            // frequency; mouse wheel sends ~100 per notch. Use a higher
+            // coefficient so pinch feels snappy, but clamp the magnitude so
+            // a single mouse-wheel notch still maps to ~14% zoom.
+            const lineHeight = 16
+            const rawDy = e.deltaMode === 1 ? e.deltaY * lineHeight : e.deltaY
+            const clampedDy = Math.sign(rawDy) * Math.min(30, Math.abs(rawDy))
+            const factor = Math.exp(-clampedDy * 0.005)
+            const nextZoom = clampZoom(prevZoom * factor)
+            if (nextZoom === prevZoom) return prevZoom
+
+            const prevScale = baseScale * prevZoom
+            const nextScale = baseScale * nextZoom
+            const prevStageW = naturalW * prevScale
+            const prevStageH = naturalH * prevScale
+            const nextStageW = naturalW * nextScale
+            const nextStageH = naturalH * nextScale
+            const prevLeft = (rect.width  - prevStageW) / 2 + pan.x
+            const prevTop  = (rect.height - prevStageH) / 2 + pan.y
+
+            const imgX = (mx - prevLeft) / prevScale
+            const imgY = (my - prevTop)  / prevScale
+
+            const newPanX = mx - (rect.width  - nextStageW) / 2 - imgX * nextScale
+            const newPanY = my - (rect.height - nextStageH) / 2 - imgY * nextScale
+            const clamped = clampPan({ x: newPanX, y: newPanY }, rect.width, rect.height, nextStageW, nextStageH)
+            setPanOffset(clamped)
+            panOffsetRef.current = clamped
+
+            return nextZoom
+          })
+          return
+        }
+
+        // Pan. deltaMode 1 = lines (mouse wheel on Linux/older browsers); convert to px.
+        const lineHeight = 16
+        const dx = e.deltaMode === 1 ? e.deltaX * lineHeight : e.deltaX
+        const dy = e.deltaMode === 1 ? e.deltaY * lineHeight : e.deltaY
+        // Shift+vertical-only wheel → horizontal pan (matches every native scrollbar).
+        const useShiftSwap = e.shiftKey && dx === 0
+        const panDx = useShiftSwap ? dy : dx
+        const panDy = useShiftSwap ? 0  : dy
         const rect = el.getBoundingClientRect()
-        const mx = e.clientX - rect.left
-        const my = e.clientY - rect.top
-        const pan = panOffsetRef.current
-
-        setUserZoom(prevZoom => {
-          const factor = Math.exp(-e.deltaY * 0.0015)
-          const nextZoom = clampZoom(prevZoom * factor)
-          if (nextZoom === prevZoom) return prevZoom
-
-          const prevScale = baseScale * prevZoom
-          const nextScale = baseScale * nextZoom
-          const prevStageW = naturalW * prevScale
-          const prevStageH = naturalH * prevScale
-          const nextStageW = naturalW * nextScale
-          const nextStageH = naturalH * nextScale
-          const prevLeft = (rect.width  - prevStageW) / 2 + pan.x
-          const prevTop  = (rect.height - prevStageH) / 2 + pan.y
-
-          const imgX = (mx - prevLeft) / prevScale
-          const imgY = (my - prevTop)  / prevScale
-
-          const newPanX = mx - (rect.width  - nextStageW) / 2 - imgX * nextScale
-          const newPanY = my - (rect.height - nextStageH) / 2 - imgY * nextScale
-          setPanOffset({ x: newPanX, y: newPanY })
-          panOffsetRef.current = { x: newPanX, y: newPanY }
-
-          return nextZoom
-        })
+        const stageW = naturalW * baseScale * userZoomRef.current
+        const stageH = naturalH * baseScale * userZoomRef.current
+        setPanOffset(prev => clampPan({ x: prev.x - panDx, y: prev.y - panDy }, rect.width, rect.height, stageW, stageH))
       }
       el.addEventListener('wheel', onWheel, { passive: false })
       return () => el.removeEventListener('wheel', onWheel)
@@ -308,39 +365,87 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       return () => el.removeEventListener('dblclick', onDblClick)
     }, [])
 
-    // Right-click drag to pan
+    // Mouse-drag to pan. Triggers:
+    //   • Right-click drag (legacy fallback)
+    //   • Space-bar held + left-click drag (Figma convention)
+    // Uses capture phase so Konva doesn't also start drawing on the same gesture.
     useEffect(() => {
       const el = containerRef.current
       if (!el) return
       const onMouseDown = (e: MouseEvent) => {
-        if (e.button !== 2) return
+        const rightClick    = e.button === 2
+        const spaceLeftDrag = e.button === 0 && spaceHeldRef.current
+        if (!rightClick && !spaceLeftDrag) return
         e.preventDefault()
+        e.stopPropagation()
         isPanning.current = true
         setIsPanningState(true)
         panStart.current = { x: e.clientX - panOffset.x, y: e.clientY - panOffset.y }
       }
       const onMouseMove = (e: MouseEvent) => {
         if (!isPanning.current) return
-        setPanOffset({ x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y })
+        const rect = el.getBoundingClientRect()
+        const stageW = naturalW * baseScale * userZoomRef.current
+        const stageH = naturalH * baseScale * userZoomRef.current
+        setPanOffset(clampPan(
+          { x: e.clientX - panStart.current.x, y: e.clientY - panStart.current.y },
+          rect.width, rect.height, stageW, stageH,
+        ))
       }
-      const onMouseUp = (e: MouseEvent) => {
-        if (e.button !== 2) return
+      const onMouseUp = () => {
+        if (!isPanning.current) return
         isPanning.current = false
         setIsPanningState(false)
       }
       const onContextMenu = (e: MouseEvent) => e.preventDefault()
 
-      el.addEventListener('mousedown', onMouseDown)
+      el.addEventListener('mousedown', onMouseDown, true)
       window.addEventListener('mousemove', onMouseMove)
       window.addEventListener('mouseup', onMouseUp)
       el.addEventListener('contextmenu', onContextMenu)
       return () => {
-        el.removeEventListener('mousedown', onMouseDown)
+        el.removeEventListener('mousedown', onMouseDown, true)
         window.removeEventListener('mousemove', onMouseMove)
         window.removeEventListener('mouseup', onMouseUp)
         el.removeEventListener('contextmenu', onContextMenu)
       }
-    }, [panOffset])
+    }, [panOffset, naturalW, naturalH, baseScale])
+
+    // Re-clamp panOffset whenever the stage or container resizes (zoom button,
+    // window resize, image swap). Without this, zooming out leaves the stage
+    // partially off-screen because the pan bounds shrink with stage size.
+    useEffect(() => {
+      const el = containerRef.current
+      if (!el) return
+      const stageW = naturalW * baseScale * userZoom
+      const stageH = naturalH * baseScale * userZoom
+      setPanOffset(prev => clampPan(prev, el.clientWidth, el.clientHeight, stageW, stageH))
+    }, [userZoom, baseScale, naturalW, naturalH, containerSize])
+
+    // Space-bar tracking. Window-level so user can hold space anywhere on the
+    // canvas. Skipped while typing in an input so text annotation isn't broken.
+    useEffect(() => {
+      const onKeyDown = (e: KeyboardEvent) => {
+        if (e.code !== 'Space' || e.repeat) return
+        const t = e.target as HTMLElement | null
+        if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+        e.preventDefault()
+        setSpaceHeld(true)
+      }
+      const onKeyUp = (e: KeyboardEvent) => {
+        if (e.code !== 'Space') return
+        setSpaceHeld(false)
+      }
+      const onBlur = () => setSpaceHeld(false)
+      window.addEventListener('keydown', onKeyDown)
+      window.addEventListener('keyup',   onKeyUp)
+      window.addEventListener('blur',    onBlur)
+      return () => {
+        window.removeEventListener('keydown', onKeyDown)
+        window.removeEventListener('keyup',   onKeyUp)
+        window.removeEventListener('blur',    onBlur)
+      }
+    }, [])
 
     const stageWidth  = Math.round(naturalW * scale)
     const stageHeight = Math.round(naturalH * scale)
@@ -698,6 +803,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
 
     // ── Cursor ────────────────────────────────────────────────────────────────
     const cursor = isPanningState ? 'grabbing'
+      : spaceHeld ? 'grab'
       : readOnly ? 'default'
       : tool === 'pen' ? 'crosshair'
       : tool === 'text' ? 'text'
@@ -713,7 +819,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       <div
         ref={containerRef}
         className="w-full h-full relative overflow-hidden"
-        style={{ cursor: isPanningState ? 'grabbing' : undefined }}
+        style={{ cursor: isPanningState ? 'grabbing' : spaceHeld ? 'grab' : undefined }}
       >
         <div style={{
           position: 'absolute',
