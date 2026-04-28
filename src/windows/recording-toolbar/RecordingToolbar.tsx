@@ -1,5 +1,32 @@
 import { useEffect, useRef, useState } from 'react'
 
+// In-DOM tooltip rendered as a child of each button. Native HTML title
+// tooltips can't be used here — Windows renders them as a separate
+// top-level HWND (tooltips_class32) and macOS as a separate NSWindow via
+// NSToolTipManager; neither inherits the toolbar's content protection, so
+// the tooltip would leak into the recording. Rendering it inside the
+// React tree keeps it in the same HWND/NSWindow that already has
+// WDA_EXCLUDEFROMCAPTURE / NSWindowSharingNone applied.
+function Tip({ text, show }: { text: string; show: boolean }) {
+  return (
+    <span
+      className="absolute left-1/2 top-full -translate-x-1/2 mt-2 px-2 py-1 rounded-md text-[11px] whitespace-nowrap pointer-events-none transition-opacity"
+      style={{
+        background: 'rgba(20,20,28,0.95)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        color: 'white',
+        opacity: show ? 1 : 0,
+        WebkitAppRegion: 'no-drag',
+        // Keep above the pill for layering, in case any sibling has its
+        // own paint order assumption. Within the tooltip's own HWND.
+        zIndex: 10,
+      } as React.CSSProperties}
+    >
+      {text}
+    </span>
+  )
+}
+
 type Phase = 'init' | 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error'
 
 const COUNTDOWN_START = 3
@@ -87,7 +114,7 @@ export default function RecordingToolbar() {
   const isBusy = phase === 'stopping' || phase === 'saving'
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center" style={{ fontFamily: 'Manrope, sans-serif' }}>
+    <div className="fixed inset-0 flex flex-col items-center justify-start pt-1.5" style={{ fontFamily: 'Manrope, sans-serif' }}>
       <div
         className="flex items-center gap-2 px-3 py-2 glass-refractive rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
         style={{
@@ -232,7 +259,8 @@ function ToolbarBtn({
   disabled?: boolean
   compact?: boolean
 }) {
-  const base = 'flex items-center justify-center rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed'
+  const [hover, setHover] = useState(false)
+  const base = 'relative flex items-center justify-center rounded-full transition-all disabled:opacity-40 disabled:cursor-not-allowed'
   const size = compact ? 'w-7 h-7' : 'w-9 h-9'
   let color: string
   if (active && accent === 'red') {
@@ -245,13 +273,15 @@ function ToolbarBtn({
   return (
     <button
       onClick={onClick}
-      title={label}
       aria-label={label}
       disabled={disabled}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
       className={`${base} ${size} ${color}`}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
       <span className={`material-symbols-outlined ${compact ? 'text-[16px]' : 'text-[18px]'}`}>{icon}</span>
+      <Tip text={label} show={hover && !disabled} />
     </button>
   )
 }

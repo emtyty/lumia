@@ -101,7 +101,12 @@ function loadRoute(win: BrowserWindow, route: string) {
 
 function computeToolbarBounds(display: Electron.Display, rect?: { x: number; y: number; width: number; height: number }) {
   const TOOLBAR_W = 440
-  const TOOLBAR_H = 56
+  // Tall enough for the pill plus the in-DOM hover tooltip directly below
+  // each button. We can't use HTML title tooltips — Windows renders those
+  // as a separate top-level HWND (tooltips_class32) and macOS as a
+  // separate NSWindow via NSToolTipManager, neither of which inherits the
+  // toolbar's content protection, so they'd leak into the recording.
+  const TOOLBAR_H = 92
   const displayX = display.bounds.x
   const displayY = display.bounds.y
   const displayW = display.bounds.width

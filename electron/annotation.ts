@@ -51,12 +51,31 @@ function loadRoute(win: BrowserWindow, route: string) {
 }
 
 const TOOLBAR_W = 800
-const TOOLBAR_H = 56
-const TOOLBAR_GAP = 12
+// Tall enough to fit the pill plus the in-DOM hover tooltip directly below
+// it. Native HTML title tooltips can't be used here — Windows renders them
+// as a separate top-level HWND (tooltips_class32) and macOS as a separate
+// NSWindow via NSToolTipManager; neither inherits the palette's content
+// protection, so the tooltip would leak into the recording.
+const TOOLBAR_H = 92
 
-/** Position the palette directly under whatever the recording toolbar's
- *  current bounds are. Centred on the toolbar (the palette is wider) and
- *  clamped to the display so it never falls off-screen. */
+// Visual offsets within each toolbar window. Both pills are anchored to
+// the top of their window with `pt-1.5` (6px) — the rest of the window
+// is empty space reserved for that bar's hover tooltip. Positioning the
+// palette window relative to the recording WINDOW would leave a huge
+// visual gap between the two pills (~50px); we instead position relative
+// to the recording PILL's visual bottom so the two pills sit close
+// together. The two windows physically overlap as a result, which is
+// fine — both are transparent fullscreen layers and tooltip regions
+// briefly overlapping is acceptable.
+const RECORDING_PILL_BOTTOM = 60   // anchor.y + this = visual bottom of recording pill
+const PALETTE_PILL_HEIGHT = 46     // visual height of the palette pill
+const PILL_TOP_INSET = 6           // pt-1.5 inside the palette window
+const VISUAL_GAP = 4               // visual gap between the two pills
+
+/** Position the palette directly under the recording toolbar's pill,
+ *  not its window — see comment block above for the offset rationale.
+ *  Centred on the toolbar (the palette is wider) and clamped to the
+ *  display so it never falls off-screen. */
 function computeToolbarBounds(display: Electron.Display, anchor: { x: number; y: number; width: number; height: number }) {
   const dx = display.bounds.x
   const dy = display.bounds.y
@@ -65,8 +84,8 @@ function computeToolbarBounds(display: Electron.Display, anchor: { x: number; y:
 
   const cx = anchor.x + anchor.width / 2
   const x = Math.round(Math.max(dx + 8, Math.min(dx + dw - TOOLBAR_W - 8, cx - TOOLBAR_W / 2)))
-  const below = anchor.y + anchor.height + TOOLBAR_GAP
-  const above = anchor.y - TOOLBAR_H - TOOLBAR_GAP
+  const below = anchor.y + RECORDING_PILL_BOTTOM + VISUAL_GAP - PILL_TOP_INSET
+  const above = anchor.y - PALETTE_PILL_HEIGHT - VISUAL_GAP
   // Prefer below; fall back to above if the palette would slide off the
   // bottom of the display, then clamp to the top edge as a last resort.
   let y = below + TOOLBAR_H + 8 <= dy + dh
@@ -156,7 +175,23 @@ function createToolbarWindow(display: Electron.Display, anchor: { x: number; y: 
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return
     if (process.platform === 'win32') win.setBounds(bounds)
+    // Re-apply content protection right before the window becomes visible
+    // and again after. The palette is created during an already-running
+    // capture session (user toggles Annotate mid-recording), and Electron's
+    // setContentProtection from the constructor isn't reliable for
+    // transparent + frame:false windows in that case: on Windows, WGC
+    // keeps showing the palette in the captured stream; on macOS the same
+    // class of bug exists with NSWindowSharingNone via SCK. Re-applying
+    // after the HWND/NSWindow is fully realised + visible forces the OS
+    // capture session to honour the exclusion.
+    win.setContentProtection(true)
     win.showInactive()
+    win.setContentProtection(true)
+    // Belt and braces on Windows: bypass Electron and call
+    // SetWindowDisplayAffinity directly so we know WDA_EXCLUDEFROMCAPTURE
+    // is set on the real HWND. Some Electron builds skip the call when
+    // the window has WS_EX_LAYERED (transparent) + WS_EX_TRANSPARENT.
+    forceWindowsExcludeFromCapture(win)
   })
   win.setMenu(null)
   win.setAlwaysOnTop(true, 'screen-saver')
@@ -240,16 +275,20 @@ export function openAnnotation(
   }
 
   // Force the palette + caller-supplied windows (recording toolbar, border)
-  // to the top of the OS topmost-stack via direct Win32 SetWindowPos. Plain
-  // setAlwaysOnTop / moveTop don't reliably re-raise an already-topmost
-  // window; SetWindowPos(HWND_TOPMOST) does.
+  // to the top of the OS topmost-stack. Plain setAlwaysOnTop doesn't
+  // reliably re-raise an already-topmost window; we need a real re-order:
+  //   - Win32: SetWindowPos(HWND_TOPMOST) via koffi.
+  //   - macOS: BrowserWindow.moveTop() → NSWindow.orderFrontRegardless:,
+  //     which re-orders within the screen-saver level group without
+  //     stealing key focus from the recorded app.
+  // Without this, the overlay (created last, same `screen-saver` level)
+  // ends up above the pre-existing recording toolbar / border, so any
+  // drawing tool would swallow clicks meant for the Stop button.
   //
-  // Defer until the next tick so the overlay's HWND is fully realised in
-  // the topmost group before we re-raise the toolbars on top of it.
-  // Without the defer, the overlay can land on top after the SetWindowPos
-  // calls run because its 'show' phase hasn't completed yet.
+  // Defer until the next tick so the overlay's window handle is fully
+  // realised in the topmost group before we re-raise the others on top.
   const wins = [toolbarWin, ...topmostAfter]
-  setTimeout(() => forceWindowsTopmost(wins), 50)
+  setTimeout(() => raiseAboveOverlay(wins), 50)
 }
 
 /** Couple two windows so dragging either one moves both. Tracks the
@@ -302,9 +341,51 @@ function linkToolbarDrag(a: BrowserWindow, b: BrowserWindow): () => void {
   }
 }
 
-/** Direct Win32 SetWindowPos(HWND_TOPMOST) on each window's HWND. Other
- *  platforms rely on the `screen-saver` setAlwaysOnTop level alone, which
- *  is well-respected by macOS and Linux window managers. */
+/** Re-raise each window above the live annotation overlay. The overlay
+ *  shares the same `screen-saver` level as the toolbars, so we have to
+ *  do an explicit re-order — relying on the level alone leaves the
+ *  most-recently-created window (the overlay) on top within that group.
+ *
+ *  Win32: SetWindowPos(HWND_TOPMOST) via koffi.
+ *  macOS / Linux: moveTop() → NSWindow.orderFrontRegardless:, which
+ *  re-orders within the same NSWindowLevel without stealing key focus. */
+function raiseAboveOverlay(wins: (BrowserWindow | null)[]) {
+  if (process.platform === 'win32') {
+    forceWindowsTopmost(wins)
+    return
+  }
+  for (const w of wins) {
+    if (!w || w.isDestroyed()) continue
+    try { w.moveTop() } catch { /* ignore */ }
+  }
+}
+
+/** Direct Win32 SetWindowDisplayAffinity(HWND, WDA_EXCLUDEFROMCAPTURE).
+ *  Bypasses Electron's setContentProtection wrapper, which has known
+ *  issues applying display affinity to layered (transparent) windows on
+ *  Windows. Requires Windows 10 build 19041 (2004) or newer for the
+ *  EXCLUDEFROMCAPTURE flag — older Windows would need WDA_MONITOR
+ *  (renders the window black in captures), which we don't fall back to. */
+function forceWindowsExcludeFromCapture(win: BrowserWindow) {
+  if (process.platform !== 'win32') return
+  if (win.isDestroyed()) return
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const koffi = require('koffi')
+    const user32 = koffi.load('user32.dll')
+    const SetWindowDisplayAffinity = user32.func(
+      'bool __stdcall SetWindowDisplayAffinity(intptr_t hWnd, uint32_t dwAffinity)',
+    )
+    const WDA_EXCLUDEFROMCAPTURE = 0x11
+    const buf = win.getNativeWindowHandle()
+    const hwnd = buf.length >= 8 ? buf.readBigInt64LE(0) : BigInt(buf.readInt32LE(0))
+    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+  } catch (err) {
+    console.warn('[annotation] SetWindowDisplayAffinity call failed', err)
+  }
+}
+
+/** Direct Win32 SetWindowPos(HWND_TOPMOST) on each window's HWND. */
 function forceWindowsTopmost(wins: (BrowserWindow | null)[]) {
   if (process.platform !== 'win32') return
   try {

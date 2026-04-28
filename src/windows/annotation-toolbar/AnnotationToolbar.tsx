@@ -29,6 +29,31 @@ const COLORS = [
 
 const STROKE_PRESETS = [2, 4, 8, 14] as const
 
+// In-DOM tooltip rendered as a child of each button. Native HTML title
+// tooltips can't be used here — Windows renders them as a separate
+// top-level HWND (tooltips_class32) and macOS as a separate NSWindow via
+// NSToolTipManager; neither inherits the palette's content protection,
+// so the tooltip would leak into the recording. Rendering it inside the
+// React tree keeps it in the same HWND/NSWindow that already has
+// WDA_EXCLUDEFROMCAPTURE / NSWindowSharingNone applied.
+function Tip({ text, show }: { text: string; show: boolean }) {
+  return (
+    <span
+      className="absolute left-1/2 top-full -translate-x-1/2 mt-2 px-2 py-1 rounded-md text-[11px] whitespace-nowrap pointer-events-none transition-opacity"
+      style={{
+        background: 'rgba(20,20,28,0.95)',
+        border: '1px solid rgba(255,255,255,0.1)',
+        color: 'white',
+        opacity: show ? 1 : 0,
+        WebkitAppRegion: 'no-drag',
+        zIndex: 10,
+      } as React.CSSProperties}
+    >
+      {text}
+    </span>
+  )
+}
+
 export default function AnnotationToolbar() {
   const [tool, setTool] = useState<Tool>('none')
   const [color, setColor] = useState('#f87171')
@@ -70,7 +95,7 @@ export default function AnnotationToolbar() {
   const onClose = () => window.electronAPI?.annotationClose?.()
 
   return (
-    <div className="fixed inset-0 flex items-center justify-center" style={{ fontFamily: 'Manrope, sans-serif' }}>
+    <div className="fixed inset-0 flex flex-col items-center justify-start pt-1.5" style={{ fontFamily: 'Manrope, sans-serif' }}>
       <div
         className="flex items-center gap-1.5 px-2 py-1.5 rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
         style={{
@@ -89,44 +114,14 @@ export default function AnnotationToolbar() {
 
         {/* Stroke size */}
         {STROKE_PRESETS.map(n => (
-          <button
-            key={n}
-            onClick={() => pickStroke(n)}
-            title={`Stroke ${n}px`}
-            aria-label={`Stroke ${n}px`}
-            className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${
-              strokeWidth === n ? 'bg-white/20' : 'hover:bg-white/10'
-            }`}
-            style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-          >
-            <span
-              className="rounded-full bg-white"
-              style={{
-                width: Math.min(18, Math.max(3, n * 1.2)),
-                height: Math.min(18, Math.max(3, n * 1.2)),
-              }}
-            />
-          </button>
+          <StrokeBtn key={n} size={n} active={strokeWidth === n} onClick={() => pickStroke(n)} />
         ))}
 
         <Sep />
 
         {/* Color swatches */}
         {COLORS.map(c => (
-          <button
-            key={c}
-            onClick={() => pickColor(c)}
-            title={c}
-            aria-label={`Color ${c}`}
-            className={`w-6 h-6 rounded-full transition-all ${
-              color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-[rgb(20,20,28)]' : 'hover:scale-110'
-            }`}
-            style={{
-              WebkitAppRegion: 'no-drag',
-              backgroundColor: c,
-              border: c === '#ffffff' || c === '#000000' ? '1px solid rgba(255,255,255,0.2)' : 'none',
-            } as React.CSSProperties}
-          />
+          <ColorBtn key={c} color={c} active={color === c} onClick={() => pickColor(c)} />
         ))}
 
         <Sep />
@@ -153,18 +148,68 @@ function ToolBtn({
   active?: boolean
   accent?: 'red'
 }) {
+  const [hover, setHover] = useState(false)
   let cls = 'text-slate-300 hover:text-white hover:bg-white/10'
   if (active) cls = 'bg-white/20 text-white'
   if (accent === 'red') cls = 'text-slate-300 hover:text-white hover:bg-red-500/70'
   return (
     <button
       onClick={onClick}
-      title={label}
       aria-label={label}
-      className={`w-8 h-8 rounded-full flex items-center justify-center transition-all ${cls}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all ${cls}`}
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
       <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <Tip text={label} show={hover} />
+    </button>
+  )
+}
+
+function StrokeBtn({ size, active, onClick }: { size: number; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      aria-label={`Stroke ${size}px`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={`relative w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+        active ? 'bg-white/20' : 'hover:bg-white/10'
+      }`}
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+    >
+      <span
+        className="rounded-full bg-white"
+        style={{
+          width: Math.min(18, Math.max(3, size * 1.2)),
+          height: Math.min(18, Math.max(3, size * 1.2)),
+        }}
+      />
+      <Tip text={`Stroke ${size}px`} show={hover} />
+    </button>
+  )
+}
+
+function ColorBtn({ color, active, onClick }: { color: string; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      aria-label={`Color ${color}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={`relative w-6 h-6 rounded-full transition-all ${
+        active ? 'ring-2 ring-white ring-offset-2 ring-offset-[rgb(20,20,28)]' : 'hover:scale-110'
+      }`}
+      style={{
+        WebkitAppRegion: 'no-drag',
+        backgroundColor: color,
+        border: color === '#ffffff' || color === '#000000' ? '1px solid rgba(255,255,255,0.2)' : 'none',
+      } as React.CSSProperties}
+    >
+      <Tip text={color} show={hover} />
     </button>
   )
 }
