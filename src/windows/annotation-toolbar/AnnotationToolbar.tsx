@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 
-type Tool = 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter' | 'eraser'
+type Tool = 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
 
 const TOOLS: { id: Tool; icon: string; label: string }[] = [
+  // 'none' is the interact mode — overlay flips to click-through so the
+  // user can drive the recorded app with the cursor again. Picking any of
+  // the actual drawing tools below re-locks the overlay for ink.
+  { id: 'none',        icon: 'arrow_selector_tool', label: 'Cursor (interact with app)' },
   { id: 'pen',         icon: 'draw',          label: 'Pen' },
   { id: 'arrow',       icon: 'arrow_forward', label: 'Arrow' },
   { id: 'rect',        icon: 'crop_square',   label: 'Rectangle' },
   { id: 'ellipse',     icon: 'circle',        label: 'Ellipse' },
   { id: 'highlighter', icon: 'highlight',     label: 'Highlighter' },
-  { id: 'eraser',      icon: 'ink_eraser',    label: 'Eraser' },
 ]
 
 const COLORS = [
@@ -116,9 +119,9 @@ export default function AnnotationToolbar() {
         <Sep />
 
         {/* Undo + Clear + Close */}
-        <ToolBtn icon="undo"          label="Undo"  onClick={onUndo} />
-        <ToolBtn icon="ink_highlighter" label="Clear all" onClick={onClear} />
-        <ToolBtn icon="close"         label="Close annotation"  onClick={onClose} accent="red" />
+        <ToolBtn icon="undo"         label="Undo"             onClick={onUndo} />
+        <ToolBtn icon="delete_sweep" label="Clear all"        onClick={onClear} />
+        <ToolBtn icon="close"        label="Close annotation" onClick={onClose} accent="red" />
       </div>
     </div>
   )

@@ -520,11 +520,13 @@ export function setupVideo() {
       // overlay is created, annotation forces these windows back to the
       // top of the OS topmost-stack via SetWindowPos(HWND_TOPMOST), which
       // re-raises an already-topmost window even when setAlwaysOnTop /
-      // moveTop don't.
+      // moveTop don't. The recording toolbar also doubles as the anchor
+      // and drag-partner for the annotation palette so they read as a
+      // single floating cluster.
       const topmostAfter: BrowserWindow[] = []
       if (recordingToolbar && !recordingToolbar.isDestroyed()) topmostAfter.push(recordingToolbar)
       if (recordingBorder && !recordingBorder.isDestroyed()) topmostAfter.push(recordingBorder)
-      openAnnotation(recordingTarget.displayId, recordingTarget.rect, topmostAfter)
+      openAnnotation(recordingTarget.displayId, recordingTarget.rect, topmostAfter, recordingToolbar)
     } else {
       closeAnnotation()
     }

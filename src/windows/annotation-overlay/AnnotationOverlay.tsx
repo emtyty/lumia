@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Stage, Layer, Line, Arrow, Rect, Ellipse } from 'react-konva'
 import type Konva from 'konva'
 
-type Tool = 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter' | 'eraser'
+type Tool = 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
 
 interface DrawState {
   tool: Tool
@@ -90,7 +90,6 @@ export default function AnnotationOverlay() {
     const base = { id, tool: draw.tool, color: draw.color, strokeWidth: draw.strokeWidth }
     switch (draw.tool) {
       case 'pen':
-      case 'eraser':
         return { ...base, kind: 'free', points: [x, y] }
       case 'highlighter':
         return { ...base, kind: 'free', points: [x, y], highlight: true, strokeWidth: draw.strokeWidth * 4 }
@@ -144,10 +143,8 @@ export default function AnnotationOverlay() {
   }
 
   const renderShape = (s: Shape, key: number | string) => {
-    const isErase = s.tool === 'eraser'
     const isHighlight = s.highlight === true
     const opacity = isHighlight ? 0.35 : 1
-    const composite: GlobalCompositeOperation = isErase ? 'destination-out' : 'source-over'
 
     if (s.kind === 'free') {
       return (
@@ -160,7 +157,6 @@ export default function AnnotationOverlay() {
           lineJoin="round"
           tension={0.4}
           opacity={opacity}
-          globalCompositeOperation={composite}
         />
       )
     }

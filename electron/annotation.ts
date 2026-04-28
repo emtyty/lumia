@@ -31,7 +31,7 @@ let toolbarWin: BrowserWindow | null = null
  *  tool before clicks on the overlay turn into strokes — that keeps the
  *  first click after enabling annotation from being an accidental drag. */
 interface AnnotationState {
-  tool: 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter' | 'eraser'
+  tool: 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
   color: string
   strokeWidth: number
 }
@@ -50,39 +50,31 @@ function loadRoute(win: BrowserWindow, route: string) {
   }
 }
 
-const TOOLBAR_W = 760
+const TOOLBAR_W = 800
 const TOOLBAR_H = 56
 const TOOLBAR_GAP = 12
 
-/** Position the tool palette below the recording rect when there's room,
- *  otherwise tuck it inside the bottom of the rect. Always clamped to the
- *  display bounds. */
-function computeToolbarBounds(
-  display: Electron.Display,
-  rect?: { x: number; y: number; width: number; height: number },
-) {
+/** Position the palette directly under whatever the recording toolbar's
+ *  current bounds are. Centred on the toolbar (the palette is wider) and
+ *  clamped to the display so it never falls off-screen. */
+function computeToolbarBounds(display: Electron.Display, anchor: { x: number; y: number; width: number; height: number }) {
   const dx = display.bounds.x
   const dy = display.bounds.y
   const dw = display.bounds.width
   const dh = display.bounds.height
 
-  if (rect) {
-    const cx = dx + rect.x + rect.width / 2
-    const x = Math.round(Math.max(dx + 8, Math.min(dx + dw - TOOLBAR_W - 8, cx - TOOLBAR_W / 2)))
-    const below = dy + rect.y + rect.height + TOOLBAR_GAP
-    const insideBottom = dy + rect.y + rect.height - TOOLBAR_H - TOOLBAR_GAP
-    const y = below + TOOLBAR_H + 8 <= dy + dh
-      ? below
-      : Math.max(dy + 8, insideBottom)
-    return { x, y, width: TOOLBAR_W, height: TOOLBAR_H }
-  }
-  // Screen-mode recording: bottom-center of the display.
-  return {
-    x: Math.round(dx + (dw - TOOLBAR_W) / 2),
-    y: dy + dh - TOOLBAR_H - 32,
-    width: TOOLBAR_W,
-    height: TOOLBAR_H,
-  }
+  const cx = anchor.x + anchor.width / 2
+  const x = Math.round(Math.max(dx + 8, Math.min(dx + dw - TOOLBAR_W - 8, cx - TOOLBAR_W / 2)))
+  const below = anchor.y + anchor.height + TOOLBAR_GAP
+  const above = anchor.y - TOOLBAR_H - TOOLBAR_GAP
+  // Prefer below; fall back to above if the palette would slide off the
+  // bottom of the display, then clamp to the top edge as a last resort.
+  let y = below + TOOLBAR_H + 8 <= dy + dh
+    ? below
+    : above >= dy + 8
+      ? above
+      : Math.max(dy + 8, dy + dh - TOOLBAR_H - 8)
+  return { x, y, width: TOOLBAR_W, height: TOOLBAR_H }
 }
 
 function createOverlayWindow(display: Electron.Display) {
@@ -131,8 +123,8 @@ function createOverlayWindow(display: Electron.Display) {
   return win
 }
 
-function createToolbarWindow(display: Electron.Display, rect?: { x: number; y: number; width: number; height: number }) {
-  const bounds = computeToolbarBounds(display, rect)
+function createToolbarWindow(display: Electron.Display, anchor: { x: number; y: number; width: number; height: number }) {
+  const bounds = computeToolbarBounds(display, anchor)
   const win = new BrowserWindow({
     ...bounds,
     transparent: true,
@@ -192,10 +184,16 @@ function hasLiveAnnotations(): boolean {
   return overlayWin !== null && !overlayWin.isDestroyed()
 }
 
+/** Listener pair installed by linkToolbarDrag. Held module-side so we can
+ *  detach them on close — without this, leftover listeners would resurrect
+ *  the palette/toolbar coupling the next time the user starts recording. */
+let dragLinkCleanup: (() => void) | null = null
+
 export function openAnnotation(
   displayId: number,
-  rect?: { x: number; y: number; width: number; height: number },
+  rect: { x: number; y: number; width: number; height: number } | undefined,
   topmostAfter: BrowserWindow[] = [],
+  recordingToolbar?: BrowserWindow | null,
 ) {
   if (isAnnotationOpen()) return
   const display = screen.getAllDisplays().find(d => d.id === displayId) ?? screen.getPrimaryDisplay()
@@ -204,16 +202,32 @@ export function openAnnotation(
   // color and stroke width carry over from the previous session.
   state.tool = 'none'
 
-  if (hasLiveAnnotations()) {
-    // Re-entering edit mode after the user toggled the palette off — the
-    // overlay (and any strokes already drawn) is still around. Just
-    // re-open the palette and put the overlay back into capture-clicks
-    // mode so the user can keep drawing on top of what they had.
-    overlayWin!.setIgnoreMouseEvents(false)
-  } else {
+  if (!hasLiveAnnotations()) {
     overlayWin = createOverlayWindow(display)
   }
-  toolbarWin = createToolbarWindow(display, rect)
+
+  // Anchor the palette directly under the recording toolbar so the two
+  // controls read as a single floating cluster. Falls back to the
+  // recording rect (region/window mode) or a centred screen-mode position
+  // if the recording toolbar isn't around for whatever reason.
+  const anchor = recordingToolbar && !recordingToolbar.isDestroyed()
+    ? recordingToolbar.getBounds()
+    : rect
+      ? { x: display.bounds.x + rect.x, y: display.bounds.y + rect.y, width: rect.width, height: rect.height }
+      : { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height }
+  toolbarWin = createToolbarWindow(display, anchor)
+
+  // tool='none' = interact mode: clicks pass through the overlay to the
+  // recorded app underneath. set-tool will flip this back to capturing
+  // when the user picks an actual drawing tool.
+  overlayWin!.setIgnoreMouseEvents(true, { forward: true })
+
+  // Keep the recording toolbar and palette in lockstep — drag either one,
+  // both move with the same delta. Captures their relative offset now and
+  // preserves it across both windows' move events.
+  if (recordingToolbar && !recordingToolbar.isDestroyed()) {
+    dragLinkCleanup = linkToolbarDrag(recordingToolbar, toolbarWin)
+  }
 
   // Force the palette + caller-supplied windows (recording toolbar, border)
   // to the top of the OS topmost-stack via direct Win32 SetWindowPos. Plain
@@ -226,6 +240,56 @@ export function openAnnotation(
   // calls run because its 'show' phase hasn't completed yet.
   const wins = [toolbarWin, ...topmostAfter]
   setTimeout(() => forceWindowsTopmost(wins), 50)
+}
+
+/** Couple two windows so dragging either one moves both. Tracks the
+ *  initial offset between them and propagates every position change while
+ *  guarding against the feedback loop that would otherwise have each
+ *  window's move event re-trigger the other's. */
+function linkToolbarDrag(a: BrowserWindow, b: BrowserWindow): () => void {
+  const initial = b.getBounds()
+  const aInit = a.getBounds()
+  // b.position relative to a.position. Stays constant for the rest of the
+  // session — when a moves by (dx, dy), b moves by (dx, dy) too, so the
+  // offset is invariant and we can just recompute b.x = a.x + offsetX.
+  const offsetX = initial.x - aInit.x
+  const offsetY = initial.y - aInit.y
+
+  let suppressing = false
+
+  const onMoveA = () => {
+    if (suppressing) return
+    if (a.isDestroyed() || b.isDestroyed()) return
+    const ab = a.getBounds()
+    const bb = b.getBounds()
+    const targetX = ab.x + offsetX
+    const targetY = ab.y + offsetY
+    if (bb.x === targetX && bb.y === targetY) return
+    suppressing = true
+    b.setPosition(targetX, targetY, false)
+    // Release after the next tick so the synthetic move fires while we're
+    // still suppressing, but a real subsequent user drag isn't blocked.
+    setImmediate(() => { suppressing = false })
+  }
+  const onMoveB = () => {
+    if (suppressing) return
+    if (a.isDestroyed() || b.isDestroyed()) return
+    const ab = a.getBounds()
+    const bb = b.getBounds()
+    const targetX = bb.x - offsetX
+    const targetY = bb.y - offsetY
+    if (ab.x === targetX && ab.y === targetY) return
+    suppressing = true
+    a.setPosition(targetX, targetY, false)
+    setImmediate(() => { suppressing = false })
+  }
+
+  a.on('move', onMoveA)
+  b.on('move', onMoveB)
+  return () => {
+    if (!a.isDestroyed()) a.off('move', onMoveA)
+    if (!b.isDestroyed()) b.off('move', onMoveB)
+  }
 }
 
 /** Direct Win32 SetWindowPos(HWND_TOPMOST) on each window's HWND. Other
@@ -264,6 +328,7 @@ function forceWindowsTopmost(wins: (BrowserWindow | null)[]) {
  *  underneath while their annotations remain visible (and being
  *  recorded). Strokes only go away on destroyAnnotation(). */
 export function closeAnnotation() {
+  if (dragLinkCleanup) { dragLinkCleanup(); dragLinkCleanup = null }
   if (toolbarWin && !toolbarWin.isDestroyed()) {
     try { toolbarWin.close() } catch { /* ignore */ }
   }
@@ -276,6 +341,7 @@ export function closeAnnotation() {
 /** Tear down everything — overlay included. Called from
  *  closeRecordingSession when the recording stops or is cancelled. */
 export function destroyAnnotation() {
+  if (dragLinkCleanup) { dragLinkCleanup(); dragLinkCleanup = null }
   for (const w of [overlayWin, toolbarWin]) {
     if (w && !w.isDestroyed()) {
       try { w.close() } catch { /* ignore */ }
@@ -290,6 +356,14 @@ export function setupAnnotation() {
 
   ipcMain.handle('annotation:set-tool', (_e, tool: AnnotationState['tool']) => {
     state.tool = tool
+    // tool === 'none' means the user wants to interact with the recorded
+    // app, not draw — flip the overlay to click-through so clicks fall
+    // through to whatever's behind it. Picking any actual drawing tool
+    // brings click capture back so the next stroke lands on the canvas.
+    if (overlayWin && !overlayWin.isDestroyed()) {
+      if (tool === 'none') overlayWin.setIgnoreMouseEvents(true, { forward: true })
+      else overlayWin.setIgnoreMouseEvents(false)
+    }
     sendToOverlay('annotation:state', state)
   })
   ipcMain.handle('annotation:set-color', (_e, color: string) => {
