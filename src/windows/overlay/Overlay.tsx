@@ -320,7 +320,7 @@ export default function Overlay() {
             <div
               className="absolute inset-4 pointer-events-none"
               style={{
-                border: `3px solid ${accent.highlightBorder}`,
+                border: `3px dashed ${accent.highlightBorder}`,
                 borderRadius: 8,
                 boxShadow: `inset 0 0 0 1px ${accent.highlightShadow}`,
               }}
@@ -364,7 +364,7 @@ export default function Overlay() {
                 top: hoveredWindow.y,
                 width: hoveredWindow.width,
                 height: hoveredWindow.height,
-                border: `2px solid ${accent.highlightBorder}`,
+                border: `2px dashed ${accent.highlightBorder}`,
                 boxShadow: `0 0 0 9999px rgba(0,0,0,0.25), inset 0 0 0 1px ${accent.highlightShadow}`,
                 borderRadius: 4,
                 background: accent.highlightFill,
@@ -433,7 +433,7 @@ export default function Overlay() {
               boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
               border: mode === 'scroll-region'
                 ? '2px solid rgba(56, 189, 248, 0.8)'
-                : `2px solid ${accent.border}`,
+                : `2px dashed ${accent.border}`,
               borderRadius: 4,
             }}
           />
