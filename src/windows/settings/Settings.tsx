@@ -37,6 +37,10 @@ export default function Settings() {
   const originalRef = useRef<AppSettings>(DEFAULT_SETTINGS)
   const [gdriveConnecting, setGdriveConnecting] = useState(false)
   const [gdriveError, setGdriveError] = useState('')
+  const [gdrivePicking, setGdrivePicking] = useState(false)
+  const [gdriveFolderName, setGdriveFolderName] = useState('')
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
+  const disconnectConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
@@ -113,19 +117,62 @@ export default function Settings() {
     setGdriveConnecting(true)
     setGdriveError('')
     const result = await window.electronAPI?.gdriveStartAuth()
+    setGdriveConnecting(false)
     if (result?.success) {
       const s = await window.electronAPI?.getSettings()
       if (s) { setSettings(s); originalRef.current = s }
-    } else {
+      // Folder is required, so jump straight into the picker after a successful connect.
+      handleGdrivePickFolder()
+      return
+    }
+    if (!result?.cancelled) {
       setGdriveError(result?.error ?? 'Authorization failed')
     }
-    setGdriveConnecting(false)
+  }
+
+  const handleGdriveCancelAuth = async () => {
+    await window.electronAPI?.gdriveCancelAuth()
+    // gdriveStartAuth's promise will resolve with { cancelled: true } and the
+    // handler above will reset gdriveConnecting; no extra state work needed.
   }
 
   const handleGdriveDisconnect = async () => {
+    if (!confirmingDisconnect) {
+      setConfirmingDisconnect(true)
+      if (disconnectConfirmTimerRef.current) clearTimeout(disconnectConfirmTimerRef.current)
+      disconnectConfirmTimerRef.current = setTimeout(() => setConfirmingDisconnect(false), 3000)
+      return
+    }
+    if (disconnectConfirmTimerRef.current) clearTimeout(disconnectConfirmTimerRef.current)
+    setConfirmingDisconnect(false)
     await window.electronAPI?.gdriveDisconnect()
-    update('googleDriveRefreshToken', '')
-    update('googleDriveAccessToken', '')
+    setSettings(prev => {
+      const next = { ...prev, googleDriveRefreshToken: '', googleDriveAccessToken: '' }
+      originalRef.current = { ...originalRef.current, googleDriveRefreshToken: '', googleDriveAccessToken: '' }
+      return next
+    })
+    setGdriveFolderName('')
+  }
+
+  const handleGdrivePickFolder = async () => {
+    setGdrivePicking(true)
+    setGdriveError('')
+    const result = await window.electronAPI?.gdrivePickFolder()
+    setGdrivePicking(false)
+    if (result?.cancelled) return
+    if (!result?.success) {
+      setGdriveError(result?.error ?? 'Folder picker failed')
+      return
+    }
+    if (result.folder) {
+      update('googleDriveFolderId', result.folder.id)
+      originalRef.current = { ...originalRef.current, googleDriveFolderId: result.folder.id }
+      setGdriveFolderName(result.folder.name)
+    }
+  }
+
+  const handleGdriveCancelPickFolder = async () => {
+    await window.electronAPI?.gdriveCancelPickFolder()
   }
 
   const platform = window.electronAPI?.platform
@@ -301,25 +348,48 @@ export default function Settings() {
                   </div>
                   <button
                     onClick={handleGdriveDisconnect}
-                    className="px-3 py-1.5 text-[11px] font-semibold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-all"
+                    onBlur={() => {
+                      if (disconnectConfirmTimerRef.current) clearTimeout(disconnectConfirmTimerRef.current)
+                      setConfirmingDisconnect(false)
+                    }}
+                    title={confirmingDisconnect ? 'Click again to confirm' : 'Disconnect Google Drive'}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold rounded-lg border transition-all ${
+                      confirmingDisconnect
+                        ? 'text-red-300 bg-red-500/25 border-red-500/50'
+                        : 'text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border-red-500/20'
+                    }`}
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    Disconnect
+                    {confirmingDisconnect && <span className="material-symbols-outlined text-xs">warning</span>}
+                    {confirmingDisconnect ? 'Confirm disconnect' : 'Disconnect'}
                   </button>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <button
-                    onClick={handleGdriveAuth}
-                    disabled={gdriveConnecting}
-                    className="flex items-center gap-2 px-4 py-2.5 primary-gradient text-slate-900 font-bold rounded-xl text-xs hover:scale-[1.02] active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100"
-                    style={{ fontFamily: 'Manrope, sans-serif' }}
-                  >
-                    <span className="material-symbols-outlined text-sm">
-                      {gdriveConnecting ? 'hourglass_empty' : 'add_to_drive'}
-                    </span>
-                    {gdriveConnecting ? 'Waiting for authorization…' : 'Connect Google Drive'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleGdriveAuth}
+                      disabled={gdriveConnecting}
+                      className="flex items-center gap-2 px-4 py-2.5 primary-gradient text-slate-900 font-bold rounded-xl text-xs hover:scale-[1.02] active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      <span className="material-symbols-outlined text-sm">
+                        {gdriveConnecting ? 'hourglass_empty' : 'add_to_drive'}
+                      </span>
+                      {gdriveConnecting ? 'Waiting for authorization…' : 'Connect Google Drive'}
+                    </button>
+                    {gdriveConnecting && (
+                      <button
+                        onClick={handleGdriveCancelAuth}
+                        title="Cancel and try again"
+                        className="flex items-center gap-1.5 px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 transition-colors"
+                        style={{ fontFamily: 'Manrope, sans-serif' }}
+                      >
+                        <span className="material-symbols-outlined text-sm">close</span>
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                   {gdriveError && (
                     <p className="text-[11px] text-red-400 flex items-center gap-1">
                       <span className="material-symbols-outlined text-sm">error</span>
@@ -328,17 +398,46 @@ export default function Settings() {
                   )}
                 </div>
               )}
-              <Field
-                label="Folder ID (optional)"
-                description="Upload to a specific Drive folder. Leave blank for root."
-              >
-                <input
-                  value={settings.googleDriveFolderId}
-                  onChange={e => update('googleDriveFolderId', e.target.value)}
-                  placeholder="e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2wtTs"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
+              <div className="space-y-1.5">
+                <div className="flex gap-2">
+                  <input
+                    value={gdriveFolderName ? `${gdriveFolderName} (${settings.googleDriveFolderId})` : settings.googleDriveFolderId}
+                    readOnly
+                    placeholder="No folder selected — required for Drive uploads"
+                    title={settings.googleDriveFolderId || ''}
+                    className={`flex-1 min-w-0 bg-white/5 border rounded-xl px-4 py-2.5 text-sm text-slate-300 placeholder-slate-600 focus:outline-none cursor-default select-text truncate ${
+                      gdriveConnected && !settings.googleDriveFolderId ? 'border-amber-500/40' : 'border-white/10'
+                    }`}
+                  />
+                  <button
+                    onClick={handleGdrivePickFolder}
+                    disabled={!gdriveConnected || gdrivePicking}
+                    title={!gdriveConnected ? 'Connect Google Drive first' : 'Browse Drive'}
+                    className="flex items-center gap-1.5 px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-slate-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    <span className="material-symbols-outlined text-sm">{gdrivePicking ? 'hourglass_empty' : 'folder_open'}</span>
+                    {gdrivePicking ? 'Opening…' : 'Browse'}
+                  </button>
+                  {gdrivePicking && (
+                    <button
+                      onClick={handleGdriveCancelPickFolder}
+                      title="Cancel and try again"
+                      className="flex items-center gap-1.5 px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 transition-colors"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      <span className="material-symbols-outlined text-sm">close</span>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                {gdriveConnected && !settings.googleDriveFolderId && (
+                  <p className="text-[11px] text-amber-400 flex items-center gap-1 mt-1">
+                    <span className="material-symbols-outlined text-sm">warning</span>
+                    Pick a folder before sharing — Drive uploads will fail until then.
+                  </p>
+                )}
+              </div>
             </Section>
 
             {/* Hotkeys */}

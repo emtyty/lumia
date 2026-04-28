@@ -843,13 +843,36 @@ app.whenReady().then(async () => {
   })
 
   // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
+  // Tracks an in-progress OAuth flow so the renderer can cancel it (user clicked
+  // Connect by mistake, opened the wrong browser, etc.). Calling startAuth again
+  // while one is active first cancels the previous flow.
+  let activeAuthServer: import('http').Server | null = null
+  let activeAuthResolve: ((value: { success: boolean; error?: string; cancelled?: boolean }) => void) | null = null
+
   ipcMain.handle('gdrive:startAuth', async () => {
     const { createServer } = await import('http')
     const { exchangeGoogleAuthCode } = await import('./uploaders/googledrive')
     const clientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
     const clientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
 
-    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+    if (activeAuthServer) {
+      activeAuthServer.close()
+      activeAuthServer = null
+    }
+    if (activeAuthResolve) {
+      activeAuthResolve({ success: false, cancelled: true })
+      activeAuthResolve = null
+    }
+
+    return new Promise<{ success: boolean; error?: string; cancelled?: boolean }>((resolve) => {
+      const settle = (value: { success: boolean; error?: string; cancelled?: boolean }) => {
+        if (activeAuthResolve !== settle) return
+        activeAuthServer = null
+        activeAuthResolve = null
+        resolve(value)
+      }
+      activeAuthResolve = settle
+
       const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
 
@@ -913,7 +936,7 @@ app.whenReady().then(async () => {
 </body>
 </html>`)
           server.close()
-          resolve({ success: false, error: error ?? 'No code returned' })
+          settle({ success: false, error: error ?? 'No code returned' })
           return
         }
 
@@ -1010,12 +1033,14 @@ app.whenReady().then(async () => {
           setSetting('googleDriveRefreshToken', result.refreshToken)
           setSetting('googleDriveTokenExpiresAt', result.expiresAt)
           mainWindow?.webContents.send('gdrive:connected')
-          resolve({ success: true })
+          settle({ success: true })
         } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err)
-          resolve({ success: false, error: msg })
+          settle({ success: false, error: msg })
         }
       })
+
+      activeAuthServer = server
 
       server.listen(42813, '127.0.0.1', () => {
         const params = new URLSearchParams({
@@ -1030,9 +1055,158 @@ app.whenReady().then(async () => {
       })
 
       server.on('error', (err) => {
-        resolve({ success: false, error: `Local server error: ${err.message}` })
+        settle({ success: false, error: `Local server error: ${err.message}` })
       })
     })
+  })
+
+  ipcMain.handle('gdrive:cancelAuth', () => {
+    if (activeAuthServer) {
+      activeAuthServer.close()
+      activeAuthServer = null
+    }
+    if (activeAuthResolve) {
+      activeAuthResolve({ success: false, cancelled: true })
+      activeAuthResolve = null
+    }
+    return { ok: true }
+  })
+
+  // IPC: Google Drive folder picker — serves Google's Picker JS via a local
+  // HTTP server and opens it in the user's default browser. This way the
+  // browser's existing Google session cookies render the picker UI without
+  // re-login. Token is fetched via a one-time nonce so it never appears in the
+  // URL bar / browser history.
+  let activePickerServer: import('http').Server | null = null
+  let activePickerFinish: ((value: { success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }) => void) | null = null
+
+  ipcMain.handle('gdrive:pickFolder', async () => {
+    const settings = getSettings()
+    let { googleDriveAccessToken } = settings
+    const { googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+
+    if (!googleDriveRefreshToken) {
+      return { success: false, error: 'Not connected to Google Drive' }
+    }
+
+    if (Date.now() >= googleDriveTokenExpiresAt - 60_000) {
+      try {
+        const { refreshGoogleToken } = await import('./uploaders/googledrive')
+        const refreshed = await refreshGoogleToken(
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID,
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET,
+          googleDriveRefreshToken
+        )
+        googleDriveAccessToken = refreshed.accessToken
+        setSetting('googleDriveAccessToken', refreshed.accessToken)
+        setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
+      } catch (err) {
+        return { success: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+
+    // Cancel any in-flight picker so we don't leak the previous server / EADDRINUSE on port 42814.
+    if (activePickerServer) {
+      activePickerServer.close()
+      activePickerServer = null
+    }
+    if (activePickerFinish) {
+      activePickerFinish({ success: false, cancelled: true })
+      activePickerFinish = null
+    }
+
+    const { createServer } = await import('http')
+    const { readFile } = await import('fs/promises')
+    const { randomBytes } = await import('crypto')
+    const nonce = randomBytes(16).toString('hex')
+    const config = {
+      token: googleDriveAccessToken,
+      apiKey: import.meta.env.MAIN_VITE_GDRIVE_API_KEY,
+      appId: import.meta.env.MAIN_VITE_GDRIVE_PROJECT_NUMBER
+    }
+
+    const pickerHtmlPath = app.isPackaged
+      ? join(process.resourcesPath, 'picker.html')
+      : join(__dirname, '../../resources/picker.html')
+    let pickerHtml: string
+    try {
+      pickerHtml = await readFile(pickerHtmlPath, 'utf-8')
+    } catch (err) {
+      return { success: false, error: `Failed to load picker.html: ${err instanceof Error ? err.message : String(err)}` }
+    }
+
+    return new Promise<{ success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }>((resolve) => {
+      let resolved = false
+      const server = createServer((req, res) => {
+        const url = new URL(req.url ?? '/', 'http://localhost')
+        if (url.searchParams.get('nonce') !== nonce) {
+          res.writeHead(403, { 'Content-Type': 'text/plain' })
+          res.end('Forbidden')
+          return
+        }
+
+        if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(pickerHtml)
+          return
+        }
+        if (url.pathname === '/config' && req.method === 'GET') {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end(JSON.stringify(config))
+          return
+        }
+        if (url.pathname === '/result' && req.method === 'POST') {
+          let body = ''
+          req.on('data', (chunk) => { body += chunk })
+          req.on('end', () => {
+            res.writeHead(200, { 'Content-Type': 'application/json' })
+            res.end('{"ok":true}')
+            try {
+              const parsed = JSON.parse(body) as { id: string; name: string } | null
+              finish({ success: true, folder: parsed })
+            } catch {
+              finish({ success: true, folder: null })
+            }
+          })
+          return
+        }
+        res.writeHead(404)
+        res.end()
+      })
+
+      const finish = (value: { success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }) => {
+        if (resolved) return
+        resolved = true
+        clearTimeout(timeoutHandle)
+        server.close()
+        if (activePickerServer === server) activePickerServer = null
+        if (activePickerFinish === finish) activePickerFinish = null
+        if (value.folder?.id) setSetting('googleDriveFolderId', value.folder.id)
+        resolve(value)
+      }
+
+      const timeoutHandle = setTimeout(() => {
+        finish({ success: true, folder: null })
+      }, 5 * 60 * 1000)
+
+      server.on('error', (err) => {
+        finish({ success: false, error: `Local server error: ${err.message}` })
+      })
+
+      server.listen(42814, '127.0.0.1', () => {
+        shell.openExternal(`http://localhost:42814/?nonce=${nonce}`)
+      })
+
+      activePickerServer = server
+      activePickerFinish = finish
+    })
+  })
+
+  ipcMain.handle('gdrive:cancelPickFolder', () => {
+    if (activePickerFinish) {
+      activePickerFinish({ success: false, cancelled: true })
+    }
+    return { ok: true }
   })
 
   ipcMain.handle('gdrive:disconnect', async () => {

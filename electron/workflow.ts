@@ -211,7 +211,10 @@ export class WorkflowEngine {
       }
     }
 
-    const folder = folderId || settings.googleDriveFolderId || undefined
+    const folder = folderId || settings.googleDriveFolderId
+    if (!folder) {
+      return { destination: 'google-drive', success: false, error: 'No Drive folder selected — choose one in Settings → Google Drive.' }
+    }
     return uploadToGoogleDrive(imageData, googleDriveAccessToken, folder)
   }
 }

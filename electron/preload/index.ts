@@ -49,7 +49,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Google Drive
   gdriveStartAuth: () => ipcRenderer.invoke('gdrive:startAuth'),
+  gdriveCancelAuth: () => ipcRenderer.invoke('gdrive:cancelAuth'),
   gdriveDisconnect: () => ipcRenderer.invoke('gdrive:disconnect'),
+  gdrivePickFolder: () => ipcRenderer.invoke('gdrive:pickFolder'),
+  gdriveCancelPickFolder: () => ipcRenderer.invoke('gdrive:cancelPickFolder'),
   onGdriveConnected: (cb: () => void) => ipcRenderer.on('gdrive:connected', cb),
 
   // Save file

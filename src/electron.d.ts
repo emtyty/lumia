@@ -50,8 +50,11 @@ declare global {
       getSettings: () => Promise<AppSettings>
       setSetting: (key: keyof AppSettings, value: unknown) => Promise<void>
 
-      gdriveStartAuth: () => Promise<{ success: boolean; error?: string }>
+      gdriveStartAuth: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>
+      gdriveCancelAuth: () => Promise<{ ok: boolean }>
       gdriveDisconnect: () => Promise<{ success: boolean }>
+      gdrivePickFolder: () => Promise<{ success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }>
+      gdriveCancelPickFolder: () => Promise<{ ok: boolean }>
       onGdriveConnected: (cb: () => void) => void
 
       saveFile: (dataUrl: string, filePath: string) => Promise<string>
