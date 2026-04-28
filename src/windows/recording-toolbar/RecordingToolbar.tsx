@@ -30,7 +30,7 @@ export default function RecordingToolbar() {
 
   // Listen for state updates from main
   useEffect(() => {
-    const handler = (s: { phase: Phase; elapsedMs?: number; countdown?: number; micEnabled?: boolean; error?: string }) => {
+    const handler = (s: { phase?: Phase; elapsedMs?: number; countdown?: number; micEnabled?: boolean; error?: string }) => {
       if (s.phase === 'countdown') {
         // Start local countdown (main just kicks it off)
         setPhase('countdown')
@@ -47,7 +47,11 @@ export default function RecordingToolbar() {
         }, 1000)
         return
       }
-      setPhase(s.phase)
+      // Some state messages (e.g. mic toggle) carry only a payload field
+      // and intentionally omit `phase` so they don't disturb the current
+      // toolbar phase — for instance, toggling mic mid-countdown must not
+      // flip the toolbar to 'recording' before MediaRecorder actually starts.
+      if (s.phase) setPhase(s.phase)
       if (typeof s.elapsedMs === 'number') setElapsed(s.elapsedMs)
       if (typeof s.micEnabled === 'boolean') setMicEnabled(s.micEnabled)
       if (s.error) setError(s.error)
@@ -96,6 +100,17 @@ export default function RecordingToolbar() {
             >
               {countdown}
             </span>
+            <div className="w-px h-6 bg-white/10" />
+            {/* Mic toggle — RecorderHost has already pre-acquired the mic
+                track during this countdown window, so flipping it here is
+                instant and stays in effect once recording begins. */}
+            <ToolbarBtn
+              icon={micEnabled ? 'mic' : 'mic_off'}
+              label={micEnabled ? 'Mute microphone' : 'Enable microphone'}
+              onClick={handleMic}
+              active={micEnabled}
+              accent={micEnabled ? 'red' : 'neutral'}
+            />
           </div>
         )}
 

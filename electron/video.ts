@@ -497,7 +497,9 @@ export function setupVideo() {
   })
   ipcMain.handle('toolbar:toggle-mic', (_e, enabled: boolean) => {
     sendToHost('recorder:mic-toggle', enabled)
-    sendToToolbar('toolbar:state', { phase: 'recording', micEnabled: enabled })
+    // Echo only the mic state — no phase. Toggling mid-countdown must not
+    // flip the toolbar to 'recording' before MediaRecorder actually starts.
+    sendToToolbar('toolbar:state', { micEnabled: enabled })
   })
 
   // RecorderHost reports state changes (including tick)
