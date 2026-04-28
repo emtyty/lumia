@@ -194,7 +194,9 @@ export class WorkflowEngine {
   private async uploadToGoogleDrive(imageData: string, folderId?: string): Promise<UploadResult> {
     const settings = getSettings()
     let { googleDriveAccessToken } = settings
-    const { googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+    const { googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+    const googleDriveClientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
+    const googleDriveClientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
 
     // Auto-refresh token if expired
     if (googleDriveRefreshToken && Date.now() >= googleDriveTokenExpiresAt - 60_000) {

@@ -141,6 +141,19 @@ export async function exchangeGoogleAuthCode(
 }
 
 /**
+ * Revoke a Google OAuth token (access or refresh). Revoking a refresh token also
+ * invalidates all access tokens derived from it. Best-effort: returns without
+ * throwing on network failure.
+ */
+export async function revokeGoogleToken(token: string): Promise<void> {
+  if (!token) return
+  await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  })
+}
+
+/**
  * Refresh an expired access token.
  */
 export async function refreshGoogleToken(

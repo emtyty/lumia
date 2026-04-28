@@ -1035,7 +1035,17 @@ app.whenReady().then(async () => {
     })
   })
 
-  ipcMain.handle('gdrive:disconnect', () => {
+  ipcMain.handle('gdrive:disconnect', async () => {
+    const { googleDriveRefreshToken, googleDriveAccessToken } = getSettings()
+    const tokenToRevoke = googleDriveRefreshToken || googleDriveAccessToken
+    if (tokenToRevoke) {
+      try {
+        const { revokeGoogleToken } = await import('./uploaders/googledrive')
+        await revokeGoogleToken(tokenToRevoke)
+      } catch {
+        // Best-effort: still clear local tokens even if revoke fails (offline, already revoked, etc.)
+      }
+    }
     setSetting('googleDriveAccessToken', '')
     setSetting('googleDriveRefreshToken', '')
     setSetting('googleDriveTokenExpiresAt', 0)
