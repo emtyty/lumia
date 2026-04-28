@@ -6,21 +6,25 @@ interface HistoryListRowProps {
   isSelecting: boolean
   isSelected: boolean
   isSharing: boolean
+  isSharingGdrive?: boolean
+  gdriveReady?: boolean
   onToggleSelect: () => void
   onOpen: () => void
   onDelete: () => void
   onCopy: () => void
   onShare: () => void
+  onShareGdrive?: () => void
 }
 
 export function HistoryListRow({
-  item, isSelecting, isSelected, isSharing, onToggleSelect, onOpen, onDelete, onCopy, onShare,
+  item, isSelecting, isSelected, isSharing, isSharingGdrive, gdriveReady,
+  onToggleSelect, onOpen, onDelete, onCopy, onShare, onShareGdrive,
 }: HistoryListRowProps) {
   const date = new Date(item.timestamp).toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   })
   const isUploaded = item.uploads?.some(u => u.success)
-  const googleUrl = item.uploads?.find(u => u.destination === 'google-drive' && u.success && u.url)?.url
+  const hasDriveUpload = item.uploads?.some(u => u.destination === 'google-drive' && u.success)
   const size = item.size ? (item.size > 1e6 ? `${(item.size / 1e6).toFixed(1)} MB` : `${(item.size / 1e3).toFixed(0)} KB`) : ''
 
   const stop = (fn: () => void) => (e: ReactMouseEvent) => { e.stopPropagation(); fn() }
@@ -111,8 +115,14 @@ export function HistoryListRow({
               <RowAction icon="edit" label="Edit" tint="blue" onClick={stop(onOpen)} />
               <RowAction icon="content_copy" label="Copy" tint="emerald" onClick={stop(onCopy)} />
               <RowAction icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} tint="sky" onClick={stop(onShare)} spinning={isSharing} />
-              {googleUrl && (
-                <RowAction icon="add_to_drive" label="Copy Drive link" tint="amber" onClick={stop(() => window.electronAPI?.writeClipboardText(googleUrl))} />
+              {gdriveReady && onShareGdrive && (
+                <RowAction
+                  icon={isSharingGdrive ? 'sync' : 'add_to_drive'}
+                  label={isSharingGdrive ? 'Uploading…' : (hasDriveUpload ? 'Copy Drive link' : 'Upload to Drive & copy link')}
+                  tint="amber"
+                  onClick={stop(onShareGdrive)}
+                  spinning={!!isSharingGdrive}
+                />
               )}
             </>
           )}

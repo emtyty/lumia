@@ -40,6 +40,7 @@ declare global {
       readHistoryFile: (filePath: string) => Promise<string | null>
       cleanupMissingHistory: () => Promise<number>
       shareHistoryR2: (id: string) => Promise<import('./types').UploadResult>
+      shareHistoryGoogleDrive: (id: string) => Promise<import('./types').UploadResult>
       saveHistoryAnnotations: (id: string, annotations: import('./types').AnnotationObject[], flattenedDataUrl?: string) => Promise<import('./types').HistoryItem | null>
 
       getHotkeys: () => Promise<Record<string, string>>

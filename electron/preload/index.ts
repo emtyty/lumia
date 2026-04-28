@@ -33,6 +33,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readHistoryFile: (filePath: string) => ipcRenderer.invoke('history:readAsDataUrl', filePath),
   cleanupMissingHistory: () => ipcRenderer.invoke('history:cleanupMissing'),
   shareHistoryR2: (id: string) => ipcRenderer.invoke('history:shareR2', id),
+  shareHistoryGoogleDrive: (id: string) => ipcRenderer.invoke('history:shareGoogleDrive', id),
   saveHistoryAnnotations: (id: string, annotations: unknown[], flattenedDataUrl?: string) =>
     ipcRenderer.invoke('history:saveAnnotations', id, annotations, flattenedDataUrl),
 

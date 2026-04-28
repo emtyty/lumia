@@ -54,9 +54,12 @@ export function getGoogleLink(item: HistoryItem): string | undefined {
   return item.uploads?.find(u => u.destination === 'google-drive' && u.success && u.url)?.url
 }
 
-export function openGoogleLink(item: HistoryItem): boolean {
-  const url = getGoogleLink(item)
-  if (!url) return false
-  window.electronAPI?.openExternal(url)
-  return true
+export async function shareHistoryGoogleDrive(
+  item: HistoryItem,
+  refreshHistory: () => Promise<void>,
+): Promise<ShareResult> {
+  if (item.fileMissing || !item.filePath) return { ok: false, error: 'File missing on disk' }
+  const res = await window.electronAPI?.shareHistoryGoogleDrive(item.id)
+  await refreshHistory()
+  return { ok: !!res?.success, url: res?.url, error: res?.error }
 }

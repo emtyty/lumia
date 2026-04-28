@@ -739,6 +739,78 @@ app.whenReady().then(async () => {
     return res
   })
 
+  // Upload a history item's source file to Google Drive and copy the resulting
+  // URL. Mirrors the R2 path: dedup if already uploaded, refresh OAuth token if
+  // expired, persist the upload result so subsequent clicks short-circuit.
+  ipcMain.handle('history:shareGoogleDrive', async (_e, id: string) => {
+    const items = historyStore.getAll()
+    const item = items.find(i => i.id === id)
+    if (!item) throw new Error('History item not found')
+    if (!item.filePath) throw new Error('History item has no source file')
+
+    const existing = item.uploads?.find(u => u.destination === 'google-drive' && u.success && u.url)
+    if (existing?.url) {
+      clipboard.writeText(existing.url)
+      return existing
+    }
+
+    const settings = getSettings()
+    let token = settings.googleDriveAccessToken
+    if (!settings.googleDriveRefreshToken) {
+      return { destination: 'google-drive', success: false, error: 'Not connected to Google Drive' }
+    }
+    if (!settings.googleDriveFolderId) {
+      return { destination: 'google-drive', success: false, error: 'No Drive folder selected — choose one in Settings → Google Drive.' }
+    }
+
+    if (Date.now() >= settings.googleDriveTokenExpiresAt - 60_000) {
+      try {
+        const { refreshGoogleToken } = await import('./uploaders/googledrive')
+        const refreshed = await refreshGoogleToken(
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID,
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET,
+          settings.googleDriveRefreshToken
+        )
+        token = refreshed.accessToken
+        setSetting('googleDriveAccessToken', refreshed.accessToken)
+        setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
+      } catch (err) {
+        return { destination: 'google-drive', success: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+
+    const { readFile } = await import('fs/promises')
+    const { extname, basename } = await import('path')
+    const sourcePath = item.annotatedFilePath ?? item.filePath
+    const buffer = await readFile(sourcePath)
+    const ext = extname(sourcePath).replace(/^\./, '').toLowerCase()
+    const isVideo = item.type === 'recording'
+    const mimeType = isVideo
+      ? (ext === 'mp4' ? 'video/mp4' : 'video/webm')
+      : (ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png')
+    const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+
+    const { uploadToGoogleDrive } = await import('./uploaders/googledrive')
+    const res = await uploadToGoogleDrive(dataUrl, token, settings.googleDriveFolderId, {
+      filename: basename(sourcePath),
+      mimeType,
+    })
+
+    if (res.success && res.url) {
+      clipboard.writeText(res.url)
+      const uploads = [
+        ...(item.uploads ?? []).filter(u => u.destination !== 'google-drive'),
+        res,
+      ]
+      historyStore.update(id, { uploads })
+      showNotification({
+        body: 'Drive link copied to clipboard',
+        thumbnailDataUrl: item.thumbnailUrl,
+      })
+    }
+    return res
+  })
+
   ipcMain.handle('history:openFile', (_e, filePath: string) => {
     const { resolve, normalize } = require('path')
     const { homedir } = require('os')

@@ -4,7 +4,7 @@ import type { HistoryItem } from '../../types'
 import ScrollCaptureDialog from '../../components/ScrollCaptureDialog'
 import { DateGroupedGrid } from '../../components/DateGroupedGrid'
 import { HistoryListRow } from '../../components/HistoryListRow'
-import { copyHistoryItem, shareHistoryItem } from '../../lib/history-actions'
+import { copyHistoryItem, shareHistoryItem, shareHistoryGoogleDrive } from '../../lib/history-actions'
 
 type CaptureMode = 'region' | 'window' | 'all-screen' | 'screen' | 'scrolling'
 type VideoMode = 'region' | 'window' | 'screen'
@@ -86,6 +86,8 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [isBulkDeleting, setIsBulkDeleting] = useState(false)
   const [sharingId, setSharingId] = useState<string | null>(null)
+  const [sharingGdriveId, setSharingGdriveId] = useState<string | null>(null)
+  const [gdriveReady, setGdriveReady] = useState(false)
   const [toast, setToast] = useState<{ message: string; icon: string; type: 'success' | 'error' } | null>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const showToast = useCallback((message: string, icon: string, type: 'success' | 'error' = 'success') => {
@@ -97,11 +99,21 @@ export default function Dashboard() {
   useEffect(() => {
     window.electronAPI?.getHistory().then(setRecentItems)
     window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
+    const refreshGdriveReady = () => {
+      window.electronAPI?.getSettings().then(s => {
+        setGdriveReady(!!(s?.googleDriveRefreshToken && s?.googleDriveFolderId))
+      })
+    }
     window.electronAPI?.getSettings().then(s => {
       if (s?.lastCaptureKind === 'video' || s?.lastCaptureKind === 'image') {
         setMediaKind(s.lastCaptureKind)
       }
+      setGdriveReady(!!(s?.googleDriveRefreshToken && s?.googleDriveFolderId))
     })
+    // Settings can change while we're on this view (user goes to Settings,
+    // connects Drive, comes back) — refresh on connect events + window focus.
+    window.electronAPI?.onGdriveConnected(refreshGdriveReady)
+    window.addEventListener('focus', refreshGdriveReady)
 
     window.electronAPI?.onCaptureReady(({ dataUrl, source }) => {
       navigate('/editor', { state: { dataUrl, source } })
@@ -115,6 +127,8 @@ export default function Dashboard() {
       window.electronAPI?.removeAllListeners('capture:ready')
       window.electronAPI?.removeAllListeners('recorder:open')
       window.electronAPI?.removeAllListeners('scroll-capture:open')
+      window.electronAPI?.removeAllListeners('gdrive:connected')
+      window.removeEventListener('focus', refreshGdriveReady)
     }
   }, [navigate])
 
@@ -243,6 +257,19 @@ export default function Dashboard() {
       else      showToast(r.error ?? 'Upload failed', 'error', 'error')
     } finally {
       setSharingId(null)
+    }
+  }
+
+  const shareGdriveItem = async (item: HistoryItem) => {
+    if (sharingGdriveId) return
+    const alreadyUploaded = item.uploads?.some(u => u.destination === 'google-drive' && u.success)
+    setSharingGdriveId(item.id)
+    try {
+      const r = await shareHistoryGoogleDrive(item, refreshHistory)
+      if (r.ok) showToast(alreadyUploaded ? 'Drive link copied' : 'Uploaded to Drive — link copied', 'add_to_drive')
+      else      showToast(r.error ?? 'Drive upload failed', 'error', 'error')
+    } finally {
+      setSharingGdriveId(null)
     }
   }
 
@@ -535,11 +562,14 @@ export default function Dashboard() {
                   isSelecting={isSelecting}
                   isSelected={selectedIds.has(item.id)}
                   isSharing={sharingId === item.id}
+                  isSharingGdrive={sharingGdriveId === item.id}
+                  gdriveReady={gdriveReady}
                   onToggleSelect={() => toggleSelect(item.id)}
                   onOpen={() => openItem(item)}
                   onDelete={() => handleDelete(item.id)}
                   onCopy={() => copyItem(item)}
                   onShare={() => shareItem(item)}
+                  onShareGdrive={() => shareGdriveItem(item)}
                 />
               )}
               emptyState={<EmptyState filter={filter} />}
@@ -556,11 +586,14 @@ export default function Dashboard() {
                   isSelecting={isSelecting}
                   isSelected={selectedIds.has(item.id)}
                   isSharing={sharingId === item.id}
+                  isSharingGdrive={sharingGdriveId === item.id}
+                  gdriveReady={gdriveReady}
                   onToggleSelect={() => toggleSelect(item.id)}
                   onOpen={() => openItem(item)}
                   onDelete={() => handleDelete(item.id)}
                   onCopy={() => copyItem(item)}
                   onShare={() => shareItem(item)}
+                  onShareGdrive={() => shareGdriveItem(item)}
                 />
               )}
               emptyState={<EmptyState filter={filter} />}
@@ -654,23 +687,27 @@ function EmptyState({ filter }: { filter: FilterType }) {
 /* ── History Card (Grid View) ── */
 
 function HistoryCard({
-  item, isSelecting, isSelected, isSharing, onToggleSelect, onOpen, onDelete, onCopy, onShare,
+  item, isSelecting, isSelected, isSharing, isSharingGdrive, gdriveReady,
+  onToggleSelect, onOpen, onDelete, onCopy, onShare, onShareGdrive,
 }: {
   item: HistoryItem
   isSelecting: boolean
   isSelected: boolean
   isSharing: boolean
+  isSharingGdrive: boolean
+  gdriveReady: boolean
   onToggleSelect: () => void
   onOpen: () => void
   onDelete: () => void
   onCopy: () => void
   onShare: () => void
+  onShareGdrive: () => void
 }) {
   const date = new Date(item.timestamp).toLocaleString('en-US', {
     month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
   })
   const isUploaded = item.uploads?.some(u => u.success)
-  const googleUrl = item.uploads?.find(u => u.destination === 'google-drive' && u.success && u.url)?.url
+  const hasDriveUpload = item.uploads?.some(u => u.destination === 'google-drive' && u.success)
   const missing = item.fileMissing
 
   const stop = (fn: () => void) => (e: ReactMouseEvent) => { e.stopPropagation(); fn() }
@@ -767,8 +804,14 @@ function HistoryCard({
                 <OvlBtn icon="edit" label="Edit" tint="blue" onClick={stop(onOpen)} />
                 <OvlBtn icon="content_copy" label="Copy" tint="emerald" onClick={stop(onCopy)} />
                 <OvlBtn icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} tint="sky" onClick={stop(onShare)} spinning={isSharing} />
-                {googleUrl && (
-                  <OvlBtn icon="add_to_drive" label="Copy Drive link" tint="amber" onClick={stop(() => window.electronAPI?.writeClipboardText(googleUrl))} />
+                {gdriveReady && (
+                  <OvlBtn
+                    icon={isSharingGdrive ? 'sync' : 'add_to_drive'}
+                    label={isSharingGdrive ? 'Uploading…' : (hasDriveUpload ? 'Copy Drive link' : 'Upload to Drive & copy link')}
+                    tint="amber"
+                    onClick={stop(onShareGdrive)}
+                    spinning={isSharingGdrive}
+                  />
                 )}
               </>
             )}
