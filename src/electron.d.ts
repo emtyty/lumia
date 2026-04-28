@@ -154,6 +154,7 @@ declare global {
       // OCR & Auto-Blur
       ocrScan: (dataUrl: string) => Promise<import('@/types').AutoBlurResult>
 
+      writeClipboardText: (text: string) => Promise<void>
       openExternal: (url: string) => Promise<void>
       openPath: (path: string) => Promise<void>
       showSaveDialog: (opts: unknown) => Promise<{ filePath?: string; canceled: boolean }>

@@ -1289,6 +1289,12 @@ app.whenReady().then(async () => {
     clipboard.writeImage(img)
   })
 
+  // IPC: Clipboard write text — renderer's navigator.clipboard.writeText fails
+  // under file:// (non-secure context), so we round-trip through Electron's API.
+  ipcMain.handle('clipboard:writeText', (_e, text: string) => {
+    clipboard.writeText(text)
+  })
+
   // IPC: Recording — renderer requests the desktop source ID, then records itself
   ipcMain.handle('record:getSources', async () => {
     const sources = await require('electron').desktopCapturer.getSources({

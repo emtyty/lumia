@@ -768,7 +768,7 @@ function HistoryCard({
                 <OvlBtn icon="content_copy" label="Copy" tint="emerald" onClick={stop(onCopy)} />
                 <OvlBtn icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} tint="sky" onClick={stop(onShare)} spinning={isSharing} />
                 {googleUrl && (
-                  <OvlBtn icon="cloud" label="Open Google link" tint="amber" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
+                  <OvlBtn icon="add_to_drive" label="Copy Drive link" tint="amber" onClick={stop(() => window.electronAPI?.writeClipboardText(googleUrl))} />
                 )}
               </>
             )}

@@ -112,7 +112,7 @@ export function HistoryListRow({
               <RowAction icon="content_copy" label="Copy" tint="emerald" onClick={stop(onCopy)} />
               <RowAction icon={isSharing ? 'sync' : 'share'} label={isSharing ? 'Sharing…' : 'Share'} tint="sky" onClick={stop(onShare)} spinning={isSharing} />
               {googleUrl && (
-                <RowAction icon="cloud" label="Open Google link" tint="amber" onClick={stop(() => window.electronAPI?.openExternal(googleUrl))} />
+                <RowAction icon="add_to_drive" label="Copy Drive link" tint="amber" onClick={stop(() => window.electronAPI?.writeClipboardText(googleUrl))} />
               )}
             </>
           )}

@@ -199,6 +199,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   ocrScan: (dataUrl: string) =>
     ipcRenderer.invoke('ocr:scan', dataUrl),
 
+  // Clipboard
+  writeClipboardText: (text: string) => ipcRenderer.invoke('clipboard:writeText', text),
+
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('shell:openExternal', url),
   openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),
