@@ -151,6 +151,7 @@ declare global {
       }) => void) => void
       installUpdate: () => Promise<void>
       checkForUpdates: () => Promise<{ ok: boolean; dev?: boolean; error?: string }>
+      isAutoUpdateAvailable: () => Promise<boolean>
       getAppVersion: () => Promise<string>
       onAbout: (cb: () => void) => void
 

@@ -30,6 +30,14 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
   const menuRef = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ top: 0, right: 0 })
   const [visible, setVisible] = useState(false)
+  const [autoUpdateAvailable, setAutoUpdateAvailable] = useState(true)
+
+  // Probe once whether the running process can apply updates. If not (e.g.
+  // per-machine Windows install run by a non-admin user), there's no point
+  // showing "Check for Updates" — the IPC would just return an error.
+  useEffect(() => {
+    window.electronAPI?.isAutoUpdateAvailable?.().then(setAutoUpdateAvailable).catch(() => {})
+  }, [])
 
   // Compute position from anchor
   useEffect(() => {
@@ -70,7 +78,7 @@ export function AppMenu({ open, onClose, anchorRef }: AppMenuProps) {
     { type: 'item', label: 'New Capture', icon: 'add_a_photo', action: () => window.electronAPI?.newCapture() },
     { type: 'separator' },
     { type: 'item', label: 'Settings', icon: 'settings', action: () => navigate('/settings') },
-    { type: 'item', label: 'Check for Updates', icon: 'system_update', action: () => window.dispatchEvent(new Event('app:check-update')) },
+    ...(autoUpdateAvailable ? [{ type: 'item' as const, label: 'Check for Updates', icon: 'system_update', action: () => window.dispatchEvent(new Event('app:check-update')) }] : []),
     { type: 'separator' },
     { type: 'item', label: 'About Lumia', icon: 'info', action: () => window.dispatchEvent(new Event('app:show-about')) },
     { type: 'item', label: 'Quit Lumia', icon: 'power_settings_new', action: () => window.electronAPI?.quitApp() },

@@ -1,5 +1,7 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
-import { join } from 'path'
+import { join, dirname } from 'path'
+import fs from 'fs/promises'
+import { constants as fsConstants } from 'fs'
 import { setupCapture } from './capture'
 import { setupVideo } from './video'
 import { registerOverlayHwnd, unregisterOverlayHwnd } from './native-input'
@@ -465,8 +467,20 @@ app.whenReady().then(async () => {
     scheduleAutoInstall()
   })
 
+  // Probe whether this process can write to the install dir. If not (typical
+  // case: per-machine install on Windows being run by a non-admin user), the
+  // silent NSIS update path can't apply the new bits — and falling back to
+  // the UI installer would pop UAC every check. So we just disable the whole
+  // auto-update pipeline: no check, no download, no banner. Users in this
+  // state must update manually by running the new installer with admin.
+  let canWriteInstallDir = false
+  try {
+    await fs.access(dirname(app.getPath('exe')), fsConstants.W_OK)
+    canWriteInstallDir = true
+  } catch { /* not writable — auto-update disabled */ }
+
   const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
-  if (!isDev) {
+  if (!isDev && canWriteInstallDir) {
     autoUpdater.autoDownload = true
     autoUpdater.autoInstallOnAppQuit = true
     console.log(`[autoUpdater] current version ${app.getVersion()}, checking for updates...`)
@@ -478,8 +492,14 @@ app.whenReady().then(async () => {
         console.error('[autoUpdater] periodic check failed:', err)
       })
     }, UPDATE_CHECK_INTERVAL_MS)
+  } else if (!isDev) {
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    console.log('[autoUpdater] install dir not writable — auto-update disabled. Update manually via the new installer.')
   }
+
   ipcMain.handle('update:install', () => {
+    if (!canWriteInstallDir) return
     // Must set isQuitting before quitAndInstall — electron-updater triggers
     // app.quit() internally, and our before-quit handler hides to tray
     // unless isQuitting is true, which would silently swallow the restart.
@@ -497,6 +517,10 @@ app.whenReady().then(async () => {
       setTimeout(() => sendUpdateStatus('not-available'), 400)
       return { ok: true, dev: true }
     }
+    if (!canWriteInstallDir) {
+      sendUpdateStatus('error', { error: 'Auto-update is unavailable because Lumia is installed to a location this user cannot write to. Reinstall with administrator rights to enable updates.' })
+      return { ok: false, error: 'install-dir-not-writable' }
+    }
     try {
       await autoUpdater.checkForUpdates()
       return { ok: true }
@@ -506,6 +530,10 @@ app.whenReady().then(async () => {
       return { ok: false, error: message }
     }
   })
+  // Renderer reads this to hide the "Check for Updates" menu entry when the
+  // current process can't apply updates anyway. Always true in dev so the
+  // menu item still works for testing the IPC.
+  ipcMain.handle('update:available', () => isDev || canWriteInstallDir)
 
   ipcMain.handle('app:version', () => app.getVersion())
 
