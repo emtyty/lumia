@@ -125,7 +125,12 @@ export default function Dashboard() {
 
   const handleCapture = async (mode: CaptureMode) => {
     window.electronAPI?.setSetting('lastCaptureKind', 'image')
-    window.electronAPI?.setSetting('lastImageMode', mode)
+    // All Screens is a one-shot — don't pin it as the remembered mode, so
+    // the next "New Capture" replays the user's usual mode (Region etc.)
+    // instead of always re-grabbing every monitor.
+    if (mode !== 'fullscreen') {
+      window.electronAPI?.setSetting('lastImageMode', mode)
+    }
     if (mode === 'scrolling') {
       await window.electronAPI?.startScrollCapture()
     } else {
