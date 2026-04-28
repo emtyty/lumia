@@ -739,6 +739,13 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             points={obj.points ?? []}
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
+            // Don't let the stage's fit-to-container scale shrink/expand
+            // strokes — strokeWidth should read as constant screen pixels
+            // across images of different natural sizes. Export still
+            // produces a stroke proportional to the image because
+            // toDataURL passes pixelRatio=1/scale.
+            strokeScaleEnabled={false}
+            hitStrokeWidth={Math.max(obj.strokeWidth + 8, 14) / scale}
             tension={0.5}
             lineCap="round"
             lineJoin="round"
@@ -760,6 +767,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             fill="transparent"
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
+            strokeScaleEnabled={false}
+            hitStrokeWidth={Math.max(obj.strokeWidth + 8, 14) / scale}
             draggable={selectable}
             {...commonInteractive}
           />
@@ -814,6 +823,8 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             radiusY={obj.radiusY ?? 0}
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
+            strokeScaleEnabled={false}
+            hitStrokeWidth={Math.max(obj.strokeWidth + 8, 14) / scale}
             fill="transparent"
             draggable={selectable}
             {...commonInteractive}
@@ -828,7 +839,14 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             points={obj.points ?? []}
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
+            strokeScaleEnabled={false}
+            hitStrokeWidth={Math.max(obj.strokeWidth + 8, 14) / scale}
             fill={obj.color}
+            // Arrow head size is in image-pixel units, so it shrinks
+            // visually as the stage scales. Counter-scale by 1/scale to
+            // keep the head consistent across image sizes.
+            pointerLength={Math.max(8, obj.strokeWidth * 3) / scale}
+            pointerWidth={Math.max(8, obj.strokeWidth * 3) / scale}
             draggable={selectable}
             {...commonInteractive}
           />
@@ -938,9 +956,16 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
                   surfaces feel the same. Sits just outside the
                   Transformer's top-right anchor to avoid overlapping it. */}
               {deleteHandle && selectedId && (
+                // Counter-scale the handle so it stays the same size on
+                // screen no matter how the stage was scaled to fit the
+                // image. The offset from the shape's corner uses 1/scale
+                // too — without that, the gap would compress as the image
+                // was scaled down.
                 <Group
-                  x={deleteHandle.x + 12}
-                  y={deleteHandle.y - 12}
+                  x={deleteHandle.x + 12 / scale}
+                  y={deleteHandle.y - 12 / scale}
+                  scaleX={1 / scale}
+                  scaleY={1 / scale}
                   onClick={(e) => {
                     e.cancelBubble = true
                     commitObjects(prev => prev.filter(o => o.id !== selectedId))
