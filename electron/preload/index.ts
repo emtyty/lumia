@@ -165,8 +165,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toolbarStop: () => ipcRenderer.invoke('toolbar:stop'),
   toolbarCancel: () => ipcRenderer.invoke('toolbar:cancel'),
   toolbarToggleMic: (enabled: boolean) => ipcRenderer.invoke('toolbar:toggle-mic', enabled),
+  toolbarToggleAnnotation: (enabled: boolean) => ipcRenderer.invoke('toolbar:toggle-annotation', enabled),
   onToolbarState: (cb: (state: unknown) => void) =>
     ipcRenderer.on('toolbar:state', (_e, state) => cb(state as any)),
+
+  // Live annotation overlay (during recording)
+  annotationGetState: () => ipcRenderer.invoke('annotation:get-state'),
+  annotationSetTool: (tool: string) => ipcRenderer.invoke('annotation:set-tool', tool),
+  annotationSetColor: (color: string) => ipcRenderer.invoke('annotation:set-color', color),
+  annotationSetStroke: (size: number) => ipcRenderer.invoke('annotation:set-stroke', size),
+  annotationClear: () => ipcRenderer.invoke('annotation:clear'),
+  annotationUndo: () => ipcRenderer.invoke('annotation:undo'),
+  annotationClose: () => ipcRenderer.invoke('annotation:close'),
+  onAnnotationState: (cb: (state: { tool: string; color: string; strokeWidth: number }) => void) =>
+    ipcRenderer.on('annotation:state', (_e, state) => cb(state)),
+  onAnnotationClear: (cb: () => void) =>
+    ipcRenderer.on('annotation:clear', () => cb()),
+  onAnnotationUndo: (cb: () => void) =>
+    ipcRenderer.on('annotation:undo', () => cb()),
   onOverlayModeChanged: (cb: (mode: string) => void) => {
     ipcRenderer.on('overlay:mode-changed', (_e, mode) => cb(mode))
   },

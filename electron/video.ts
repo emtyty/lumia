@@ -14,6 +14,7 @@ import { showNotification } from './notify'
 import { resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
+import { openAnnotation, closeAnnotation, destroyAnnotation, isAnnotationOpen, setupAnnotation } from './annotation'
 
 const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 const OVERLAY_GONE_DELAY_MS = 120
@@ -270,6 +271,10 @@ function openRecordingSession(target: RecordingTarget) {
 
 export function closeRecordingSession() {
   recordingTarget = null
+  // destroyAnnotation, not closeAnnotation: end of session means strokes
+  // shouldn't outlive the recording. closeAnnotation only hides the
+  // palette, which is the wrong behaviour here.
+  destroyAnnotation()
   for (const w of [recorderHost, recordingToolbar, recordingBorder]) {
     if (w && !w.isDestroyed()) {
       try { w.close() } catch { /* ignore */ }
@@ -356,6 +361,7 @@ async function saveRecordingBlob(
 
 export function setupVideo() {
   setupVideoActions()
+  setupAnnotation()
 
   // Start: user clicked "Record Screen" on dashboard (or hotkey).
   // Opens overlay in video mode so user can pick region/window/screen.
@@ -500,6 +506,29 @@ export function setupVideo() {
     // Echo only the mic state — no phase. Toggling mid-countdown must not
     // flip the toolbar to 'recording' before MediaRecorder actually starts.
     sendToToolbar('toolbar:state', { micEnabled: enabled })
+  })
+
+  // Live annotation overlay — opens a transparent canvas + tool palette
+  // on the recording display so the user can draw on screen during the
+  // recording. Drawings are captured naturally by desktopCapturer (the
+  // overlay is intentionally NOT content-protected).
+  ipcMain.handle('toolbar:toggle-annotation', (_e, enabled: boolean) => {
+    if (enabled) {
+      if (!recordingTarget) return
+      if (isAnnotationOpen()) return
+      // Hand the recording toolbar + border to annotation. After the
+      // overlay is created, annotation forces these windows back to the
+      // top of the OS topmost-stack via SetWindowPos(HWND_TOPMOST), which
+      // re-raises an already-topmost window even when setAlwaysOnTop /
+      // moveTop don't.
+      const topmostAfter: BrowserWindow[] = []
+      if (recordingToolbar && !recordingToolbar.isDestroyed()) topmostAfter.push(recordingToolbar)
+      if (recordingBorder && !recordingBorder.isDestroyed()) topmostAfter.push(recordingBorder)
+      openAnnotation(recordingTarget.displayId, recordingTarget.rect, topmostAfter)
+    } else {
+      closeAnnotation()
+    }
+    sendToToolbar('toolbar:state', { annotationOn: enabled })
   })
 
   // RecorderHost reports state changes (including tick)

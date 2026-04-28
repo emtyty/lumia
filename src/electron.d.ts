@@ -126,13 +126,27 @@ declare global {
       toolbarStop: () => Promise<void>
       toolbarCancel: () => Promise<void>
       toolbarToggleMic: (enabled: boolean) => Promise<void>
+      toolbarToggleAnnotation: (enabled: boolean) => Promise<void>
       onToolbarState: (cb: (state: {
-        phase: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error'
+        phase?: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error'
         elapsedMs?: number
         countdown?: number
         micEnabled?: boolean
+        annotationOn?: boolean
         error?: string
       }) => void) => void
+
+      // Live annotation overlay (during recording)
+      annotationGetState: () => Promise<{ tool: string; color: string; strokeWidth: number }>
+      annotationSetTool: (tool: string) => Promise<void>
+      annotationSetColor: (color: string) => Promise<void>
+      annotationSetStroke: (size: number) => Promise<void>
+      annotationClear: () => Promise<void>
+      annotationUndo: () => Promise<void>
+      annotationClose: () => Promise<void>
+      onAnnotationState: (cb: (state: { tool: string; color: string; strokeWidth: number }) => void) => void
+      onAnnotationClear: (cb: () => void) => void
+      onAnnotationUndo: (cb: () => void) => void
 
       // OCR & Auto-Blur
       ocrScan: (dataUrl: string) => Promise<import('@/types').AutoBlurResult>

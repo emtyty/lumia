@@ -16,6 +16,7 @@ export default function RecordingToolbar() {
   const [elapsed, setElapsed] = useState(0)
   const [countdown, setCountdown] = useState(COUNTDOWN_START)
   const [micEnabled, setMicEnabled] = useState(false)
+  const [annotationOn, setAnnotationOn] = useState(false)
   const [error, setError] = useState<string>('')
 
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -30,7 +31,7 @@ export default function RecordingToolbar() {
 
   // Listen for state updates from main
   useEffect(() => {
-    const handler = (s: { phase?: Phase; elapsedMs?: number; countdown?: number; micEnabled?: boolean; error?: string }) => {
+    const handler = (s: { phase?: Phase; elapsedMs?: number; countdown?: number; micEnabled?: boolean; annotationOn?: boolean; error?: string }) => {
       if (s.phase === 'countdown') {
         // Start local countdown (main just kicks it off)
         setPhase('countdown')
@@ -54,6 +55,7 @@ export default function RecordingToolbar() {
       if (s.phase) setPhase(s.phase)
       if (typeof s.elapsedMs === 'number') setElapsed(s.elapsedMs)
       if (typeof s.micEnabled === 'boolean') setMicEnabled(s.micEnabled)
+      if (typeof s.annotationOn === 'boolean') setAnnotationOn(s.annotationOn)
       if (s.error) setError(s.error)
     }
     window.electronAPI?.onToolbarState?.(handler)
@@ -73,6 +75,11 @@ export default function RecordingToolbar() {
     const next = !micEnabled
     setMicEnabled(next)
     window.electronAPI?.toolbarToggleMic?.(next)
+  }
+  const handleAnnotation = () => {
+    const next = !annotationOn
+    setAnnotationOn(next)
+    window.electronAPI?.toolbarToggleAnnotation?.(next)
   }
 
   const isRecording = phase === 'recording'
@@ -160,6 +167,14 @@ export default function RecordingToolbar() {
               onClick={handleMic}
               active={micEnabled}
               accent={micEnabled ? 'red' : 'neutral'}
+            />
+
+            {/* Annotate (live drawing overlay on the recording display) */}
+            <ToolbarBtn
+              icon="edit"
+              label={annotationOn ? 'Stop annotating' : 'Annotate on screen'}
+              onClick={handleAnnotation}
+              active={annotationOn}
             />
 
             {/* Pause / Resume */}

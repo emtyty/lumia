@@ -10,11 +10,13 @@ import Overlay from './windows/overlay/Overlay'
 import RecordingToolbar from './windows/recording-toolbar/RecordingToolbar'
 import RecordingBorder from './windows/recording-border/RecordingBorder'
 import RecorderHost from './windows/recorder-host/RecorderHost'
+import AnnotationOverlay from './windows/annotation-overlay/AnnotationOverlay'
+import AnnotationToolbar from './windows/annotation-toolbar/AnnotationToolbar'
 import { AboutDialog } from './components/AboutDialog'
 import { ReleaseNotesDialog } from './components/ReleaseNotesDialog'
 import { UpdateNotification } from './components/UpdateNotification'
 
-const STANDALONE_ROUTES = ['/overlay', '/recording-toolbar', '/recording-border', '/recorder-host']
+const STANDALONE_ROUTES = ['/overlay', '/recording-toolbar', '/recording-border', '/recorder-host', '/annotation-overlay', '/annotation-toolbar']
 
 function isStandaloneHash(): boolean {
   const hash = window.location.hash.replace(/^#/, '')
@@ -49,6 +51,8 @@ export default function App() {
         <Route path="/recording-toolbar" element={<RecordingToolbar />} />
         <Route path="/recording-border" element={<RecordingBorder />} />
         <Route path="/recorder-host" element={<RecorderHost />} />
+        <Route path="/annotation-overlay" element={<AnnotationOverlay />} />
+        <Route path="/annotation-toolbar" element={<AnnotationToolbar />} />
       </Routes>
     )
   }
