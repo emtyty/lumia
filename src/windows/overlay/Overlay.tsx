@@ -27,7 +27,7 @@ const ACCENT = {
     highlightBorder: 'rgba(96,165,250,0.9)', // blue for window/monitor hover
     highlightShadow: 'rgba(96,165,250,0.3)',
     highlightFill: 'rgba(96,165,250,0.06)',
-    activeBg: 'rgba(59,130,246,0.15)',
+    activeBg: 'rgba(59,130,246,0.06)',
     tabGlow: '0 0 12px rgba(182,160,255,0.35)',
   },
   record: {
@@ -35,7 +35,7 @@ const ACCENT = {
     highlightBorder: 'rgba(239,68,68,0.9)',
     highlightShadow: 'rgba(239,68,68,0.3)',
     highlightFill: 'rgba(239,68,68,0.08)',
-    activeBg: 'rgba(239,68,68,0.12)',
+    activeBg: 'rgba(239,68,68,0.05)',
     tabGlow: '0 0 12px rgba(239,68,68,0.45)',
   },
 } as const
@@ -311,7 +311,7 @@ export default function Overlay() {
         className="fixed inset-0 select-none"
         style={{
           cursor: isActive ? 'pointer' : 'default',
-          background: isActive ? accent.activeBg : 'rgba(0,0,0,0.4)',
+          background: isActive ? accent.activeBg : 'transparent',
         }}
         onClick={onClick}
       >
@@ -342,14 +342,11 @@ export default function Overlay() {
         className="fixed inset-0 select-none"
         style={{
           cursor: isActive ? 'crosshair' : 'default',
-          background: isActive ? 'rgba(0,0,0,0.15)' : 'rgba(0,0,0,0.4)',
+          background: isActive ? 'rgba(0,0,0,0.03)' : 'transparent',
         }}
         onMouseMove={handleMouseMove}
         onMouseDown={handleMouseDown}
       >
-        {!isActive && (
-          <div className="fixed inset-0" style={{ background: 'rgba(0,0,0,0.4)' }} />
-        )}
 
         {isActive && (
           <ModeBar mode={mode} intent={intent} icon="window" hint={hint} />
@@ -365,7 +362,7 @@ export default function Overlay() {
                 width: hoveredWindow.width,
                 height: hoveredWindow.height,
                 border: `2px dashed ${accent.highlightBorder}`,
-                boxShadow: `0 0 0 9999px rgba(0,0,0,0.25), inset 0 0 0 1px ${accent.highlightShadow}`,
+                boxShadow: `0 0 0 9999px rgba(0,0,0,0.08), inset 0 0 0 1px ${accent.highlightShadow}`,
                 borderRadius: 4,
                 background: accent.highlightFill,
               }}
@@ -401,7 +398,7 @@ export default function Overlay() {
       className="fixed inset-0 select-none"
       style={{
         cursor: isActive ? 'crosshair' : 'default',
-        background: isActive ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.55)',
+        background: isActive ? 'rgba(0,0,0,0.08)' : 'transparent',
         transition: 'background 0.15s ease'
       }}
       onMouseDown={handleMouseDown}
@@ -410,8 +407,8 @@ export default function Overlay() {
     >
       <style>{`
         @keyframes scroll-region-border-pulse {
-          0%, 100% { border-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); }
-          50% { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45), 0 0 12px 2px rgba(56, 189, 248, 0.3); }
+          0%, 100% { border-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 0 9999px rgba(0,0,0,0.18); }
+          50% { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 0 9999px rgba(0,0,0,0.18), 0 0 12px 2px rgba(56, 189, 248, 0.3); }
         }
         .scroll-region-pulse { animation: scroll-region-border-pulse 1.5s ease-in-out infinite; }
       `}</style>
@@ -430,7 +427,7 @@ export default function Overlay() {
             style={{
               left: rect.x, top: rect.y, width: rect.width, height: rect.height,
               background: 'transparent',
-              boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
+              boxShadow: '0 0 0 9999px rgba(0,0,0,0.18)',
               border: mode === 'scroll-region'
                 ? '2px solid rgba(56, 189, 248, 0.8)'
                 : `2px dashed ${accent.border}`,
