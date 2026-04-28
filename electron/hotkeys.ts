@@ -3,6 +3,8 @@ import Store from 'electron-store'
 import { dispatchCapture } from './capture'
 import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
 import { startVideoCapture, requestStop as requestVideoStop, isRecordingActive } from './video'
+import { setSetting } from './settings'
+import type { LastImageMode, LastVideoMode } from './settings'
 
 export interface HotkeyConfig {
   [action: string]: string
@@ -122,12 +124,30 @@ export function setupHotkeys() {
     try { await fn() } finally { isCapturing = false }
   }
 
+  // Persist the mode the user just triggered so subsequent "New Capture"
+  // entry points (tray, sidebar, AppMenu) replay the same mode. Without
+  // this, hotkey-driven captures don't update lastImage/VideoMode and
+  // dispatchLastCapture replays whatever the dashboard last saved.
+  const rememberImage = (mode: LastImageMode) => {
+    setSetting('lastCaptureKind', 'image')
+    setSetting('lastImageMode', mode)
+  }
+  const rememberVideo = (mode: LastVideoMode) => {
+    setSetting('lastCaptureKind', 'video')
+    setSetting('lastVideoMode', mode)
+  }
+
   const handlers: Record<string, () => void> = {
-    RectangleRegion: withLock(async () => { await dispatchCapture('region') }),
-    PrintScreen:     withLock(async () => { await dispatchCapture('fullscreen') }),
-    ActiveWindow:    withLock(async () => { await dispatchCapture('window') }),
-    ActiveMonitor:   withLock(async () => { await dispatchCapture('active-monitor') }),
+    RectangleRegion: withLock(async () => { rememberImage('region');         await dispatchCapture('region') }),
+    // All Screens is treated as a one-shot — we update kind so the user's
+    // image/video context flips correctly, but don't pin lastImageMode to
+    // 'fullscreen' since users typically don't want every subsequent New
+    // Capture to replay the all-monitors composite.
+    PrintScreen:     withLock(async () => { setSetting('lastCaptureKind', 'image'); await dispatchCapture('fullscreen') }),
+    ActiveWindow:    withLock(async () => { rememberImage('window');         await dispatchCapture('window') }),
+    ActiveMonitor:   withLock(async () => { rememberImage('active-monitor'); await dispatchCapture('active-monitor') }),
     ScrollingCapture: withLock(async () => {
+      rememberImage('scrolling')
       const main = getMainWindow()
       if (main && !main.isDestroyed()) main.hide()
       await new Promise(r => setTimeout(r, 200))
@@ -137,9 +157,9 @@ export function setupHotkeys() {
     }),
     // All three video hotkeys toggle: pressing any of them while recording
     // stops (matches Snipping Tool's UX), otherwise starts in that mode.
-    ScreenRecorder:       () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('region') },
-    ScreenRecorderWindow: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('window') },
-    ScreenRecorderScreen: () => { if (isRecordingActive()) requestVideoStop(); else startVideoCapture('screen') },
+    ScreenRecorder:       () => { if (isRecordingActive()) requestVideoStop(); else { rememberVideo('region'); startVideoCapture('region') } },
+    ScreenRecorderWindow: () => { if (isRecordingActive()) requestVideoStop(); else { rememberVideo('window'); startVideoCapture('window') } },
+    ScreenRecorderScreen: () => { if (isRecordingActive()) requestVideoStop(); else { rememberVideo('screen'); startVideoCapture('screen') } },
     ExitLumia: () => { markQuitting(); app.quit() }
   }
 
