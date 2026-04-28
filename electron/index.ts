@@ -75,7 +75,10 @@ function scheduleAutoInstall() {
     console.log('[autoUpdater] grace period elapsed with window hidden — installing update')
     updateDownloaded = false
     isQuitting = true
-    autoUpdater.quitAndInstall()
+    // (isSilent=true, isForceRunAfter=true) — Windows-only knobs. Without
+    // isSilent the NSIS assisted-installer UI pops up on every update;
+    // isForceRunAfter relaunches the app once the install finishes.
+    autoUpdater.quitAndInstall(true, true)
   }, AUTO_INSTALL_GRACE_MS)
 }
 
@@ -483,7 +486,10 @@ app.whenReady().then(async () => {
     updateDownloaded = false
     cancelAutoInstall()
     isQuitting = true
-    autoUpdater.quitAndInstall()
+    // Silent install on Windows so the NSIS UI doesn't surface on every
+    // update; isForceRunAfter brings the app back up after install. No-op
+    // for the macOS update path (zip-based, no installer UI to silence).
+    autoUpdater.quitAndInstall(true, true)
   })
   ipcMain.handle('update:check', async () => {
     if (isDev) {
