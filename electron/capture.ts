@@ -34,7 +34,7 @@ async function saveOriginalImage(dataUrl: string): Promise<{ filePath: string; f
   }
 }
 
-export type CaptureMode = 'fullscreen' | 'region' | 'window' | 'active-monitor'
+export type CaptureMode = 'all-screen' | 'region' | 'window' | 'screen'
 
 const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 const OVERLAY_GONE_DELAY_MS = 120
@@ -85,10 +85,10 @@ let lastWindowPickPhysical: {
 
 export function dispatchCapture(mode: CaptureMode) {
   switch (mode) {
-    case 'fullscreen':      return captureFullscreen()
-    case 'region':          return captureRegion()
-    case 'window':          return captureWindow()
-    case 'active-monitor':  return captureActiveMonitor()
+    case 'all-screen':  return captureAllScreen()
+    case 'region':      return captureRegion()
+    case 'window':      return captureWindow()
+    case 'screen':      return captureActiveMonitor()
   }
 }
 
@@ -290,7 +290,7 @@ export function setupCapture() {
     closeAllOverlays()
     await waitForOverlayGone()
     const dataUrl = await captureDisplay(target, allDisplays)
-    await sendCaptureToEditor(dataUrl, 'active-monitor')
+    await sendCaptureToEditor(dataUrl, 'screen')
     return dataUrl
   })
 
@@ -321,7 +321,7 @@ function compositeBGRA(items: CompositeItem[], totalW: number, totalH: number): 
   return nativeImage.createFromBuffer(out, { width: totalW, height: totalH }).toDataURL()
 }
 
-async function captureFullscreen(): Promise<string> {
+async function captureAllScreen(): Promise<string> {
   const allDisplays = screen.getAllDisplays()
   await hideMainWindow()
 
@@ -337,7 +337,7 @@ async function captureFullscreen(): Promise<string> {
       }
     })
     const dataUrl = findSourceForDisplay(sources, allDisplays, d.id).thumbnail.toDataURL()
-    await sendCaptureToEditor(dataUrl, 'fullscreen')
+    await sendCaptureToEditor(dataUrl, 'all-screen')
     return dataUrl
   }
 
@@ -385,7 +385,7 @@ async function captureFullscreen(): Promise<string> {
   }
 
   const dataUrl = compositeBGRA(items, totalW, totalH)
-  await sendCaptureToEditor(dataUrl, 'fullscreen')
+  await sendCaptureToEditor(dataUrl, 'all-screen')
   return dataUrl
 }
 
@@ -479,7 +479,7 @@ async function captureActiveMonitor(): Promise<string | void> {
     const activeDisplay = allDisplays[0] ?? screen.getPrimaryDisplay()
     await hideMainWindow()
     const dataUrl = await captureDisplay(activeDisplay, allDisplays)
-    await sendCaptureToEditor(dataUrl, 'active-monitor')
+    await sendCaptureToEditor(dataUrl, 'screen')
     return dataUrl
   }
 
@@ -533,7 +533,14 @@ export async function sendCaptureToEditor(dataUrlIn: string, source: string) {
   mainWin.webContents.send('navigate', '/editor', { dataUrl, source, historyId })
   showMainWindow()
 
-  const label = source === 'region' ? 'Region' : source === 'window' ? 'Window' : source === 'active-monitor' ? 'Screen' : 'All Screens'
+  // 'active-monitor' / 'fullscreen' are legacy source tags from older
+  // builds — preserved here so notifications for existing history items
+  // still render correctly.
+  const label =
+    source === 'region' ? 'Region' :
+    source === 'window' ? 'Window' :
+    source === 'screen' || source === 'active-monitor' ? 'Screen' :
+    'All Screens'
   showNotification({
     body: `${label} captured — copied to clipboard`,
     thumbnailDataUrl: dataUrl,

@@ -1,4 +1,4 @@
-import { globalShortcut, app } from 'electron'
+import { globalShortcut, app, screen } from 'electron'
 import Store from 'electron-store'
 import { dispatchCapture } from './capture'
 import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
@@ -128,8 +128,13 @@ export function setupHotkeys() {
   // entry points (tray, sidebar, AppMenu) replay the same mode. Without
   // this, hotkey-driven captures don't update lastImage/VideoMode and
   // dispatchLastCapture replays whatever the dashboard last saved.
+  // 'screen' on a single-display system captures the same pixels as
+  // 'all-screen', so we treat it the same way: kind flips to 'image',
+  // but lastImageMode isn't pinned — let the user's prior multi-monitor
+  // preference (or the default) survive.
   const rememberImage = (mode: LastImageMode) => {
     setSetting('lastCaptureKind', 'image')
+    if (mode === 'screen' && screen.getAllDisplays().length <= 1) return
     setSetting('lastImageMode', mode)
   }
   const rememberVideo = (mode: LastVideoMode) => {
@@ -138,14 +143,14 @@ export function setupHotkeys() {
   }
 
   const handlers: Record<string, () => void> = {
-    RectangleRegion: withLock(async () => { rememberImage('region');         await dispatchCapture('region') }),
+    RectangleRegion: withLock(async () => { rememberImage('region'); await dispatchCapture('region') }),
     // All Screens is treated as a one-shot — we update kind so the user's
     // image/video context flips correctly, but don't pin lastImageMode to
-    // 'fullscreen' since users typically don't want every subsequent New
+    // 'all-screen' since users typically don't want every subsequent New
     // Capture to replay the all-monitors composite.
-    PrintScreen:     withLock(async () => { setSetting('lastCaptureKind', 'image'); await dispatchCapture('fullscreen') }),
-    ActiveWindow:    withLock(async () => { rememberImage('window');         await dispatchCapture('window') }),
-    ActiveMonitor:   withLock(async () => { rememberImage('active-monitor'); await dispatchCapture('active-monitor') }),
+    PrintScreen:     withLock(async () => { setSetting('lastCaptureKind', 'image'); await dispatchCapture('all-screen') }),
+    ActiveWindow:    withLock(async () => { rememberImage('window'); await dispatchCapture('window') }),
+    ActiveMonitor:   withLock(async () => { rememberImage('screen'); await dispatchCapture('screen') }),
     ScrollingCapture: withLock(async () => {
       rememberImage('scrolling')
       const main = getMainWindow()

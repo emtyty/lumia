@@ -6,7 +6,7 @@ import { DateGroupedGrid } from '../../components/DateGroupedGrid'
 import { HistoryListRow } from '../../components/HistoryListRow'
 import { copyHistoryItem, shareHistoryItem } from '../../lib/history-actions'
 
-type CaptureMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
+type CaptureMode = 'region' | 'window' | 'all-screen' | 'screen' | 'scrolling'
 type VideoMode = 'region' | 'window' | 'screen'
 type MediaKind = 'image' | 'video'
 type FilterType = 'all' | 'screenshot' | 'recording'
@@ -16,8 +16,8 @@ type ViewMode = 'grid' | 'list'
 const MODE_ACTION: Record<CaptureMode, string> = {
   region: 'RectangleRegion',
   window: 'ActiveWindow',
-  fullscreen: 'PrintScreen',
-  'active-monitor': 'ActiveMonitor',
+  'all-screen': 'PrintScreen',
+  screen: 'ActiveMonitor',
   scrolling: 'ScrollingCapture',
 }
 
@@ -28,10 +28,10 @@ const VIDEO_MODE_ACTION: Record<VideoMode, string> = {
 }
 
 const CAPTURE_MODES: { mode: CaptureMode; icon: string; label: string }[] = [
-  { mode: 'region',         icon: 'crop',            label: 'Region' },
-  { mode: 'window',         icon: 'web_asset',       label: 'Window' },
-  { mode: 'active-monitor', icon: 'monitor',         label: 'Screen' },
-  { mode: 'fullscreen',     icon: 'tv_displays',     label: 'All Screens' },
+  { mode: 'region',     icon: 'crop',        label: 'Region' },
+  { mode: 'window',     icon: 'web_asset',   label: 'Window' },
+  { mode: 'screen',     icon: 'monitor',     label: 'Screen' },
+  { mode: 'all-screen', icon: 'tv_displays', label: 'All Screens' },
 ]
 
 const VIDEO_MODES: { mode: VideoMode; icon: string; label: string }[] = [
@@ -127,8 +127,10 @@ export default function Dashboard() {
     window.electronAPI?.setSetting('lastCaptureKind', 'image')
     // All Screens is a one-shot — don't pin it as the remembered mode, so
     // the next "New Capture" replays the user's usual mode (Region etc.)
-    // instead of always re-grabbing every monitor.
-    if (mode !== 'fullscreen') {
+    // instead of always re-grabbing every monitor. Single-monitor 'screen'
+    // is filtered out by the main process settings:set handler (it's
+    // equivalent to all-screen on a 1-display setup).
+    if (mode !== 'all-screen') {
       window.electronAPI?.setSetting('lastImageMode', mode)
     }
     if (mode === 'scrolling') {

@@ -11,14 +11,14 @@ interface AppSettings {
   launchAtStartup: boolean
   historyRetentionDays: number
   lastCaptureKind: 'image' | 'video'
-  lastImageMode: 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
+  lastImageMode: 'region' | 'window' | 'all-screen' | 'screen' | 'scrolling'
   lastVideoMode: 'region' | 'window' | 'screen'
 }
 
 declare global {
   interface Window {
     electronAPI: {
-      captureScreenshot: (mode: 'fullscreen' | 'region' | 'window' | 'active-monitor') => Promise<string | void>
+      captureScreenshot: (mode: 'all-screen' | 'region' | 'window' | 'screen') => Promise<string | void>
       newCapture: () => Promise<void>
 
       // Recording

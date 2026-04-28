@@ -821,6 +821,14 @@ app.whenReady().then(async () => {
   })
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => {
+    // 'screen' on a single-display system is equivalent to an all-monitors
+    // grab, so don't pin it — same one-shot policy as 'all-screen'. Lets
+    // the user's prior multi-monitor preference survive.
+    if (
+      key === 'lastImageMode' &&
+      value === 'screen' &&
+      screen.getAllDisplays().length <= 1
+    ) return
     setSetting(key, value as AppSettings[typeof key])
     if (key === 'launchAtStartup') applyLaunchAtStartup(value as boolean)
     if (key === 'historyRetentionDays') runHistoryPrune()

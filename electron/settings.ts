@@ -4,7 +4,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 
 export type CaptureKind = 'image' | 'video'
-export type LastImageMode = 'region' | 'window' | 'fullscreen' | 'active-monitor' | 'scrolling'
+export type LastImageMode = 'region' | 'window' | 'all-screen' | 'screen' | 'scrolling'
 export type LastVideoMode = 'region' | 'window' | 'screen'
 
 export interface AppSettings {
@@ -41,6 +41,16 @@ const store = new Store<AppSettings>({
     lastVideoMode: 'region'
   }
 })
+
+// One-time migration of legacy mode IDs from older builds:
+//   'fullscreen'     → 'all-screen'   (renamed to match the UI label)
+//   'active-monitor' → 'screen'
+// Run once at module load so getSettings always returns the current shape.
+{
+  const raw = store.get('lastImageMode') as string
+  if (raw === 'fullscreen') store.set('lastImageMode', 'all-screen')
+  else if (raw === 'active-monitor') store.set('lastImageMode', 'screen')
+}
 
 export function getSettings(): AppSettings {
   return {

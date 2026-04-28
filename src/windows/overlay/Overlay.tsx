@@ -70,7 +70,7 @@ function ModeBar({
       ? (nextBase === 'region' ? 'video-region' : nextBase === 'window' ? 'video-window' : 'video-screen')
       : (nextBase === 'region' ? 'region' : nextBase === 'window' ? 'window-pick' : 'monitor-pick')
     window.electronAPI?.switchOverlayMode?.(next)
-    window.electronAPI?.setSetting?.(intent === 'record' ? 'lastVideoMode' : 'lastImageMode', nextBase === 'screen' && intent === 'capture' ? 'active-monitor' : nextBase)
+    window.electronAPI?.setSetting?.(intent === 'record' ? 'lastVideoMode' : 'lastImageMode', nextBase)
   }
 
   const switchIntent = (nextIntent: Intent) => {
