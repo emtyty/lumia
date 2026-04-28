@@ -8,6 +8,7 @@ import {
 } from 'react'
 import {
   Arrow,
+  Circle,
   Ellipse,
   Group,
   Image as KonvaImage,
@@ -177,6 +178,11 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const [currentObj, setCurrentObj] = useState<DrawObject | null>(null)
     const drawStart = useRef({ x: 0, y: 0 })
     const [selectedId, setSelectedId] = useState<string | null>(null)
+    // Position of the per-shape delete handle (the red X) in layer
+    // coordinates. Tracked separately from selectedId so the X follows the
+    // shape live during drag/transform without going through the React
+    // commit cycle on every mousemove.
+    const [deleteHandle, setDeleteHandle] = useState<{ x: number; y: number } | null>(null)
     const [textInput, setTextInput] = useState<{
       x: number; y: number; screenX: number; screenY: number
     } | null>(null)
@@ -568,6 +574,27 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     // Deselect when switching away from the Select tool.
     useEffect(() => { if (tool !== 'select') setSelectedId(null) }, [tool])
 
+    // Track the top-right corner of the selected shape so the delete handle
+    // (small red X next to the Transformer) follows the shape during drag /
+    // transform without needing to wait for the next React render.
+    useEffect(() => {
+      if (!selectedId) { setDeleteHandle(null); return }
+      const stage = stageRef.current
+      if (!stage) { setDeleteHandle(null); return }
+      const node = stage.findOne('#' + selectedId)
+      const layer = node?.getLayer() ?? null
+      if (!node || !layer) { setDeleteHandle(null); return }
+      const update = () => {
+        const box = node.getClientRect({ relativeTo: layer as any })
+        setDeleteHandle({ x: box.x + box.width, y: box.y })
+      }
+      update()
+      node.on('dragmove.deletehandle transform.deletehandle', update)
+      return () => {
+        node.off('dragmove.deletehandle transform.deletehandle')
+      }
+    }, [selectedId, objects])
+
     // ── Keyboard: Delete / Backspace removes the selected shape ──────────────
     useEffect(() => {
       const onKey = (e: KeyboardEvent) => {
@@ -906,6 +933,32 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
                 anchorFill="#ffffff"
                 anchorSize={8}
               />
+              {/* Click-to-delete handle. Mirrors the X on the live
+                  recording-time annotation overlay so both selection
+                  surfaces feel the same. Sits just outside the
+                  Transformer's top-right anchor to avoid overlapping it. */}
+              {deleteHandle && selectedId && (
+                <Group
+                  x={deleteHandle.x + 12}
+                  y={deleteHandle.y - 12}
+                  onClick={(e) => {
+                    e.cancelBubble = true
+                    commitObjects(prev => prev.filter(o => o.id !== selectedId))
+                    setSelectedId(null)
+                  }}
+                  onTap={(e) => {
+                    e.cancelBubble = true
+                    commitObjects(prev => prev.filter(o => o.id !== selectedId))
+                    setSelectedId(null)
+                  }}
+                  onMouseEnter={() => { document.body.style.cursor = 'pointer' }}
+                  onMouseLeave={() => { document.body.style.cursor = '' }}
+                >
+                  <Circle radius={11} fill="#ef4444" stroke="#ffffff" strokeWidth={2} shadowColor="#000" shadowBlur={6} shadowOpacity={0.4} />
+                  <Line points={[-4, -4, 4, 4]} stroke="#ffffff" strokeWidth={2} lineCap="round" />
+                  <Line points={[-4, 4, 4, -4]} stroke="#ffffff" strokeWidth={2} lineCap="round" />
+                </Group>
+              )}
             </Layer>
           </Stage>
         </div>

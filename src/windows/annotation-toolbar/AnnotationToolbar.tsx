@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react'
 
-type Tool = 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
+type Tool = 'none' | 'select' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
 
 const TOOLS: { id: Tool; icon: string; label: string }[] = [
   // 'none' is the interact mode — overlay flips to click-through so the
   // user can drive the recorded app with the cursor again. Picking any of
   // the actual drawing tools below re-locks the overlay for ink.
   { id: 'none',        icon: 'arrow_selector_tool', label: 'Cursor (interact with app)' },
+  // 'select' lets the user click an existing shape to bring up an X
+  // delete handle; click the X to remove just that one stroke.
+  { id: 'select',      icon: 'highlight_alt',  label: 'Select stroke to delete' },
   { id: 'pen',         icon: 'draw',          label: 'Pen' },
   { id: 'arrow',       icon: 'arrow_forward', label: 'Arrow' },
   { id: 'rect',        icon: 'crop_square',   label: 'Rectangle' },

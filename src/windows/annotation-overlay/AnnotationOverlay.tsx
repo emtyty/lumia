@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { Stage, Layer, Line, Arrow, Rect, Ellipse } from 'react-konva'
+import { Stage, Layer, Line, Arrow, Rect, Ellipse, Group, Circle, Transformer } from 'react-konva'
 import type Konva from 'konva'
 
-type Tool = 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
+type Tool = 'none' | 'select' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
 
 interface DrawState {
   tool: Tool
@@ -37,6 +37,32 @@ export default function AnnotationOverlay() {
   const drawingRef = useRef<Shape | null>(null)
   const [drawingPreview, setDrawingPreview] = useState<Shape | null>(null)
   const [stageSize, setStageSize] = useState({ w: window.innerWidth, h: window.innerHeight })
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const stageRef = useRef<Konva.Stage>(null)
+  const trRef = useRef<Konva.Transformer>(null)
+
+  // Drop the selection whenever the user switches away from select mode
+  // (drawing on top of the X handle would be confusing) or the shape it
+  // points at goes away (e.g. via Clear / Undo).
+  useEffect(() => {
+    if (draw.tool !== 'select') setSelectedId(null)
+  }, [draw.tool])
+  useEffect(() => {
+    if (selectedId && !shapes.some(s => s.id === selectedId)) setSelectedId(null)
+  }, [shapes, selectedId])
+
+  // Attach the Konva Transformer to the currently selected shape's group
+  // so the user gets the same resize-frame affordance the post-capture
+  // editor surfaces around its selected objects.
+  useEffect(() => {
+    const tr = trRef.current
+    const stage = stageRef.current
+    if (!tr || !stage) return
+    if (!selectedId) { tr.nodes([]); tr.getLayer()?.batchDraw(); return }
+    const node = stage.findOne('#' + selectedId)
+    if (node) { tr.nodes([node]); tr.getLayer()?.batchDraw() }
+    else tr.nodes([])
+  }, [selectedId, shapes])
 
   useEffect(() => {
     document.body.style.background = 'transparent'
@@ -45,11 +71,16 @@ export default function AnnotationOverlay() {
     document.body.style.overflow = 'hidden'
   }, [])
 
-  // Cursor reflects whether a drawing tool is active. With no tool selected
-  // the cursor reverts to the default arrow so the user knows clicks won't
-  // start a stroke yet.
+  // Cursor reflects what kind of click the overlay will register:
+  //   none   -> default (overlay is click-through anyway)
+  //   select -> arrow, with each shape switching to pointer on hover
+  //             via Konva's listener config below
+  //   draw   -> crosshair
   useEffect(() => {
-    document.body.style.cursor = draw.tool === 'none' ? 'default' : 'crosshair'
+    document.body.style.cursor =
+      draw.tool === 'none' ? 'default' :
+      draw.tool === 'select' ? 'default' :
+      'crosshair'
   }, [draw.tool])
 
   useEffect(() => {
@@ -83,9 +114,9 @@ export default function AnnotationOverlay() {
     }
   }, [])
 
-  /** null when no tool is selected — caller should bail out of pointerDown. */
+  /** null when the active tool isn't a drawing tool. Caller bails on null. */
   const startShape = (x: number, y: number): Shape | null => {
-    if (draw.tool === 'none') return null
+    if (draw.tool === 'none' || draw.tool === 'select') return null
     const id = nextId()
     const base = { id, tool: draw.tool, color: draw.color, strokeWidth: draw.strokeWidth }
     switch (draw.tool) {
@@ -109,10 +140,30 @@ export default function AnnotationOverlay() {
     return { ...s, x2: x, y2: y }
   }
 
+  /** Bake a (dx, dy) offset into a shape's underlying coordinates so the
+   *  next React render of the data alone reproduces the dragged position
+   *  without relying on the Konva node's transient x/y. */
+  const translateShape = (s: Shape, dx: number, dy: number): Shape => {
+    if (s.kind === 'free') {
+      return { ...s, points: s.points.map((p, i) => i % 2 === 0 ? p + dx : p + dy) }
+    }
+    if (s.kind === 'rect') return { ...s, x: s.x + dx, y: s.y + dy }
+    if (s.kind === 'ellipse') return { ...s, x: s.x + dx, y: s.y + dy }
+    return { ...s, x1: s.x1 + dx, y1: s.y1 + dy, x2: s.x2 + dx, y2: s.y2 + dy }
+  }
+
   const onPointerDown = (e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     const stage = e.target.getStage()
     const pos = stage?.getPointerPosition()
     if (!pos) return
+    if (draw.tool === 'select') {
+      // Clicking empty stage area in select mode dismisses the X handle.
+      // Per-shape clicks are handled by their own onClick listener and
+      // don't bubble up here because Konva stops propagation by default
+      // when a child sets a target.
+      if (e.target === stage) setSelectedId(null)
+      return
+    }
     const s = startShape(pos.x, pos.y)
     if (!s) return
     drawingRef.current = s
@@ -142,70 +193,113 @@ export default function AnnotationOverlay() {
     setShapes(prev => [...prev, s])
   }
 
-  const renderShape = (s: Shape, key: number | string) => {
+  const renderShape = (s: Shape, key: number | string, isPreview = false) => {
     const isHighlight = s.highlight === true
     const opacity = isHighlight ? 0.35 : 1
+    // In select mode, every committed shape is interactive: listening +
+    // draggable, click selects it. The currently-being-drawn preview is
+    // still rendered every frame so we exclude it from selection / drag
+    // — it has no committed id yet.
+    const selectable = !isPreview && draw.tool === 'select'
 
-    if (s.kind === 'free') {
+    // Visual node — colours and geometry. Konva's hit-testing cascades
+    // from the wrapping Group's `listening`, so we don't need to explicitly
+    // set listening here. hitStrokeWidth makes thin pen strokes easier to
+    // grab when the user is in select mode.
+    const inner = (() => {
+      const visual = {
+        stroke: s.color,
+        strokeWidth: s.strokeWidth,
+        opacity,
+        hitStrokeWidth: Math.max(s.strokeWidth + 8, 14),
+      }
+      if (s.kind === 'free') {
+        return (
+          <Line
+            {...visual}
+            points={s.points}
+            lineCap="round"
+            lineJoin="round"
+            tension={0.4}
+          />
+        )
+      }
+      if (s.kind === 'rect') {
+        const x = s.w < 0 ? s.x + s.w : s.x
+        const y = s.h < 0 ? s.y + s.h : s.y
+        return <Rect {...visual} x={x} y={y} width={Math.abs(s.w)} height={Math.abs(s.h)} />
+      }
+      if (s.kind === 'ellipse') {
+        return <Ellipse {...visual} x={s.x} y={s.y} radiusX={s.rx} radiusY={s.ry} />
+      }
       return (
-        <Line
-          key={key}
-          points={s.points}
-          stroke={s.color}
-          strokeWidth={s.strokeWidth}
-          lineCap="round"
-          lineJoin="round"
-          tension={0.4}
-          opacity={opacity}
+        <Arrow
+          {...visual}
+          points={[s.x1, s.y1, s.x2, s.y2]}
+          fill={s.color}
+          pointerLength={Math.max(8, s.strokeWidth * 3)}
+          pointerWidth={Math.max(8, s.strokeWidth * 3)}
         />
       )
-    }
-    if (s.kind === 'rect') {
-      const x = s.w < 0 ? s.x + s.w : s.x
-      const y = s.h < 0 ? s.y + s.h : s.y
-      return (
-        <Rect
-          key={key}
-          x={x}
-          y={y}
-          width={Math.abs(s.w)}
-          height={Math.abs(s.h)}
-          stroke={s.color}
-          strokeWidth={s.strokeWidth}
-          opacity={opacity}
-        />
-      )
-    }
-    if (s.kind === 'ellipse') {
-      return (
-        <Ellipse
-          key={key}
-          x={s.x}
-          y={s.y}
-          radiusX={s.rx}
-          radiusY={s.ry}
-          stroke={s.color}
-          strokeWidth={s.strokeWidth}
-          opacity={opacity}
-        />
-      )
-    }
+    })()
+
+    if (isPreview) return <Group key={key} listening={false}>{inner}</Group>
+
     return (
-      <Arrow
+      <Group
         key={key}
-        points={[s.x1, s.y1, s.x2, s.y2]}
-        stroke={s.color}
-        fill={s.color}
-        strokeWidth={s.strokeWidth}
-        pointerLength={Math.max(8, s.strokeWidth * 3)}
-        pointerWidth={Math.max(8, s.strokeWidth * 3)}
-        opacity={opacity}
-      />
+        id={s.id}
+        listening={selectable}
+        draggable={selectable}
+        onClick={(e) => { if (selectable) { e.cancelBubble = true; setSelectedId(s.id) } }}
+        onMouseEnter={() => { if (selectable) document.body.style.cursor = 'pointer' }}
+        onMouseLeave={() => { if (selectable) document.body.style.cursor = 'default' }}
+        onDragEnd={(e) => {
+          const node = e.target
+          const dx = node.x()
+          const dy = node.y()
+          if (dx === 0 && dy === 0) return
+          setShapes(prev => prev.map(p => p.id === s.id ? translateShape(p, dx, dy) : p))
+          // Reset the Group's position so the next render (which already
+          // bakes the offset into the data) doesn't double-apply it.
+          node.position({ x: 0, y: 0 })
+        }}
+      >
+        {inner}
+      </Group>
     )
+  }
+
+  // Track the top-right of the selected shape's Konva node so the X
+  // delete handle stays glued to the corner during drag / transform —
+  // querying the node directly avoids waiting for React state updates.
+  const [deleteHandle, setDeleteHandle] = useState<{ x: number; y: number } | null>(null)
+  useEffect(() => {
+    if (!selectedId) { setDeleteHandle(null); return }
+    const stage = stageRef.current
+    if (!stage) { setDeleteHandle(null); return }
+    const node = stage.findOne('#' + selectedId)
+    const layer = node?.getLayer() ?? null
+    if (!node || !layer) { setDeleteHandle(null); return }
+    const update = () => {
+      const box = node.getClientRect({ relativeTo: layer as any })
+      setDeleteHandle({ x: box.x + box.width, y: box.y })
+    }
+    update()
+    node.on('dragmove.deletehandle transform.deletehandle', update)
+    return () => { node.off('dragmove.deletehandle transform.deletehandle') }
+  }, [selectedId, shapes])
+
+  const selectedShape = selectedId ? shapes.find(s => s.id === selectedId) ?? null : null
+  const deleteSelected = () => {
+    if (!selectedId) return
+    setShapes(prev => prev.filter(s => s.id !== selectedId))
+    setSelectedId(null)
   }
 
   return (
     <Stage
+      ref={stageRef}
       width={stageSize.w}
       height={stageSize.h}
       onMouseDown={onPointerDown}
@@ -218,7 +312,28 @@ export default function AnnotationOverlay() {
     >
       <Layer>
         {shapes.map((s, i) => renderShape(s, s.id || i))}
-        {drawingPreview && renderShape(drawingPreview, 'preview')}
+        {drawingPreview && renderShape(drawingPreview, 'preview', true)}
+        <Transformer
+          ref={trRef}
+          rotateEnabled={false}
+          borderStroke="#a78bfa"
+          anchorStroke="#a78bfa"
+          anchorFill="#ffffff"
+          anchorSize={8}
+        />
+        {deleteHandle && selectedShape && (
+          <Group
+            x={deleteHandle.x + 12}
+            y={deleteHandle.y - 12}
+            onClick={(e) => { e.cancelBubble = true; deleteSelected() }}
+            onMouseEnter={() => { document.body.style.cursor = 'pointer' }}
+            onMouseLeave={() => { document.body.style.cursor = 'default' }}
+          >
+            <Circle radius={11} fill="#ef4444" stroke="#ffffff" strokeWidth={2} shadowColor="#000" shadowBlur={6} shadowOpacity={0.4} />
+            <Line points={[-4, -4, 4, 4]} stroke="#ffffff" strokeWidth={2} lineCap="round" />
+            <Line points={[-4, 4, 4, -4]} stroke="#ffffff" strokeWidth={2} lineCap="round" />
+          </Group>
+        )}
       </Layer>
     </Stage>
   )

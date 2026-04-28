@@ -11,24 +11,29 @@ export interface ToolDef {
   shortcut: string
 }
 
+// Tool order is kept in lockstep with the live recording-time annotation
+// palette so the two surfaces feel like the same UI: Select first, then the
+// shared drawing tools (pen, arrow, rect, ellipse). Editor-only specialty
+// tools (blur, text) trail the shared set instead of being mixed in.
+
+export const SELECT_TOOLS: ToolDef[] = [
+  { id: 'select',  icon: 'highlight_alt',     label: 'Select',    shortcut: 'V' },
+]
+
 export const DRAW_TOOLS: ToolDef[] = [
   { id: 'pen',     icon: 'draw',              label: 'Pen',       shortcut: 'P' },
+  { id: 'arrow',   icon: 'arrow_forward',     label: 'Arrow',     shortcut: 'A' },
+  { id: 'rect',    icon: 'crop_square',       label: 'Rectangle', shortcut: 'R' },
+  { id: 'ellipse', icon: 'circle',            label: 'Ellipse',   shortcut: 'E' },
+]
+
+export const EXTRA_TOOLS: ToolDef[] = [
   { id: 'blur',    icon: 'blur_on',           label: 'Blur',      shortcut: 'B' },
   { id: 'text',    icon: 'title',             label: 'Text',      shortcut: 'T' },
 ]
 
-export const SHAPE_TOOLS: ToolDef[] = [
-  { id: 'rect',    icon: 'crop_square',       label: 'Rectangle', shortcut: 'R' },
-  { id: 'ellipse', icon: 'circle',            label: 'Ellipse',   shortcut: 'E' },
-  { id: 'arrow',   icon: 'arrow_forward',     label: 'Arrow',     shortcut: 'A' },
-]
-
-export const SELECT_TOOLS: ToolDef[] = [
-  { id: 'select',  icon: 'arrow_selector_tool', label: 'Select',  shortcut: 'V' },
-]
-
 /** All tools in a single lookup — used for keyboard shortcut handling. */
-export const ALL_TOOLS: ToolDef[] = [...DRAW_TOOLS, ...SHAPE_TOOLS, ...SELECT_TOOLS]
+export const ALL_TOOLS: ToolDef[] = [...SELECT_TOOLS, ...DRAW_TOOLS, ...EXTRA_TOOLS]
 
 /** Canonical color palette. Keep order stable — users learn positions. */
 export const COLORS = [

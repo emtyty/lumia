@@ -31,7 +31,7 @@ let toolbarWin: BrowserWindow | null = null
  *  tool before clicks on the overlay turn into strokes — that keeps the
  *  first click after enabling annotation from being an accidental drag. */
 interface AnnotationState {
-  tool: 'none' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
+  tool: 'none' | 'select' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
   color: string
   strokeWidth: number
 }

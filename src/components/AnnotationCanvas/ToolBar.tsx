@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { DRAW_TOOLS, SHAPE_TOOLS, SELECT_TOOLS, COLORS, STROKE_PRESETS, type Tool, type ToolDef } from './tools'
+import { DRAW_TOOLS, EXTRA_TOOLS, SELECT_TOOLS, COLORS, STROKE_PRESETS, type Tool, type ToolDef } from './tools'
 
 interface Props {
   tool: Tool
@@ -33,10 +33,12 @@ export default function AnnotationToolBar({
   const isHidden = (id: Tool) => disabledTools.includes(id)
   const filter = (list: ToolDef[]) => list.filter(t => !isHidden(t.id))
 
+  // Render order matches the live annotation palette: Select first, the
+  // common drawing tools next, then editor-only extras (blur / text).
   const groups: { key: string; tools: ToolDef[] }[] = [
-    { key: 'draw',   tools: filter(DRAW_TOOLS) },
-    { key: 'shape',  tools: filter(SHAPE_TOOLS) },
     { key: 'select', tools: filter(SELECT_TOOLS) },
+    { key: 'draw',   tools: filter(DRAW_TOOLS) },
+    { key: 'extra',  tools: filter(EXTRA_TOOLS) },
   ].filter(g => g.tools.length > 0)
 
   // Color popover (mobile / narrow layouts)
