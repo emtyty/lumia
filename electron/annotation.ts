@@ -90,6 +90,11 @@ function createOverlayWindow(display: Electron.Display) {
     skipTaskbar: true,
     hasShadow: false,
     enableLargerThanScreen: true,
+    // Hide until the renderer has painted at least once. Without this,
+    // the empty BrowserWindow appears with a white background for a frame
+    // before the transparent body is drawn — causes a visible flash on
+    // every "Annotate" toggle. ready-to-show below brings it back.
+    show: false,
     // Non-focusable so the OS doesn't raise the overlay above the toolbar
     // windows when it briefly takes focus (e.g., during stroke draw, when
     // creating it). Without this Windows can place the topmost overlay
@@ -102,12 +107,15 @@ function createOverlayWindow(display: Electron.Display) {
       backgroundThrottling: false,
     },
   })
-  if (process.platform === 'win32') {
-    win.setBounds({ x, y, width, height })
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) win.setBounds({ x, y, width, height })
-    })
-  }
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return
+    // Re-apply bounds on Windows: the constructor uses the primary
+    // display's DPI context, so on a secondary monitor with a different
+    // scale factor the original bounds end up off — rewriting them once
+    // the window is realised pins it to the right pixels.
+    if (process.platform === 'win32') win.setBounds({ x, y, width, height })
+    win.showInactive()
+  })
   win.setMenu(null)
   // Stay above the recorded app (including fullscreen games / videos) so
   // strokes paint on top. The recording toolbar and the annotation
@@ -135,6 +143,9 @@ function createToolbarWindow(display: Electron.Display, anchor: { x: number; y: 
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
+    // See createOverlayWindow — defer show until the first paint to avoid
+    // the white-flash that bare BrowserWindows have on Windows.
+    show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -142,12 +153,11 @@ function createToolbarWindow(display: Electron.Display, anchor: { x: number; y: 
       backgroundThrottling: false,
     },
   })
-  if (process.platform === 'win32') {
-    win.setBounds(bounds)
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) win.setBounds(bounds)
-    })
-  }
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return
+    if (process.platform === 'win32') win.setBounds(bounds)
+    win.showInactive()
+  })
   win.setMenu(null)
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })

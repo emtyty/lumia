@@ -33,6 +33,12 @@ export default function AnnotationToolbar() {
   const [tool, setTool] = useState<Tool>('none')
   const [color, setColor] = useState('#f87171')
   const [strokeWidth, setStrokeWidth] = useState<number>(4)
+  // Render nothing until we've pulled the previously-selected
+  // tool/color/stroke from main. Without this gate the palette paints
+  // for one frame with the useState defaults (pen / red / 4) and only
+  // then snaps to whatever the user had last picked — visible flicker
+  // every time the palette is reopened mid-recording.
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     document.body.style.background = 'transparent'
@@ -45,12 +51,16 @@ export default function AnnotationToolbar() {
   // last selection rather than always resetting to pen/red.
   useEffect(() => {
     window.electronAPI?.annotationGetState?.().then((s) => {
-      if (!s) return
-      setTool(s.tool as Tool)
-      setColor(s.color)
-      setStrokeWidth(s.strokeWidth)
-    }).catch(() => {})
+      if (s) {
+        setTool(s.tool as Tool)
+        setColor(s.color)
+        setStrokeWidth(s.strokeWidth)
+      }
+      setReady(true)
+    }).catch(() => setReady(true))
   }, [])
+
+  if (!ready) return null
 
   const pickTool = (t: Tool) => { setTool(t); window.electronAPI?.annotationSetTool?.(t) }
   const pickColor = (c: string) => { setColor(c); window.electronAPI?.annotationSetColor?.(c) }
