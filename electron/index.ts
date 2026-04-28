@@ -914,6 +914,23 @@ app.whenReady().then(async () => {
     return scanForSensitiveData(dataUrl)
   })
 
+  // Favicon served by the local OAuth + picker servers so the browser tab the
+  // user lands on during the Google Drive connect flow is recognizably Lumia
+  // (alongside the page <title>). Read once, then reused across both servers.
+  let cachedFavicon: Buffer | null = null
+  const loadFavicon = async (): Promise<Buffer | null> => {
+    if (cachedFavicon) return cachedFavicon
+    const iconPath = app.isPackaged
+      ? join(process.resourcesPath, 'icon.png')
+      : join(__dirname, '../../resources/icon.png')
+    try {
+      cachedFavicon = await fs.readFile(iconPath)
+      return cachedFavicon
+    } catch {
+      return null
+    }
+  }
+
   // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
   // Tracks an in-progress OAuth flow so the renderer can cancel it (user clicked
   // Connect by mistake, opened the wrong browser, etc.). Calling startAuth again
@@ -937,9 +954,15 @@ app.whenReady().then(async () => {
     }
 
     return new Promise<{ success: boolean; error?: string; cancelled?: boolean }>((resolve) => {
+      // The OAuth server lifecycle is intentionally decoupled from `settle`:
+      // after a successful code exchange we settle the IPC promise immediately
+      // (so the renderer drops the connecting spinner), but keep the local
+      // server listening so the Connected page's "Browse Drive folder" button
+      // can hit /pick-folder. The server is finally torn down on Browse click,
+      // on a new startAuth, on cancelAuth, or after the auto-close grace.
+      let authAutoCloseTimer: ReturnType<typeof setTimeout> | null = null
       const settle = (value: { success: boolean; error?: string; cancelled?: boolean }) => {
         if (activeAuthResolve !== settle) return
-        activeAuthServer = null
         activeAuthResolve = null
         resolve(value)
       }
@@ -947,6 +970,36 @@ app.whenReady().then(async () => {
 
       const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        if (url.pathname === '/favicon.png' || url.pathname === '/favicon.ico') {
+          const buf = await loadFavicon()
+          if (buf) {
+            res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
+            res.end(buf)
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+          return
+        }
+
+        // Browse button on the Connected page hits this route. Boot the
+        // picker server (port 42814) and 302 the user's browser there.
+        if (url.pathname === '/pick-folder') {
+          const result = await startGdriveFolderPicker()
+          if (!result.ok) {
+            res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="icon" type="image/png" href="/favicon.png"><title>Lumia — Couldn't open picker</title></head><body style="font-family:'Inter',-apple-system,sans-serif;background:#0d0d0f;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="max-width:420px;text-align:center;padding:40px"><h1 style="font-size:20px;margin:0 0 12px">Couldn't open the folder picker</h1><p style="color:rgba(255,255,255,0.5);font-size:14px;line-height:1.6">${result.error}</p><p style="color:rgba(255,255,255,0.35);font-size:12px;margin-top:20px">Close this tab and try again from Lumia → Settings.</p></div></body></html>`)
+            return
+          }
+          res.writeHead(302, { Location: result.url })
+          res.end()
+          // The browser is now redirected to the picker; tear down the OAuth
+          // server shortly after so it doesn't linger on port 42813.
+          if (authAutoCloseTimer) { clearTimeout(authAutoCloseTimer); authAutoCloseTimer = null }
+          setTimeout(() => server.close(), 500)
+          return
+        }
 
         if (url.pathname !== '/') {
           res.writeHead(404)
@@ -957,13 +1010,14 @@ app.whenReady().then(async () => {
         const code = url.searchParams.get('code')
         const error = url.searchParams.get('error')
 
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         if (error || !code) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
           res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="/favicon.png">
 <title>Lumia — Authorization Failed</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1012,11 +1066,33 @@ app.whenReady().then(async () => {
           return
         }
 
+        // Exchange the code BEFORE rendering the Connected page so that, by
+        // the time the user sees the Browse button, the refresh token is
+        // already on disk and /pick-folder is guaranteed to find it. On
+        // failure we fall through to the same failure HTML.
+        try {
+          const result = await exchangeGoogleAuthCode(code, clientId, clientSecret, 'http://localhost:42813')
+          setSetting('googleDriveAccessToken', result.accessToken)
+          setSetting('googleDriveRefreshToken', result.refreshToken)
+          setSetting('googleDriveTokenExpiresAt', result.expiresAt)
+          mainWindow?.webContents.send('gdrive:connected')
+          settle({ success: true })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><link rel="icon" type="image/png" href="/favicon.png"><title>Lumia — Authorization Failed</title></head><body style="font-family:'Inter',-apple-system,sans-serif;background:#0d0d0f;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="max-width:420px;text-align:center;padding:40px"><h1 style="font-size:20px;margin:0 0 12px">Authorization failed</h1><p style="color:rgba(255,255,255,0.5);font-size:14px;line-height:1.6">${msg}</p></div></body></html>`)
+          server.close()
+          settle({ success: false, error: msg })
+          return
+        }
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="/favicon.png">
 <title>Lumia — Connected</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -1036,7 +1112,7 @@ app.whenReady().then(async () => {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 24px;
     backdrop-filter: blur(24px);
-    max-width: 420px;
+    max-width: 460px;
     width: 90vw;
     animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) both;
   }
@@ -1060,59 +1136,78 @@ app.whenReady().then(async () => {
   }
   h1 {
     font-size: 22px; font-weight: 700;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     letter-spacing: -0.3px;
   }
-  p { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 6px;
+  p { font-size: 14px; color: rgba(255,255,255,0.55); line-height: 1.6; }
+  .step {
+    margin-top: 24px;
+    padding: 14px 18px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    line-height: 1.5;
+    text-align: left;
+  }
+  .step strong { color: #fff; font-weight: 600; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     margin-top: 20px;
-    padding: 6px 14px;
-    background: rgba(74,222,128,0.08);
-    border: 1px solid rgba(74,222,128,0.2);
-    border-radius: 999px;
-    font-size: 12px;
-    color: rgba(74,222,128,0.9);
+    padding: 12px 22px;
+    background: #fff;
+    color: #0d0d0f;
+    border-radius: 12px;
     font-weight: 600;
-    letter-spacing: 0.2px;
+    font-size: 14px;
+    text-decoration: none;
+    letter-spacing: -0.1px;
+    transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   }
-  .dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: #4ade80;
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
+  .btn:hover { background: #f1f1f1; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+  .btn svg { width: 16px; height: 16px; }
+  .hint { margin-top: 16px; font-size: 12px; color: rgba(255,255,255,0.32); }
 </style>
 </head>
 <body>
   <div class="card">
     <div class="icon">✓</div>
     <h1>Connected!</h1>
-    <p>Google Drive has been linked to your Lumia account.<br>You may close this tab.</p>
-    <div class="badge"><span class="dot"></span> Lumia is ready</div>
+    <p>Google Drive is linked to Lumia. One last step:</p>
+    <div class="step"><strong>Choose a Drive folder</strong> where Lumia will upload your screenshots and recordings.</div>
+    <a class="btn" href="/pick-folder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+      Browse Drive folders
+    </a>
+    <div class="hint">Or close this tab and pick a folder later from Lumia → Settings.</div>
   </div>
 </body>
 </html>`)
-        server.close()
-
-        try {
-          const result = await exchangeGoogleAuthCode(code, clientId, clientSecret, 'http://localhost:42813')
-          setSetting('googleDriveAccessToken', result.accessToken)
-          setSetting('googleDriveRefreshToken', result.refreshToken)
-          setSetting('googleDriveTokenExpiresAt', result.expiresAt)
-          mainWindow?.webContents.send('gdrive:connected')
-          settle({ success: true })
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err)
-          settle({ success: false, error: msg })
-        }
+        // Keep the server alive so the Browse button can hit /pick-folder.
+        // Auto-close after 10 minutes if the user closes the tab without
+        // clicking Browse — the IPC has already settled, so this is purely
+        // socket cleanup.
+        if (authAutoCloseTimer) clearTimeout(authAutoCloseTimer)
+        authAutoCloseTimer = setTimeout(() => server.close(), 10 * 60 * 1000)
       })
 
       activeAuthServer = server
+
+      // Cleanup hook — covers all close paths (cancelAuth, /pick-folder
+      // redirect, auto-close timer, new startAuth pre-empting us, listen
+      // error). Without this the activeAuthServer reference would leak past
+      // its actual lifetime.
+      server.on('close', () => {
+        if (authAutoCloseTimer) { clearTimeout(authAutoCloseTimer); authAutoCloseTimer = null }
+        if (activeAuthServer === server) activeAuthServer = null
+        // If the server died before the OAuth flow logically completed, treat
+        // it as a cancellation so the IPC promise can't hang forever.
+        settle({ success: false, cancelled: true })
+      })
 
       server.listen(42813, '127.0.0.1', () => {
         const params = new URLSearchParams({
@@ -1149,16 +1244,22 @@ app.whenReady().then(async () => {
   // browser's existing Google session cookies render the picker UI without
   // re-login. Token is fetched via a one-time nonce so it never appears in the
   // URL bar / browser history.
+  type PickerResult = { success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }
   let activePickerServer: import('http').Server | null = null
-  let activePickerFinish: ((value: { success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }) => void) | null = null
+  let activePickerFinish: ((value: PickerResult) => void) | null = null
 
-  ipcMain.handle('gdrive:pickFolder', async () => {
+  // Spins up the picker HTTP server and returns its URL plus a promise that
+  // settles when the user picks a folder, cancels, or the 5-minute timeout
+  // fires. Used both by the `gdrive:pickFolder` IPC (Settings UI → opens picker
+  // in a new browser tab) and by the OAuth `/pick-folder` route on port 42813
+  // (Connected page's Browse button → 302 redirect to the picker URL).
+  const startGdriveFolderPicker = async (): Promise<{ ok: false; error: string } | { ok: true; url: string; finished: Promise<PickerResult> }> => {
     const settings = getSettings()
     let { googleDriveAccessToken } = settings
     const { googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
 
     if (!googleDriveRefreshToken) {
-      return { success: false, error: 'Not connected to Google Drive' }
+      return { ok: false, error: 'Not connected to Google Drive' }
     }
 
     if (Date.now() >= googleDriveTokenExpiresAt - 60_000) {
@@ -1173,7 +1274,7 @@ app.whenReady().then(async () => {
         setSetting('googleDriveAccessToken', refreshed.accessToken)
         setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
       } catch (err) {
-        return { success: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
+        return { ok: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
       }
     }
 
@@ -1204,74 +1305,116 @@ app.whenReady().then(async () => {
     try {
       pickerHtml = await readFile(pickerHtmlPath, 'utf-8')
     } catch (err) {
-      return { success: false, error: `Failed to load picker.html: ${err instanceof Error ? err.message : String(err)}` }
+      return { ok: false, error: `Failed to load picker.html: ${err instanceof Error ? err.message : String(err)}` }
     }
 
-    return new Promise<{ success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }>((resolve) => {
-      let resolved = false
-      const server = createServer((req, res) => {
-        const url = new URL(req.url ?? '/', 'http://localhost')
-        if (url.searchParams.get('nonce') !== nonce) {
-          res.writeHead(403, { 'Content-Type': 'text/plain' })
-          res.end('Forbidden')
-          return
-        }
+    let resolveFinished: (value: PickerResult) => void = () => {}
+    const finished = new Promise<PickerResult>((resolve) => { resolveFinished = resolve })
+    let resolved = false
 
-        if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
-          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-          res.end(pickerHtml)
-          return
-        }
-        if (url.pathname === '/config' && req.method === 'GET') {
-          res.writeHead(200, { 'Content-Type': 'application/json' })
-          res.end(JSON.stringify(config))
-          return
-        }
-        if (url.pathname === '/result' && req.method === 'POST') {
-          let body = ''
-          req.on('data', (chunk) => { body += chunk })
-          req.on('end', () => {
-            res.writeHead(200, { 'Content-Type': 'application/json' })
-            res.end('{"ok":true}')
-            try {
-              const parsed = JSON.parse(body) as { id: string; name: string } | null
-              finish({ success: true, folder: parsed })
-            } catch {
-              finish({ success: true, folder: null })
-            }
-          })
-          return
-        }
-        res.writeHead(404)
-        res.end()
-      })
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
 
-      const finish = (value: { success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }) => {
-        if (resolved) return
-        resolved = true
-        clearTimeout(timeoutHandle)
-        server.close()
-        if (activePickerServer === server) activePickerServer = null
-        if (activePickerFinish === finish) activePickerFinish = null
-        if (value.folder?.id) setSetting('googleDriveFolderId', value.folder.id)
-        resolve(value)
+      // Favicon is fetched automatically by the browser without our nonce
+      // query string, so it has to be served before the nonce gate. The icon
+      // is non-sensitive and does not expose any token.
+      if (url.pathname === '/favicon.png' || url.pathname === '/favicon.ico') {
+        const buf = await loadFavicon()
+        if (buf) {
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
+          res.end(buf)
+        } else {
+          res.writeHead(404)
+          res.end()
+        }
+        return
       }
 
-      const timeoutHandle = setTimeout(() => {
-        finish({ success: true, folder: null })
-      }, 5 * 60 * 1000)
+      if (url.searchParams.get('nonce') !== nonce) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' })
+        res.end('Forbidden')
+        return
+      }
 
-      server.on('error', (err) => {
-        finish({ success: false, error: `Local server error: ${err.message}` })
-      })
-
-      server.listen(42814, '127.0.0.1', () => {
-        shell.openExternal(`http://localhost:42814/?nonce=${nonce}`)
-      })
-
-      activePickerServer = server
-      activePickerFinish = finish
+      if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(pickerHtml)
+        return
+      }
+      if (url.pathname === '/config' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(config))
+        return
+      }
+      if (url.pathname === '/result' && req.method === 'POST') {
+        let body = ''
+        req.on('data', (chunk) => { body += chunk })
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end('{"ok":true}')
+          try {
+            const parsed = JSON.parse(body) as { id: string; name: string } | null
+            finish({ success: true, folder: parsed })
+          } catch {
+            finish({ success: true, folder: null })
+          }
+        })
+        return
+      }
+      res.writeHead(404)
+      res.end()
     })
+
+    const finish = (value: PickerResult) => {
+      if (resolved) return
+      resolved = true
+      clearTimeout(timeoutHandle)
+      server.close()
+      if (activePickerServer === server) activePickerServer = null
+      if (activePickerFinish === finish) activePickerFinish = null
+      if (value.folder?.id) setSetting('googleDriveFolderId', value.folder.id)
+      // Notify the renderer so the Settings UI refreshes its folder display when
+      // the picker was launched outside the IPC path (e.g. the Browse button on
+      // the OAuth Connected page).
+      if (value.success && value.folder) mainWindow?.webContents.send('gdrive:folderSelected')
+      resolveFinished(value)
+    }
+
+    const timeoutHandle = setTimeout(() => {
+      finish({ success: true, folder: null })
+    }, 5 * 60 * 1000)
+
+    server.on('error', (err) => {
+      finish({ success: false, error: `Local server error: ${err.message}` })
+    })
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onListening = () => { server.off('error', onError); resolve() }
+        const onError = (err: Error) => { server.off('listening', onListening); reject(err) }
+        server.once('listening', onListening)
+        server.once('error', onError)
+        server.listen(42814, '127.0.0.1')
+      })
+    } catch (err) {
+      return { ok: false, error: `Local server error: ${err instanceof Error ? err.message : String(err)}` }
+    }
+
+    activePickerServer = server
+    activePickerFinish = finish
+
+    return {
+      ok: true,
+      url: `http://localhost:42814/?nonce=${nonce}`,
+      finished
+    }
+  }
+
+  ipcMain.handle('gdrive:pickFolder', async (): Promise<PickerResult> => {
+    const result = await startGdriveFolderPicker()
+    if (!result.ok) return { success: false, error: result.error }
+    shell.openExternal(result.url)
+    return result.finished
   })
 
   ipcMain.handle('gdrive:cancelPickFolder', () => {
@@ -1295,6 +1438,7 @@ app.whenReady().then(async () => {
     setSetting('googleDriveAccessToken', '')
     setSetting('googleDriveRefreshToken', '')
     setSetting('googleDriveTokenExpiresAt', 0)
+    setSetting('googleDriveFolderId', '')
     return { success: true }
   })
 

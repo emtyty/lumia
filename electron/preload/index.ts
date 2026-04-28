@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   gdrivePickFolder: () => ipcRenderer.invoke('gdrive:pickFolder'),
   gdriveCancelPickFolder: () => ipcRenderer.invoke('gdrive:cancelPickFolder'),
   onGdriveConnected: (cb: () => void) => ipcRenderer.on('gdrive:connected', cb),
+  onGdriveFolderSelected: (cb: () => void) => ipcRenderer.on('gdrive:folderSelected', cb),
 
   // Save file
   saveFile: (dataUrl: string, filePath: string) => ipcRenderer.invoke('capture:saveFile', dataUrl, filePath),

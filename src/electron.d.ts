@@ -57,6 +57,7 @@ declare global {
       gdrivePickFolder: () => Promise<{ success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }>
       gdriveCancelPickFolder: () => Promise<{ ok: boolean }>
       onGdriveConnected: (cb: () => void) => void
+      onGdriveFolderSelected: (cb: () => void) => void
 
       saveFile: (dataUrl: string, filePath: string) => Promise<string>
       readLocalFile: (filePath: string) => Promise<ArrayBuffer>

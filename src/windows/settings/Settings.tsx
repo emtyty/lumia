@@ -94,6 +94,18 @@ export default function Settings() {
     return () => window.removeEventListener('lumia:theme-changed', handler)
   }, [])
 
+  // The Browse button on the OAuth Connected page kicks off the picker
+  // outside our IPC promise chain — listen for the resulting selection event
+  // so the Settings UI's folder display stays in sync.
+  useEffect(() => {
+    window.electronAPI?.onGdriveFolderSelected(async () => {
+      const s = await window.electronAPI?.getSettings()
+      if (!s) return
+      setSettings(prev => ({ ...prev, googleDriveFolderId: s.googleDriveFolderId }))
+      originalRef.current = { ...originalRef.current, googleDriveFolderId: s.googleDriveFolderId }
+    })
+  }, [])
+
   const handleSave = async () => {
     for (const [key, value] of Object.entries(settings)) {
       await window.electronAPI?.setSetting(key as keyof AppSettings, value)
@@ -121,8 +133,10 @@ export default function Settings() {
     if (result?.success) {
       const s = await window.electronAPI?.getSettings()
       if (s) { setSettings(s); originalRef.current = s }
-      // Folder is required, so jump straight into the picker after a successful connect.
-      handleGdrivePickFolder()
+      // No auto-redirect to the picker — the Connected page in the browser
+      // surfaces a "Browse Drive folders" button so the user picks the folder
+      // there. Falling back to the in-app Browse button covers the case where
+      // they close the tab first.
       return
     }
     if (!result?.cancelled) {
@@ -147,8 +161,8 @@ export default function Settings() {
     setConfirmingDisconnect(false)
     await window.electronAPI?.gdriveDisconnect()
     setSettings(prev => {
-      const next = { ...prev, googleDriveRefreshToken: '', googleDriveAccessToken: '' }
-      originalRef.current = { ...originalRef.current, googleDriveRefreshToken: '', googleDriveAccessToken: '' }
+      const next = { ...prev, googleDriveRefreshToken: '', googleDriveAccessToken: '', googleDriveFolderId: '' }
+      originalRef.current = { ...originalRef.current, googleDriveRefreshToken: '', googleDriveAccessToken: '', googleDriveFolderId: '' }
       return next
     })
     setGdriveFolderName('')
