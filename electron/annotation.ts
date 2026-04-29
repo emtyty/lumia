@@ -293,19 +293,29 @@ export function openAnnotation(
 
   // On Windows there are no NSWindowLevel-style layers, only HWND_TOPMOST
   // as a binary flag — order within the topmost group is creation/raise
-  // order. Force the palette + caller-supplied windows above the overlay
-  // via SetWindowPos(HWND_TOPMOST). On macOS this is unnecessary because
-  // the toolbars/border use relativeLevel:1 above the overlay's plain
-  // 'screen-saver' level, so the OS already enforces the stacking.
+  // order, and the LAST raised window ends up on top. Force the palette +
+  // caller-supplied windows above the overlay via SetWindowPos(HWND_TOPMOST).
+  // On macOS this is unnecessary because the toolbars/border use
+  // relativeLevel:1 above the overlay's plain 'screen-saver' level, so the
+  // OS already enforces the stacking.
   //
-  // Critically: SetWindowPos on a still-hidden window has no effect on
+  // Order matters: the recording toolbar's BrowserWindow is 440×92 with the
+  // visible pill only ~46px tall at the top. The remaining ~46px is empty,
+  // transparent space reserved for in-DOM hover tooltips, and it physically
+  // overlaps the top of the palette window (the two pills sit close together
+  // by design). If the recording toolbar sits ABOVE the palette in Z order,
+  // its empty bottom strip swallows clicks aimed at the palette's pill —
+  // user-visible symptom: only the leftmost/rightmost ends of the palette
+  // (the parts wider than 440px) react to clicks. Raising the palette LAST
+  // puts its HWND on top so the entire pill stays clickable; the recording
+  // pill is unaffected because the two pills don't overlap visually.
+  //
+  // Critically: SetWindowPos on a still-hidden window has no effect on the
   // visible Z order, so we have to wait until the toolbar's HWND is
   // realised + visible before raising. The +50ms timer alone races with
-  // the toolbar's ready-to-show — when first paint takes longer, the
-  // raise fires first and the toolbar pops up below the overlay. Result:
-  // first click on a tool button is eaten by Windows' click-to-activate
-  // (shows the "+" overlay cursor) instead of selecting the tool.
-  const wins = [toolbarWin, ...topmostAfter]
+  // the toolbar's ready-to-show — when first paint takes longer, the raise
+  // fires first and the toolbar pops up below the overlay.
+  const wins = [...topmostAfter, toolbarWin]
   toolbarWin.once('ready-to-show', () => raiseAboveOverlay(wins))
   // Belt-and-braces: re-raise on a short timer too in case ready-to-show
   // fired before we attached the handler (cached renderer paint).
