@@ -19,6 +19,7 @@
 
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
+import { forceWindowsExcludeFromCapture } from './native-input'
 
 const isDev = !app.isPackaged
 
@@ -352,31 +353,6 @@ function linkToolbarDrag(a: BrowserWindow, b: BrowserWindow): () => void {
 function raiseAboveOverlay(wins: (BrowserWindow | null)[]) {
   if (process.platform !== 'win32') return
   forceWindowsTopmost(wins)
-}
-
-/** Direct Win32 SetWindowDisplayAffinity(HWND, WDA_EXCLUDEFROMCAPTURE).
- *  Bypasses Electron's setContentProtection wrapper, which has known
- *  issues applying display affinity to layered (transparent) windows on
- *  Windows. Requires Windows 10 build 19041 (2004) or newer for the
- *  EXCLUDEFROMCAPTURE flag — older Windows would need WDA_MONITOR
- *  (renders the window black in captures), which we don't fall back to. */
-function forceWindowsExcludeFromCapture(win: BrowserWindow) {
-  if (process.platform !== 'win32') return
-  if (win.isDestroyed()) return
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const koffi = require('koffi')
-    const user32 = koffi.load('user32.dll')
-    const SetWindowDisplayAffinity = user32.func(
-      'bool __stdcall SetWindowDisplayAffinity(intptr_t hWnd, uint32_t dwAffinity)',
-    )
-    const WDA_EXCLUDEFROMCAPTURE = 0x11
-    const buf = win.getNativeWindowHandle()
-    const hwnd = buf.length >= 8 ? buf.readBigInt64LE(0) : BigInt(buf.readInt32LE(0))
-    SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
-  } catch (err) {
-    console.warn('[annotation] SetWindowDisplayAffinity call failed', err)
-  }
 }
 
 /** Direct Win32 SetWindowPos(HWND_TOPMOST) on each window's HWND. */

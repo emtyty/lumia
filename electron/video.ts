@@ -16,6 +16,7 @@ import { resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { openAnnotation, closeAnnotation, destroyAnnotation, isAnnotationOpen, setupAnnotation } from './annotation'
+import { forceWindowsExcludeFromCapture } from './native-input'
 
 const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 const OVERLAY_GONE_DELAY_MS = 120
@@ -201,9 +202,20 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return
     if (process.platform === 'win32') win.setBounds(bounds)
+    // Re-apply content protection right around the show. Calling
+    // setContentProtection from the constructor is unreliable for
+    // transparent + frame:false windows on Windows — WGC capture sessions
+    // bake the toolbar (including the "Starting in 3..2..1" countdown) into
+    // the recording. Re-applying after the HWND is fully realised, plus a
+    // direct SetWindowDisplayAffinity Win32 call as belt-and-braces, forces
+    // the OS to honour the exclusion. macOS has the same class of bug with
+    // NSWindowSharingNone via SCK, so we re-apply on every platform.
+    win.setContentProtection(true)
     // showInactive so we don't yank focus away from whatever the user is
     // recording the moment the toolbar materialises.
     win.showInactive()
+    win.setContentProtection(true)
+    forceWindowsExcludeFromCapture(win)
   })
   win.setMenu(null)
   // screen-saver is the highest Z level available — stays above fullscreen
@@ -214,9 +226,9 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
   // a moveTop race — the OS enforces the ordering.
   win.setAlwaysOnTop(true, 'screen-saver', 1)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // Exclude from screen capture so the toolbar itself never shows up in the
-  // recorded video (Win 10 1903+ / macOS 10.15+). Without this, screen-mode
-  // and high regions would bake the controls into the output.
+  // First call here so the protection bit is set before any paint reaches
+  // the screen — the ready-to-show callback re-applies it once the window
+  // is realised because that's the only point Windows reliably honours it.
   win.setContentProtection(true)
   loadRoute(win, '/recording-toolbar')
   win.on('closed', () => { recordingToolbar = null })
@@ -256,15 +268,19 @@ function createRecordingBorder(display: Electron.Display, rect: { x: number; y: 
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return
     if (process.platform === 'win32') win.setBounds(bounds)
+    // Same WGC-vs-transparent-window bug as the toolbar: re-apply content
+    // protection around the show + force the Win32 capture-exclude affinity,
+    // otherwise the red border bakes into the recording on Windows.
+    win.setContentProtection(true)
     win.showInactive()
+    win.setContentProtection(true)
+    forceWindowsExcludeFromCapture(win)
   })
   win.setMenu(null)
   // relativeLevel:1 keeps the border above the annotation overlay on macOS.
   win.setAlwaysOnTop(true, 'screen-saver', 1)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   win.setIgnoreMouseEvents(true, { forward: false })
-  // Exclude from screen capture — the red border is a UI annotation, not
-  // something we want baked into the output frames.
   win.setContentProtection(true)
   loadRoute(win, '/recording-border')
   win.on('closed', () => { recordingBorder = null })

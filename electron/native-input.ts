@@ -39,6 +39,7 @@ let _GetWindowLongW: (hwnd: any, index: number) => number
 let _EnumWindows: (callback: any, lParam: any) => boolean
 let _DwmGetWindowAttribute: (hwnd: any, attr: number, pvAttribute: any, cbAttribute: number) => number
 let _SetThreadDpiAwarenessContext: (ctx: any) => any
+let _SetWindowDisplayAffinity: (hwnd: any, affinity: number) => boolean
 const DPI_AWARENESS_CONTEXT_SYSTEM_AWARE = -2       // passed as negative intptr_t handle
 const DPI_AWARENESS_CONTEXT_PER_MONITOR_V2 = -4
 
@@ -75,6 +76,7 @@ function ensureLoaded(): boolean {
     try {
       _SetThreadDpiAwarenessContext = user32.func('intptr_t __stdcall SetThreadDpiAwarenessContext(intptr_t dpiContext)')
     } catch { /* older Windows: leave undefined, caller falls back to raw rect */ }
+    _SetWindowDisplayAffinity = user32.func('bool __stdcall SetWindowDisplayAffinity(intptr_t hWnd, uint32_t dwAffinity)')
 
     const dwmapi = koffi.load('dwmapi.dll')
     _DwmGetWindowAttribute = dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ RECT *pvAttribute, uint32_t cbAttribute)')
@@ -310,5 +312,26 @@ export function scrollToTopNative(cx: number, cy: number): void {
   const hwnd = windowFromPoint(cx, cy)
   if (hwnd) {
     sendMessage(hwnd, WM_VSCROLL, SB_TOP, 0)
+  }
+}
+
+/** Direct Win32 SetWindowDisplayAffinity(HWND, WDA_EXCLUDEFROMCAPTURE).
+ *  Bypasses Electron's setContentProtection wrapper, which has known
+ *  reliability issues applying display affinity to layered (transparent +
+ *  frame:false) windows on Windows — WGC capture sessions keep showing the
+ *  window even after setContentProtection(true) returns. Calling the Win32
+ *  API directly on the realised HWND forces the OS-level exclusion.
+ *  Requires Windows 10 build 19041 (2004) or newer for WDA_EXCLUDEFROMCAPTURE. */
+export function forceWindowsExcludeFromCapture(win: { isDestroyed(): boolean; getNativeWindowHandle(): Buffer }) {
+  if (process.platform !== 'win32') return
+  if (!ensureLoaded()) return
+  if (win.isDestroyed()) return
+  try {
+    const WDA_EXCLUDEFROMCAPTURE = 0x11
+    const buf = win.getNativeWindowHandle()
+    const hwnd = buf.length >= 8 ? buf.readBigInt64LE(0) : BigInt(buf.readInt32LE(0))
+    _SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE)
+  } catch (err) {
+    console.warn('[native-input] SetWindowDisplayAffinity failed', err)
   }
 }
