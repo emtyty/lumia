@@ -23,6 +23,18 @@ const VIDEO_QUALITY_FACTOR = 0.25
 const VIDEO_BITRATE_CAP = 50_000_000
 const VIDEO_BITRATE_FLOOR = 4_000_000
 const AUDIO_BITRATE = 192_000
+// Region/window crops smaller than this (long-side, physical px) get
+// uniformly upscaled to this baseline at draw time. Two reasons:
+//   1. Players viewing the recording at full-screen or in the editor pane
+//      would otherwise have to upscale a small video in real time, and
+//      browser bilinear is visibly soft. Doing the upscale once at encode
+//      time with high-quality canvas smoothing keeps subsequent playback
+//      a pure downscale (which always looks crisper than upscale).
+//   2. The encoder gets more pixels to spread bits over — at 0.25 bpp,
+//      a 600×450 region was hitting the 4 Mbps floor; the same content
+//      at 1280×960 lands at ~18 Mbps, so text strokes survive intact.
+// Trade-off: small-region recordings now produce noticeably bigger files.
+const MIN_OUTPUT_LONG_SIDE = 1280
 
 function pickMimeType(): string {
   const candidates = [
@@ -360,12 +372,30 @@ function buildOutputStream(
   // Output canvas dims: explicit outputSize for region/window crops, full
   // physical desktop dims for screen mode.
   const isCrop = (target.kind === 'region' || target.kind === 'window') && target.rect != null && target.outputSize != null
-  const outW = isCrop
+  let outW = isCrop
     ? target.outputSize!.width
     : Math.max(1, Math.round(target.displayDipSize.width  * target.displayScaleFactor))
-  const outH = isCrop
+  let outH = isCrop
     ? target.outputSize!.height
     : Math.max(1, Math.round(target.displayDipSize.height * target.displayScaleFactor))
+
+  // Small region/window crops get upscaled uniformly so the encoder has more
+  // pixels to work with and downstream players don't have to stretch a tiny
+  // video at playback. Screen mode is left alone — it's already at native
+  // physical resolution, and bumping a 4K screen further is pure waste.
+  if (isCrop) {
+    const longest = Math.max(outW, outH)
+    if (longest < MIN_OUTPUT_LONG_SIDE) {
+      const k = MIN_OUTPUT_LONG_SIDE / longest
+      outW = Math.round(outW * k)
+      outH = Math.round(outH * k)
+    }
+    // VP9 prefers even dimensions for its 4×4 transform blocks; odd dims work
+    // but some macroblocks pad and the edge column ends up softer.
+    if (outW % 2) outW += 1
+    if (outH % 2) outH += 1
+  }
+
   canvas.width = outW
   canvas.height = outH
 
@@ -375,6 +405,11 @@ function buildOutputStream(
   video.play().catch(() => { /* autoplay policy — muted is allowed */ })
 
   const ctx = canvas.getContext('2d', { alpha: false })!
+  // Default smoothing quality is 'low' (bilinear) — the upscale step above
+  // would visibly soften UI text. 'high' is bicubic-class on Chromium and
+  // is what we want when drawImage stretches the source.
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
 
   // Pre-compute watermark placement off the output canvas dims, not the
   // source stream — the logo follows the recorded frame even if the stream
