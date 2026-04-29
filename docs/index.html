@@ -879,16 +879,47 @@ footer a { color: var(--primary); text-decoration: none; }
     el.style.display = 'none';
   });
 
-  // Detect CPU architecture. userAgentData is async but most accurate.
-  // Falls back to x64 — arm64 users on x64 build still works via Rosetta/emulation.
+  // Detect CPU architecture. userAgentData is the most reliable signal (Chrome/Edge),
+  // but Safari/Firefox don't expose it, and macOS browsers spoof "Intel Mac OS X" in
+  // the UA string even on Apple Silicon. The WebGL renderer reliably reports "Apple GPU"
+  // on M-series Macs, so we use it as a Mac-specific tiebreaker.
+  function detectMacArchViaWebGL() {
+    try {
+      var canvas = document.createElement('canvas');
+      var gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+      if (!gl) return null;
+      var dbg = gl.getExtension('WEBGL_debug_renderer_info');
+      var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+      if (!renderer) return null;
+      // Apple Silicon: "Apple GPU", "Apple M1", "Apple M2 Pro", ...
+      // Intel Mac:     "Intel Iris ...", "AMD Radeon ...", "ATI ..."
+      if (/Apple/i.test(renderer)) return 'arm64';
+      return 'x64';
+    } catch (e) { return null; }
+  }
+
   function detectArch() {
     if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) {
       return navigator.userAgentData
         .getHighEntropyValues(['architecture'])
-        .then(function(hi) { return hi.architecture === 'arm' ? 'arm64' : 'x64'; })
-        .catch(function() { return 'x64'; });
+        .then(function(hi) {
+          if (hi.architecture === 'arm') return 'arm64';
+          // On macOS, Chrome may report 'x86' even on Apple Silicon when running under
+          // Rosetta. Cross-check with the WebGL renderer.
+          if (isMac) {
+            var gl = detectMacArchViaWebGL();
+            if (gl) return gl;
+          }
+          return 'x64';
+        })
+        .catch(function() { return isMac ? (detectMacArchViaWebGL() || 'x64') : 'x64'; });
     }
-    // Heuristic fallback for browsers without userAgentData
+    // No userAgentData (Safari, Firefox). UA spoofs "Intel" on Apple Silicon, so we
+    // can't trust it on Mac — use WebGL.
+    if (isMac) {
+      var gl = detectMacArchViaWebGL();
+      if (gl) return Promise.resolve(gl);
+    }
     if (/arm|aarch64/i.test(ua)) return Promise.resolve('arm64');
     return Promise.resolve('x64');
   }
