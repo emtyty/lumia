@@ -310,12 +310,23 @@ export default function Editor() {
         if (res && !res.canceled && res.savedPath) showToast('Recording saved', 'check_circle')
       } else if (btn.destinationIndex !== undefined) {
         const dest = activeTemplate?.destinations[btn.destinationIndex]
+        // When the recording came in through history (the normal path — every
+        // capture lands there), route uploads via history:share* so main
+        // dedupes against existing uploads, persists the result onto the
+        // history item, and a second click copies the cached URL instead of
+        // re-uploading the file. videoUpload* by-passes history entirely and
+        // would re-upload on every click, leaving the history Synced badge
+        // off too.
         if (dest?.type === 'r2') {
-          const res = await window.electronAPI?.videoUploadR2?.(videoFilePath)
+          const res = historyId
+            ? await window.electronAPI?.shareHistoryR2(historyId)
+            : await window.electronAPI?.videoUploadR2?.(videoFilePath)
           if (res?.success && res.url) showToast('Uploaded — link copied', 'check_circle')
           else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
         } else if (dest?.type === 'google-drive') {
-          const res = await window.electronAPI?.videoUploadGoogleDrive?.(videoFilePath)
+          const res = historyId
+            ? await window.electronAPI?.shareHistoryGoogleDrive(historyId)
+            : await window.electronAPI?.videoUploadGoogleDrive?.(videoFilePath)
           if (res?.success && res.url) showToast('Uploaded to Drive — link copied', 'check_circle')
           else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
         }
@@ -325,7 +336,7 @@ export default function Editor() {
     } finally {
       setActionBusy(null)
     }
-  }, [videoFilePath, activeTemplate, showToast])
+  }, [videoFilePath, activeTemplate, showToast, historyId])
 
   // Debounce timer for auto-saving annotation JSON as the user draws. Full
   // saves (with the flattened PNG sidecar + fresh thumbnail) happen on every
