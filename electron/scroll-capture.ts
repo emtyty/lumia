@@ -1393,7 +1393,8 @@ export function setupScrollCapture(
   mainWindow: BrowserWindow,
   createOverlayWindows: () => void,
   closeAllOverlays: () => void,
-  getOverlayDisplayId: () => number | null
+  getOverlayDisplayId: () => number | null,
+  restoreFromOverlayCancel: () => void,
 ) {
   let cancelled = false
   let captureOpts: {
@@ -1470,10 +1471,7 @@ export function setupScrollCapture(
     resetOverlayMode()
     closeAllOverlays()
     cancelled = true
-    if (!mainWindow.isDestroyed()) {
-      mainWindow.show()
-      mainWindow.focus()
-    }
+    restoreFromOverlayCancel()
   })
 
   ipcMain.handle('scroll-capture:cancel', () => {

@@ -118,6 +118,46 @@ export default function Editor() {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const videoSrc = useLocalVideoUrl(isVideo ? videoFilePath : '')
 
+  // Render the video at its actual encoded size, clamped to fit the editor
+  // pane. This avoids the browser stretching a small recording (e.g. a
+  // 600×450 region) to fill the canvas area, which makes UI text in the
+  // recording look soft. ResizeObserver keeps the clamp accurate across
+  // window resizes; videoNaturalSize is reset on every src change.
+  const videoContainerRef = useRef<HTMLDivElement | null>(null)
+  const [videoContainerSize, setVideoContainerSize] = useState<{ w: number; h: number } | null>(null)
+  const [videoNaturalSize, setVideoNaturalSize] = useState<{ w: number; h: number } | null>(null)
+  useEffect(() => { setVideoNaturalSize(null) }, [videoSrc])
+  useEffect(() => {
+    const el = videoContainerRef.current
+    if (!el) return
+    const ro = new ResizeObserver(entries => {
+      const e = entries[0]
+      if (e) setVideoContainerSize({ w: e.contentRect.width, h: e.contentRect.height })
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [isVideo, videoSrc])
+  const videoDisplaySize = useMemo(() => {
+    if (!videoNaturalSize || !videoContainerSize) return null
+    // Never upscale beyond the encoded resolution — that's the whole point.
+    const k = Math.min(
+      1,
+      videoContainerSize.w / videoNaturalSize.w,
+      videoContainerSize.h / videoNaturalSize.h,
+    )
+    return {
+      width: Math.round(videoNaturalSize.w * k),
+      height: Math.round(videoNaturalSize.h * k),
+    }
+  }, [videoNaturalSize, videoContainerSize])
+  const onVideoMeta = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+    fixWebmDuration(e)
+    const v = e.currentTarget
+    if (v.videoWidth > 0 && v.videoHeight > 0) {
+      setVideoNaturalSize({ w: v.videoWidth, h: v.videoHeight })
+    }
+  }
+
   const resetForNewImage = useCallback((dataUrl: string) => {
     // No canvasRef.current?.clear() here — the Canvas is keyed on
     // `imageDataUrl` so it remounts (with fresh history) whenever the image
@@ -270,12 +310,23 @@ export default function Editor() {
         if (res && !res.canceled && res.savedPath) showToast('Recording saved', 'check_circle')
       } else if (btn.destinationIndex !== undefined) {
         const dest = activeTemplate?.destinations[btn.destinationIndex]
+        // When the recording came in through history (the normal path — every
+        // capture lands there), route uploads via history:share* so main
+        // dedupes against existing uploads, persists the result onto the
+        // history item, and a second click copies the cached URL instead of
+        // re-uploading the file. videoUpload* by-passes history entirely and
+        // would re-upload on every click, leaving the history Synced badge
+        // off too.
         if (dest?.type === 'r2') {
-          const res = await window.electronAPI?.videoUploadR2?.(videoFilePath)
+          const res = historyId
+            ? await window.electronAPI?.shareHistoryR2(historyId)
+            : await window.electronAPI?.videoUploadR2?.(videoFilePath)
           if (res?.success && res.url) showToast('Uploaded — link copied', 'check_circle')
           else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
         } else if (dest?.type === 'google-drive') {
-          const res = await window.electronAPI?.videoUploadGoogleDrive?.(videoFilePath)
+          const res = historyId
+            ? await window.electronAPI?.shareHistoryGoogleDrive(historyId)
+            : await window.electronAPI?.videoUploadGoogleDrive?.(videoFilePath)
           if (res?.success && res.url) showToast('Uploaded to Drive — link copied', 'check_circle')
           else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
         }
@@ -285,7 +336,7 @@ export default function Editor() {
     } finally {
       setActionBusy(null)
     }
-  }, [videoFilePath, activeTemplate, showToast])
+  }, [videoFilePath, activeTemplate, showToast, historyId])
 
   // Debounce timer for auto-saving annotation JSON as the user draws. Full
   // saves (with the flattened PNG sidecar + fresh thumbnail) happen on every
@@ -616,16 +667,24 @@ export default function Editor() {
              *  this build; showing a live video through Konva is overkill when
              *  we're not drawing on it. Native controls give smooth playback. */
             videoSrc ? (
-              <video
-                ref={el => { videoRef.current = el }}
-                src={videoSrc}
-                controls
-                playsInline
-                preload="auto"
-                onLoadedMetadata={fixWebmDuration}
-                className="w-full h-full object-contain"
-                style={{ maxHeight: '100%' }}
-              />
+              <div
+                ref={videoContainerRef}
+                className="absolute inset-0 flex items-center justify-center"
+              >
+                <video
+                  ref={el => { videoRef.current = el }}
+                  src={videoSrc}
+                  controls
+                  playsInline
+                  preload="auto"
+                  onLoadedMetadata={onVideoMeta}
+                  style={
+                    videoDisplaySize
+                      ? { width: videoDisplaySize.width, height: videoDisplaySize.height }
+                      : { maxWidth: '100%', maxHeight: '100%' }
+                  }
+                />
+              </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center gap-3 text-slate-500">
                 <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />

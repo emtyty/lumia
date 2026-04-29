@@ -24,6 +24,7 @@ import { showNotification } from './notify'
 import type { HistoryItem } from './types'
 import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
 import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
+import { setSnippingHijack } from './printscreen-key'
 import { preflightPermissions } from './permissions'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log'
@@ -65,6 +66,17 @@ let overlayPollTimer: ReturnType<typeof setInterval> | null = null
 let overlayDrawingInProgress = false
 let currentRoute = '/dashboard'
 let isQuitting = false
+// Tracks whether the user has explicitly dismissed the main window (red X
+// close, Cmd+Q, dock right-click → Quit, or login-item startup). Set to false
+// once the window is surfaced again. Used by overlay cancel handlers to
+// decide whether to bring the main window back (not dismissed → restore) or
+// stay in tray-only state (dismissed → keep hidden, drop dock icon).
+//
+// Why a tracked flag instead of `mainWindow.isVisible()`: capture flow hides
+// the main window before opening the overlay, so by the time the overlay
+// runs `isVisible()` always reads false. The flag captures user *intent*,
+// which survives transient hides for capture / Cmd+H.
+let mainDismissedByUser = false
 // Set by the autoUpdater 'update-downloaded' handler. Allows the install to
 // happen the moment the user drops the app to the tray instead of waiting
 // for an explicit Quit / next launch.
@@ -108,15 +120,22 @@ function cancelAutoInstall() {
   autoInstallTimer = null
 }
 
-/** Track the dock icon to the main window's visibility on macOS: hidden when
- *  the window is closed to tray, visible when the window is open. Without
- *  this, the dock shortcut sticks around pointing at "nothing", and reopening
- *  via the tray leaves a stale dock icon behind. No-op on Windows/Linux. */
-function syncDockVisibility() {
+/** Hide the dock icon — called only when the user explicitly closes the
+ *  main window to the tray (red X) or when the app launches hidden via the
+ *  login item. Hiding the dock flips macOS into Accessory activation
+ *  policy, which prevents app.focus() from stealing focus reliably; we
+ *  must NOT do it for transient hides (capture flow, Cmd+H, etc.) or the
+ *  overlay won't receive mouse / keyboard input. */
+function hideDock() {
   if (process.platform !== 'darwin') return
-  const visible = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
-  if (visible) app.dock?.show().catch(() => { /* ignore */ })
-  else app.dock?.hide()
+  app.dock?.hide()
+}
+
+/** Show the dock icon — called when the main window surfaces from tray.
+ *  Idempotent (already visible → no-op). Returns app to Regular policy. */
+function showDock() {
+  if (process.platform !== 'darwin') return
+  app.dock?.show().catch(() => { /* ignore */ })
 }
 
 export function getMainWindow() { return mainWindow }
@@ -130,6 +149,43 @@ export function getOverlayDisplayId() { return activeOverlayDisplayId }
 export function broadcastToOverlays(channel: string, ...args: unknown[]) {
   for (const [, win] of overlayWindows) {
     if (!win.isDestroyed()) win.webContents.send(channel, ...args)
+  }
+}
+
+/** Wait for the renderer to confirm a given route has mounted, with a
+ *  fallback timeout so a renderer crash / dropped IPC can't deadlock the
+ *  main process. Used to gate win.show() on capture-success flows so the
+ *  window doesn't flash the previous route before /editor renders. */
+export function waitForViewMounted(route: string, timeoutMs = 800): Promise<void> {
+  return new Promise(resolve => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      ipcMain.removeListener('view:mounted', listener)
+      clearTimeout(timer)
+      resolve()
+    }
+    const listener = (_e: Electron.IpcMainEvent, mountedRoute: string) => {
+      if (mountedRoute === route) finish()
+    }
+    ipcMain.on('view:mounted', listener)
+    const timer = setTimeout(finish, timeoutMs)
+  })
+}
+
+/** Restore window/dock state after the user cancels an overlay session
+ *  (ESC, click outside, etc.). If the user hadn't dismissed the main
+ *  window (it was open when they triggered capture), bring it back to
+ *  the front. If they had (capture invoked from tray-only state via
+ *  hotkey or tray menu), keep the main window hidden and drop the dock
+ *  icon to return to the prior tray-only state. */
+export function restoreFromOverlayCancel() {
+  if (mainDismissedByUser) {
+    hideDock()
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
   }
 }
 
@@ -229,13 +285,19 @@ function createMainWindow(startHidden = false): BrowserWindow {
       win.webContents.send('navigate', '/dashboard')
       return
     }
+    // Explicit user close → hide window to tray AND drop the dock icon.
+    // This is the only path that should put the app into Accessory mode;
+    // transient hides (capture flow, Cmd+H) intentionally leave the dock
+    // alone so app activation keeps working for the overlay.
+    mainDismissedByUser = true
+    hideDock()
     win.hide()
   })
 
   // After the window goes to the tray, schedule install of any pending update.
   // Cancelled if the user surfaces the window again within the grace window.
-  win.on('hide', () => { scheduleAutoInstall(); syncDockVisibility() })
-  win.on('show', () => { cancelAutoInstall(); syncDockVisibility() })
+  win.on('hide', () => { scheduleAutoInstall() })
+  win.on('show', () => { mainDismissedByUser = false; cancelAutoInstall(); showDock() })
 
   win.on('closed', () => { mainWindow = null })
   return win
@@ -333,6 +395,12 @@ export function createOverlayWindows(): Map<number, BrowserWindow> {
   // Lazy fallback: caller might invoke this before whenReady has finished
   // wiring up the pool (e.g. tests, or display-added racing with first capture).
   if (!overlayPoolReady) setupOverlayPool()
+
+  // macOS: ensure the dock icon is visible — app is being used regardless of
+  // how the capture was invoked. If we were in Accessory mode (user closed
+  // main to tray, then triggered capture via hotkey / tray menu), this flips
+  // back to Regular activation policy so the overlay can take focus.
+  showDock()
 
   const allDisplays = screen.getAllDisplays()
   const cursorPoint = screen.getCursorScreenPoint()
@@ -483,21 +551,31 @@ app.whenReady().then(async () => {
   const startHidden = wasLaunchedAtStartup()
   mainWindow = createMainWindow(startHidden)
 
-  // macOS: dock icon tracks main-window visibility (see syncDockVisibility).
-  // For a normal launch the window is visible → dock visible. For login-item
-  // startup (startHidden) the window is hidden → dock hidden too, so the
-  // user only sees Lumia in the menubar tray as expected.
-  syncDockVisibility()
+  // macOS: normal launches leave the dock visible (default). Login-item
+  // startups boot straight to the tray, so drop the dock icon explicitly —
+  // user only sees Lumia in the menubar as expected. The startHidden state
+  // is the same end state as a user-dismissed window, so seed the dismiss
+  // flag accordingly — first capture-then-cancel returns to tray.
+  if (startHidden) {
+    mainDismissedByUser = true
+    hideDock()
+  }
 
   // Keep the OS login-item entry in sync with the stored preference on every
   // launch (covers app moves, reinstalls, and settings changed while offline).
   applyLaunchAtStartup(getSettings().launchAtStartup)
 
+  // Mirror the PrintScreen-as-capture preference into Windows's registry on
+  // every launch. The toggle being on means: snipping hijack must be off so
+  // PrtSc reaches our globalShortcut. fire-and-forget; warnings are surfaced
+  // only via the IPC return when the user explicitly toggles in Settings.
+  void setSnippingHijack(!getSettings().printScreenAsCapture)
+
   setupCapture()
   setupVideo()
   setupHotkeys()
   setupTray()
-  setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
+  setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId, restoreFromOverlayCancel)
 
   // Pre-warm the overlay pool: one hidden BrowserWindow per display, with
   // the renderer already loaded. The first capture after boot drops from
@@ -992,6 +1070,25 @@ app.whenReady().then(async () => {
     setSetting(key, value as AppSettings[typeof key])
     if (key === 'launchAtStartup') applyLaunchAtStartup(value as boolean)
     if (key === 'historyRetentionDays') runHistoryPrune()
+  })
+
+  // Dedicated IPC for the PrintScreen toggle: it has two side-effects (rebind
+  // the global shortcut, write a Windows registry value) and the registry op
+  // can fail in a way the renderer needs to surface as a warning, so we don't
+  // route it through the generic settings:set channel. Returns
+  // `{ warning?: string }` — a present `warning` means "the setting was
+  // saved + shortcut updated, but registry write failed; Snipping Tool may
+  // still eat PrtSc on Windows".
+  ipcMain.handle('printscreen:set-enabled', async (_e, enabled: boolean) => {
+    setSetting('printScreenAsCapture', enabled)
+    // Manually toggling the setting also counts as "we asked, user answered"
+    // so the first-run prompt doesn't pop up later and confuse the user.
+    setSetting('printScreenPromptShown', true)
+    // Tear down + rebuild the hotkey table so setupHotkeys() picks up the
+    // new setting and (un)registers the PrtSc binding accordingly.
+    teardownHotkeys()
+    setupHotkeys()
+    return setSnippingHijack(!enabled)
   })
 
   // IPC: OCR & Auto-Blur
@@ -1669,10 +1766,13 @@ app.on('before-quit', (e) => {
   // / app:quit IPC), `isQuitting` is already true and we let it through.
   if (isQuitting) return
   // Otherwise this is Cmd+Q / dock right-click → Quit on macOS, or the
-  // taskbar Close on Windows. Treat it as "hide to tray" — the user can
-  // fully exit via the tray menu's Quit item. Mirrors how WhatsApp and
-  // similar tray-resident apps behave.
+  // taskbar Close on Windows. Treat it as "hide to tray" — same end state
+  // as the red X close button: window hidden + dock icon dropped. The user
+  // can still fully exit via the tray menu's Quit item. Mirrors WhatsApp /
+  // similar tray-resident apps.
   e.preventDefault()
+  mainDismissedByUser = true
+  hideDock()
   mainWindow?.hide()
 })
 

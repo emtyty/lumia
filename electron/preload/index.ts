@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+  setPrintScreenAsCapture: (enabled: boolean) =>
+    ipcRenderer.invoke('printscreen:set-enabled', enabled),
 
   // Google Drive
   gdriveStartAuth: () => ipcRenderer.invoke('gdrive:startAuth'),
@@ -80,6 +82,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Navigation (tell main which view to show in the same window)
   navigate: (route: string) => ipcRenderer.invoke('navigate', route),
+
+  // Renderer signals that a route has just mounted. Main uses this to wait
+  // out the IPC + React-render delay before win.show(), otherwise the user
+  // sees a flash of the previous route while the window comes up.
+  notifyViewMounted: (route: string) => ipcRenderer.send('view:mounted', route),
 
   // Events from main → renderer
   onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => {
@@ -157,6 +164,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Video recording — RecorderHost & Toolbar
   recorderGetTarget: () => ipcRenderer.invoke('recorder:get-target'),
+  recorderGetWatermark: () => ipcRenderer.invoke('recorder:get-watermark'),
   recorderReady: (ok: boolean, error?: string) => ipcRenderer.invoke('recorder:ready', ok, error),
   recorderStateChange: (state: string, payload?: unknown) =>
     ipcRenderer.invoke('recorder:state', state, payload),

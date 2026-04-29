@@ -23,6 +23,18 @@ const VIDEO_QUALITY_FACTOR = 0.25
 const VIDEO_BITRATE_CAP = 50_000_000
 const VIDEO_BITRATE_FLOOR = 4_000_000
 const AUDIO_BITRATE = 192_000
+// Region/window crops smaller than this (long-side, physical px) get
+// uniformly upscaled to this baseline at draw time. Two reasons:
+//   1. Players viewing the recording at full-screen or in the editor pane
+//      would otherwise have to upscale a small video in real time, and
+//      browser bilinear is visibly soft. Doing the upscale once at encode
+//      time with high-quality canvas smoothing keeps subsequent playback
+//      a pure downscale (which always looks crisper than upscale).
+//   2. The encoder gets more pixels to spread bits over — at 0.25 bpp,
+//      a 600×450 region was hitting the 4 Mbps floor; the same content
+//      at 1280×960 lands at ~18 Mbps, so text strokes survive intact.
+// Trade-off: small-region recordings now produce noticeably bigger files.
+const MIN_OUTPUT_LONG_SIDE = 1280
 
 function pickMimeType(): string {
   const candidates = [
@@ -56,7 +68,10 @@ export default function RecorderHost() {
 
   const videoElRef       = useRef<HTMLVideoElement | null>(null)
   const canvasElRef      = useRef<HTMLCanvasElement | null>(null)
-  const drawLoopRef      = useRef<number | null>(null)
+  // Stop callback for the canvas draw loop. Stores a closure rather than a
+  // bare handle so the same cleanup path works whether the loop runs on
+  // requestVideoFrameCallback (preferred) or requestAnimationFrame (fallback).
+  const drawLoopRef      = useRef<(() => void) | null>(null)
 
   // Timing
   const runStartRef      = useRef<number>(0)
@@ -118,23 +133,28 @@ export default function RecorderHost() {
           check()
         })
 
-        // Build the output stream that MediaRecorder will consume.
-        // - Region/window: pipe through a <canvas> so we only record the crop.
-        // - Screen: pass the desktop stream through directly.
-        let outStream: MediaStream
-        if ((target.kind === 'region' || target.kind === 'window') && target.rect && target.outputSize) {
-          outStream = buildCroppedStream(
-            desktopStream,
-            target.rect,
-            target.displayDipSize,
-            target.outputSize,
-            videoElRef,
-            canvasElRef,
-            drawLoopRef,
-          )
-        } else {
-          outStream = desktopStream
+        // Decode the watermark logo once. Failure here is non-fatal — the
+        // recording still proceeds, just without the corner stamp.
+        let logoImg: HTMLImageElement | null = null
+        try {
+          const logoDataUrl = await window.electronAPI?.recorderGetWatermark?.()
+          if (logoDataUrl) logoImg = await loadImage(logoDataUrl)
+        } catch {
+          logoImg = null
         }
+        if (!mounted) return
+
+        // Always pipe through a <canvas> so the watermark can be composited
+        // onto every recorded frame (region/window already needed canvas for
+        // cropping; screen mode now does too for parity).
+        const outStream = buildOutputStream(
+          desktopStream,
+          target,
+          logoImg,
+          videoElRef,
+          canvasElRef,
+          drawLoopRef,
+        )
         outStreamRef.current = outStream
 
         // Try to pre-acquire mic so the toggle is instant (muted by default).
@@ -263,8 +283,8 @@ export default function RecorderHost() {
   }, [])
 
   function teardownStreams() {
-    if (drawLoopRef.current != null) {
-      cancelAnimationFrame(drawLoopRef.current)
+    if (drawLoopRef.current) {
+      drawLoopRef.current()
       drawLoopRef.current = null
     }
     try { desktopStreamRef.current?.getTracks().forEach(t => t.stop()) } catch { /* ignore */ }
@@ -314,26 +334,70 @@ export default function RecorderHost() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/** Pipe the desktop stream through a <video> + <canvas> so the recorded
- *  output only contains the DIP rect the user selected in the overlay.
+// Watermark constants. Mirror electron/watermark.ts so the corner stamp on
+// recorded frames matches the one applied to still images.
+const WATERMARK_SIZE_PCT = 0.025
+const WATERMARK_OPACITY = 0.2
+const WATERMARK_MARGIN_PCT = 0.15
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image load failed'))
+    img.src = src
+  })
+}
+
+/** Pipe the desktop stream through a <video> + <canvas> so MediaRecorder
+ *  consumes a stream we control. Region/window crops via srcRect; screen
+ *  mode draws the full frame. Either way the watermark logo is composited
+ *  in the bottom-left every frame, matching the still-image stamp.
  *
  *  The DIP→stream-pixel scale is derived from actual frame dims at draw
- *  time (same pattern as image region capture). The stream is pinned to
- *  the display's physical resolution upstream via getUserMedia min=max
- *  constraints, so sx and sy should match the display's scale factor. */
-function buildCroppedStream(
+ *  time. The desktop stream is pinned to the display's physical resolution
+ *  upstream via getUserMedia min=max constraints, so sx and sy should
+ *  match the display's scale factor. */
+function buildOutputStream(
   desktopStream: MediaStream,
-  rectDip: { x: number; y: number; width: number; height: number },
-  displayDipSize: { width: number; height: number },
-  outputSize: { width: number; height: number },
+  target: RecordingTarget,
+  logoImg: HTMLImageElement | null,
   videoRef: React.MutableRefObject<HTMLVideoElement | null>,
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
-  loopRef: React.MutableRefObject<number | null>,
+  loopRef: React.MutableRefObject<(() => void) | null>,
 ): MediaStream {
   const video = videoRef.current!
   const canvas = canvasRef.current!
-  canvas.width = outputSize.width
-  canvas.height = outputSize.height
+
+  // Output canvas dims: explicit outputSize for region/window crops, full
+  // physical desktop dims for screen mode.
+  const isCrop = (target.kind === 'region' || target.kind === 'window') && target.rect != null && target.outputSize != null
+  let outW = isCrop
+    ? target.outputSize!.width
+    : Math.max(1, Math.round(target.displayDipSize.width  * target.displayScaleFactor))
+  let outH = isCrop
+    ? target.outputSize!.height
+    : Math.max(1, Math.round(target.displayDipSize.height * target.displayScaleFactor))
+
+  // Small region/window crops get upscaled uniformly so the encoder has more
+  // pixels to work with and downstream players don't have to stretch a tiny
+  // video at playback. Screen mode is left alone — it's already at native
+  // physical resolution, and bumping a 4K screen further is pure waste.
+  if (isCrop) {
+    const longest = Math.max(outW, outH)
+    if (longest < MIN_OUTPUT_LONG_SIDE) {
+      const k = MIN_OUTPUT_LONG_SIDE / longest
+      outW = Math.round(outW * k)
+      outH = Math.round(outH * k)
+    }
+    // VP9 prefers even dimensions for its 4×4 transform blocks; odd dims work
+    // but some macroblocks pad and the edge column ends up softer.
+    if (outW % 2) outW += 1
+    if (outH % 2) outH += 1
+  }
+
+  canvas.width = outW
+  canvas.height = outH
 
   video.srcObject = desktopStream
   video.muted = true
@@ -341,21 +405,74 @@ function buildCroppedStream(
   video.play().catch(() => { /* autoplay policy — muted is allowed */ })
 
   const ctx = canvas.getContext('2d', { alpha: false })!
-  const draw = () => {
+  // Default smoothing quality is 'low' (bilinear) — the upscale step above
+  // would visibly soften UI text. 'high' is bicubic-class on Chromium and
+  // is what we want when drawImage stretches the source.
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+
+  // Pre-compute watermark placement off the output canvas dims, not the
+  // source stream — the logo follows the recorded frame even if the stream
+  // is larger (region crop) or matches it (screen).
+  const logoW = Math.max(12, Math.round(Math.min(outW, outH) * WATERMARK_SIZE_PCT))
+  const logoAspect = logoImg ? logoImg.naturalHeight / logoImg.naturalWidth : 1
+  const logoH = Math.round(logoW * logoAspect)
+  const logoMargin = Math.max(2, Math.round(logoW * WATERMARK_MARGIN_PCT))
+  const logoX = logoMargin
+  const logoY = outH - logoH - logoMargin
+
+  const drawFrame = () => {
     const vw = video.videoWidth
     const vh = video.videoHeight
-    if (vw > 0 && vh > 0) {
-      const sx = vw / displayDipSize.width
-      const sy = vh / displayDipSize.height
+    if (vw <= 0 || vh <= 0) return
+    if (isCrop) {
+      const rectDip = target.rect!
+      const sx = vw / target.displayDipSize.width
+      const sy = vh / target.displayDipSize.height
       const srcX = Math.max(0, Math.min(vw - 1, Math.round(rectDip.x * sx)))
       const srcY = Math.max(0, Math.min(vh - 1, Math.round(rectDip.y * sy)))
       const srcW = Math.max(1, Math.min(vw - srcX, Math.round(rectDip.width  * sx)))
       const srcH = Math.max(1, Math.min(vh - srcY, Math.round(rectDip.height * sy)))
-      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, outW, outH)
+    } else {
+      ctx.drawImage(video, 0, 0, vw, vh, 0, 0, outW, outH)
     }
-    loopRef.current = requestAnimationFrame(draw)
+    if (logoImg) {
+      ctx.globalAlpha = WATERMARK_OPACITY
+      ctx.drawImage(logoImg, logoX, logoY, logoW, logoH)
+      ctx.globalAlpha = 1
+    }
   }
-  loopRef.current = requestAnimationFrame(draw)
+
+  // Prefer requestVideoFrameCallback so we redraw exactly once per source
+  // frame — no duplicates when the display refreshes faster than the stream,
+  // no missed frames when motion is heavy. rAF, by contrast, is tied to
+  // display vsync, so the source's frame cadence and the draw cadence drift
+  // and the encoder ends up either re-encoding identical frames (wasting
+  // bits) or skipping fresh ones (visible judder).
+  let cancelled = false
+  type RvfcVideo = HTMLVideoElement & {
+    requestVideoFrameCallback?: (cb: () => void) => number
+  }
+  const v = video as RvfcVideo
+  if (typeof v.requestVideoFrameCallback === 'function') {
+    const tick = () => {
+      if (cancelled) return
+      drawFrame()
+      v.requestVideoFrameCallback!(tick)
+    }
+    v.requestVideoFrameCallback(tick)
+    loopRef.current = () => { cancelled = true }
+  } else {
+    let raf = 0
+    const tick = () => {
+      if (cancelled) return
+      drawFrame()
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    loopRef.current = () => { cancelled = true; cancelAnimationFrame(raf) }
+  }
 
   return canvas.captureStream(TARGET_FPS)
 }

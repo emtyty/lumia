@@ -9,7 +9,7 @@ import { join } from 'path'
  * Config:
  *   - Logo sized to 2.5% of the shorter capture dimension.
  *   - Positioned tight against the corner (small fixed margin).
- *   - Drawn at ~10% opacity, multiplied by the logo's own per-pixel
+ *   - Drawn at ~20% opacity, multiplied by the logo's own per-pixel
  *     alpha so antialiased edges stay soft.
  *
  * Implementation: compose directly on the BGRA bitmap buffer returned
@@ -24,7 +24,7 @@ const LOGO_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icons/png/icon.png')
   : join(__dirname, '../../resources/icons/png/icon.png')
 const LOGO_SIZE_PCT = 0.025
-const LOGO_OPACITY = 0.1
+const LOGO_OPACITY = 0.2
 const LOGO_MARGIN_PCT = 0.15 // fraction of logo width, hugs the corner
 
 let cachedLogo: Electron.NativeImage | null = null
@@ -38,6 +38,22 @@ function loadLogo(): Electron.NativeImage | null {
   } catch {
     return null
   }
+}
+
+/** Tunable watermark constants, shared with the video recorder so video
+ *  frames stamp the logo at the same size/opacity/margin as still images. */
+export const WATERMARK_SIZE_PCT = LOGO_SIZE_PCT
+export const WATERMARK_OPACITY = LOGO_OPACITY
+export const WATERMARK_MARGIN_PCT = LOGO_MARGIN_PCT
+
+/** Returns the watermark logo as a PNG data URL, or null if the asset is
+ *  missing. The video recorder ships this string to the headless recorder
+ *  renderer so it can decode the logo into an HTMLImageElement once and
+ *  composite it onto every frame on the canvas pipeline. */
+export function getWatermarkLogoDataUrl(): string | null {
+  const logo = loadLogo()
+  if (!logo) return null
+  return logo.toDataURL()
 }
 
 export function applyWatermark(dataUrl: string): string {

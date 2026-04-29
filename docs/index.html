@@ -89,13 +89,6 @@ nav .nav-inner {
   transition: color 0.25s;
 }
 .nav-links a:hover { color: var(--text); }
-.nav-cta {
-  display: inline-flex; align-items: center; gap: 8px; padding: 10px 24px;
-  background: var(--gradient-cta); border: none; border-radius: 50px; cursor: pointer;
-  font-family: var(--font-headline); font-weight: 700; font-size: 0.9rem; color: #050810;
-  text-decoration: none; transition: transform 0.2s, box-shadow 0.2s;
-}
-.nav-cta:hover { transform: scale(1.04); box-shadow: 0 0 30px rgba(182,160,255,0.3); }
 
 /* ---- Hero ---- */
 .hero {
@@ -487,11 +480,8 @@ footer a { color: var(--primary); text-decoration: none; }
       <li><a href="#features">Features</a></li>
       <li><a href="#workflow">Workflow</a></li>
       <li><a href="#tech">Tech Stack</a></li>
+      <li><a href="#download">Download</a></li>
     </ul>
-    <a href="https://github.com/emtyty/lumia/releases/latest/download/Lumia.dmg" target="_blank" rel="noopener" class="nav-cta" id="nav-cta">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-      <span class="nav-cta-label">Download for macOS</span>
-    </a>
   </div>
 </nav>
 
@@ -945,8 +935,6 @@ footer a { color: var(--primary); text-decoration: none; }
     .finally(function() { applyPlatform(); });
 
   function applyPlatform() {
-    var navLabel    = document.querySelector('.nav-cta-label');
-    var navCta      = document.getElementById('nav-cta');
     var platformKey = isMac ? 'mac' : isWindows ? 'win' : null;
 
     if (!platformKey) {
@@ -961,18 +949,6 @@ footer a { color: var(--primary); text-decoration: none; }
     document.querySelectorAll('[data-platform="' + platformKey + '"]').forEach(function(el) {
       el.style.display = '';
     });
-
-    // Nav CTA points to the architecture most users will want (arm64 on Mac,
-    // x64 on Windows) — both download options are still visible in the hero.
-    if (isMac) {
-      if (navLabel) navLabel.textContent = 'Download for macOS';
-      var defaultMac = document.querySelector('[data-platform="mac"][data-arch="arm64"]');
-      if (navCta && defaultMac) navCta.href = defaultMac.href;
-    } else {
-      if (navLabel) navLabel.textContent = 'Download for Windows';
-      var defaultWin = document.querySelector('[data-platform="win"][data-arch="x64"]');
-      if (navCta && defaultWin) navCta.href = defaultWin.href;
-    }
   }
 })();
 

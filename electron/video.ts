@@ -7,6 +7,8 @@ import {
   closeAllOverlays,
   createOverlayWindows,
   getOverlayDisplayId,
+  restoreFromOverlayCancel,
+  waitForViewMounted,
 } from './index'
 import { ORIGINALS_DIR } from './capture'
 import { uploadToR2 } from './uploaders/r2'
@@ -18,6 +20,7 @@ import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { openAnnotation, closeAnnotation, destroyAnnotation, isAnnotationOpen, setupAnnotation } from './annotation'
 import { forceWindowsExcludeFromCapture } from './native-input'
+import { getWatermarkLogoDataUrl } from './watermark'
 
 const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 const OVERLAY_GONE_DELAY_MS = 120
@@ -513,13 +516,18 @@ export function setupVideo() {
   ipcMain.handle('video:cancel', () => {
     resetOverlayMode()
     closeAllOverlays()
-    showMain()
+    restoreFromOverlayCancel()
   })
 
   // ── RecorderHost ↔ Toolbar forwarding ───────────────────────────────────
 
   // RecorderHost fetches its target on load
   ipcMain.handle('recorder:get-target', () => recordingTarget)
+
+  // Logo dataURL for the watermark composited onto every recorded frame.
+  // Shipped on demand (not bundled in the renderer) because the asset lives
+  // under resources/ and is reachable only from the main process.
+  ipcMain.handle('recorder:get-watermark', () => getWatermarkLogoDataUrl())
 
   // RecorderHost reports readiness (stream acquired or error)
   ipcMain.handle('recorder:ready', (_e, ok: boolean, error?: string) => {
@@ -615,18 +623,21 @@ export function setupVideo() {
       // Open the freshly-saved recording in the video annotator (same pattern
       // as screenshots → /editor). Briefly delay so the toolbar shows "Saved"
       // before the main window steals focus.
-      setTimeout(() => {
+      setTimeout(async () => {
         const main = getMainWindow()
         if (main && !main.isDestroyed()) {
           const { basename } = require('path') as typeof import('path')
-          main.show()
-          main.focus()
+          // Send navigate then wait for the renderer to ack /editor mounted
+          // before showing — same reasoning as the screenshot path.
           main.webContents.send('navigate', '/editor', {
             kind: 'video',
             filePath,
             name: basename(filePath),
             historyId,
           })
+          await waitForViewMounted('/editor')
+          main.show()
+          main.focus()
         }
         closeRecordingSession()
       }, 600)

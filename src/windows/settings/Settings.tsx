@@ -8,6 +8,7 @@ interface AppSettings {
   googleDriveFolderId: string
   launchAtStartup: boolean
   historyRetentionDays: number
+  printScreenAsCapture: boolean
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -17,7 +18,8 @@ const DEFAULT_SETTINGS: AppSettings = {
   googleDriveTokenExpiresAt: 0,
   googleDriveFolderId: '',
   launchAtStartup: true,
-  historyRetentionDays: 0
+  historyRetentionDays: 0,
+  printScreenAsCapture: false
 }
 
 const RETENTION_OPTIONS = [
@@ -41,6 +43,7 @@ export default function Settings() {
   const [gdriveFolderName, setGdriveFolderName] = useState('')
   const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
   const disconnectConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [printScreenWarning, setPrintScreenWarning] = useState<string>('')
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
@@ -55,6 +58,7 @@ export default function Settings() {
         googleDriveFolderId: s.googleDriveFolderId,
         launchAtStartup: s.launchAtStartup,
         historyRetentionDays: s.historyRetentionDays,
+        printScreenAsCapture: s.printScreenAsCapture,
       }
       setSettings(ui)
       originalRef.current = ui
@@ -198,6 +202,16 @@ export default function Settings() {
     await window.electronAPI?.setSetting('launchAtStartup', next)
   }
 
+  const handlePrintScreenAsCaptureChange = async (next: boolean) => {
+    update('printScreenAsCapture', next)
+    originalRef.current = { ...originalRef.current, printScreenAsCapture: next }
+    setPrintScreenWarning('')
+    const res = await window.electronAPI?.setPrintScreenAsCapture?.(next)
+    // Toggle is saved + globalShortcut updated regardless; the warning only
+    // surfaces a *registry* failure (Snipping Tool may keep the keystroke).
+    if (res?.warning) setPrintScreenWarning(res.warning)
+  }
+
   const handleHistoryRetentionChange = async (next: number) => {
     update('historyRetentionDays', next)
     originalRef.current = { ...originalRef.current, historyRetentionDays: next }
@@ -302,6 +316,33 @@ export default function Settings() {
                   />
                 </label>
               )}
+
+              <div className="space-y-1.5">
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-slate-300 block" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                      Use PrintScreen for New Capture
+                    </span>
+                    <p className="text-[11px] text-slate-500">
+                      {platform === 'win32'
+                        ? 'Bind the PrtSc key to "New Capture". Lumia will also disable the Windows "PrintScreen opens Snipping Tool" shortcut so the keypress reaches us. Toggle off to give the key back to Windows.'
+                        : 'Bind the PrintScreen key on an external keyboard to "New Capture". Built-in Mac keyboards don\'t have this key, so the toggle has no effect for them.'}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.printScreenAsCapture}
+                    onChange={e => handlePrintScreenAsCaptureChange(e.target.checked)}
+                    className="w-4 h-4 accent-primary cursor-pointer flex-shrink-0"
+                  />
+                </label>
+                {printScreenWarning && (
+                  <p className="text-[11px] text-amber-400 leading-snug" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                    <span className="material-symbols-outlined text-[12px] align-middle mr-1">warning</span>
+                    {printScreenWarning}
+                  </p>
+                )}
+              </div>
               <div className="flex items-center justify-between gap-3">
                 <div className="space-y-1">
                   <span className="text-xs font-semibold text-slate-300 block" style={{ fontFamily: 'Manrope, sans-serif' }}>

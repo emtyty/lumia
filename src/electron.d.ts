@@ -13,6 +13,8 @@ interface AppSettings {
   lastCaptureKind: 'image' | 'video'
   lastImageMode: 'region' | 'window' | 'all-screen' | 'screen' | 'scrolling'
   lastVideoMode: 'region' | 'window' | 'screen'
+  printScreenAsCapture: boolean
+  printScreenPromptShown: boolean
 }
 
 declare global {
@@ -50,6 +52,7 @@ declare global {
       setHotkeyRecording: (recording: boolean) => Promise<void>
       getSettings: () => Promise<AppSettings>
       setSetting: (key: keyof AppSettings, value: unknown) => Promise<void>
+      setPrintScreenAsCapture: (enabled: boolean) => Promise<{ warning?: string }>
 
       gdriveStartAuth: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>
       gdriveCancelAuth: () => Promise<{ ok: boolean }>
@@ -69,6 +72,7 @@ declare global {
       setTitleBarTheme: (theme: 'dark' | 'light' | 'system') => Promise<void>
       windowReady: () => void
       navigate: (route: string) => void
+      notifyViewMounted: (route: string) => void
       onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => void
       onNavigate: (cb: (route: string, state?: Record<string, unknown>) => void) => void
       onRegionSelected: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => void
@@ -115,6 +119,7 @@ declare global {
         displayScaleFactor: number                                       // pins stream to exact physical dims
         outputSize?: { width: number; height: number }                   // physical-pixel output canvas dims (region/window)
       } | null>
+      recorderGetWatermark: () => Promise<string | null>
       recorderReady: (ok: boolean, error?: string) => Promise<void>
       recorderStateChange: (state: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error', payload?: unknown) => Promise<void>
       recorderTick: (elapsedMs: number) => Promise<void>

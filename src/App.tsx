@@ -6,6 +6,7 @@ import Dashboard from './windows/dashboard/Dashboard'
 import { AboutDialog } from './components/AboutDialog'
 import { ReleaseNotesDialog } from './components/ReleaseNotesDialog'
 import { UpdateNotification } from './components/UpdateNotification'
+import { PrintScreenPromptDialog } from './components/PrintScreenPromptDialog'
 
 // Code-split heavy routes. Konva (~150KB) only loads when Editor opens;
 // each standalone window only pulls its own renderer chunk instead of the
@@ -41,6 +42,16 @@ export default function App() {
     })
     return () => { window.electronAPI?.removeAllListeners('navigate') }
   }, [navigate])
+
+  // Notify main once the new route has actually committed to the DOM. Main
+  // uses this ack to gate win.show() on capture-success flows so the window
+  // doesn't pop up still painting the previous route.
+  useEffect(() => {
+    if (standalone) return
+    requestAnimationFrame(() => {
+      window.electronAPI?.notifyViewMounted?.(location.pathname)
+    })
+  }, [location.pathname, standalone])
 
   // Tell main to show() the BrowserWindow once the renderer has finished its
   // critical initial work — fonts loaded + Dashboard's IPC fetches resolved.
@@ -112,6 +123,7 @@ export default function App() {
       <AboutDialog />
       <ReleaseNotesDialog />
       <UpdateNotification />
+      <PrintScreenPromptDialog />
     </div>
   )
 }

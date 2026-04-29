@@ -314,9 +314,10 @@ export default function Dashboard() {
 
       <div className="px-8 pt-8 space-y-8 flex-shrink-0">
 
-      {/* ── Greeting + Update ── */}
-      <header className="flex items-start justify-between">
-        <div>
+      {/* ── Media kind toggle + Greeting ── */}
+      <header className="flex items-center justify-between gap-4 flex-wrap">
+        <MediaKindToggle value={mediaKind} onChange={selectMediaKind} />
+        <div className="text-right">
           <h1
             className="text-3xl font-extrabold tracking-tight text-white"
             style={{ fontFamily: 'Manrope, sans-serif' }}
@@ -333,11 +334,6 @@ export default function Dashboard() {
 
       {/* ── Capture Actions ── */}
       <section>
-        {/* Media kind toggle */}
-        <div className="flex items-center justify-between mb-4">
-          <MediaKindToggle value={mediaKind} onChange={selectMediaKind} />
-        </div>
-
         {mediaKind === 'image' ? (
           <div className="flex flex-wrap gap-2">
             {CAPTURE_MODES.map(({ mode, icon, label }) => {
