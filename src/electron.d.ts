@@ -132,6 +132,7 @@ declare global {
       toolbarCancel: () => Promise<void>
       toolbarToggleMic: (enabled: boolean) => Promise<void>
       toolbarToggleAnnotation: (enabled: boolean) => Promise<void>
+      toolbarSetInteractive: (interactive: boolean) => void
       onToolbarState: (cb: (state: {
         phase?: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error'
         elapsedMs?: number
@@ -148,7 +149,6 @@ declare global {
       annotationSetStroke: (size: number) => Promise<void>
       annotationClear: () => Promise<void>
       annotationUndo: () => Promise<void>
-      annotationClose: () => Promise<void>
       onAnnotationState: (cb: (state: { tool: string; color: string; strokeWidth: number }) => void) => void
       onAnnotationClear: (cb: () => void) => void
       onAnnotationUndo: (cb: () => void) => void

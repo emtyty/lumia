@@ -171,6 +171,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   toolbarCancel: () => ipcRenderer.invoke('toolbar:cancel'),
   toolbarToggleMic: (enabled: boolean) => ipcRenderer.invoke('toolbar:toggle-mic', enabled),
   toolbarToggleAnnotation: (enabled: boolean) => ipcRenderer.invoke('toolbar:toggle-annotation', enabled),
+  // The recording toolbar window stays at a fixed size with empty
+  // transparent area around the pills. setInteractive(true) tells main to
+  // capture clicks (cursor over a pill); setInteractive(false) tells main
+  // to pass clicks through (cursor over empty area). Renderer hit-tests
+  // mousemove against pill bounds and only sends on transition.
+  toolbarSetInteractive: (interactive: boolean) =>
+    ipcRenderer.send('toolbar:set-interactive', interactive),
   onToolbarState: (cb: (state: unknown) => void) =>
     ipcRenderer.on('toolbar:state', (_e, state) => cb(state as any)),
 
@@ -181,7 +188,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   annotationSetStroke: (size: number) => ipcRenderer.invoke('annotation:set-stroke', size),
   annotationClear: () => ipcRenderer.invoke('annotation:clear'),
   annotationUndo: () => ipcRenderer.invoke('annotation:undo'),
-  annotationClose: () => ipcRenderer.invoke('annotation:close'),
   onAnnotationState: (cb: (state: { tool: string; color: string; strokeWidth: number }) => void) =>
     ipcRenderer.on('annotation:state', (_e, state) => cb(state)),
   onAnnotationClear: (cb: () => void) =>

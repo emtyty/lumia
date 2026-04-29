@@ -1,36 +1,38 @@
 /**
  * Live annotation overlay for the recording session.
  *
- * Two windows:
- *   - overlay: transparent fullscreen on the recording display, hosts a
- *     Konva stage where strokes are drawn. Excluded from screen capture
- *     content protection only when explicitly requested — for the live
- *     annotation use case we WANT it captured (that's the point).
- *   - toolbar: a small floating palette with the tool/color/stroke
- *     pickers + Clear/Undo. Draggable, content-protected so it never
- *     ends up baked into the recording.
+ * One window only: the fullscreen click-capturing overlay that hosts a
+ * Konva stage where strokes are drawn. The tool palette used to live in
+ * its own BrowserWindow but was merged into the recording toolbar (see
+ * src/windows/recording-toolbar/RecordingToolbar.tsx) to eliminate the
+ * z-order race where the recording toolbar's transparent bottom strip
+ * swallowed clicks aimed at the palette's centre.
  *
- * The toolbar is the only thing the user clicks; tool changes flow
- * toolbar → main → overlay. The overlay only renders, never decides.
+ * The overlay is intentionally NOT content-protected — strokes need to
+ * land in the recorded video, that's the whole feature.
  *
  * Lifecycle is tied to the recording session — closing the session
- * (stop / cancel) tears both windows down via closeAnnotation().
+ * (stop / cancel) tears the overlay down via destroyAnnotation().
  */
 
 import { app, BrowserWindow, ipcMain, screen } from 'electron'
 import { join } from 'path'
-import { forceWindowsExcludeFromCapture } from './native-input'
 
 const isDev = !app.isPackaged
 
 let overlayWin: BrowserWindow | null = null
-let toolbarWin: BrowserWindow | null = null
+// Tracks the user-visible "Annotate" toggle. Distinct from "the overlay
+// window exists at all": closeAnnotation flips this to false but keeps the
+// overlay alive so already-drawn strokes stay rendered (and recorded) while
+// the user interacts with the app underneath.
+let annotationActive = false
 
-/** Single source of truth for the live drawing state. Toolbar reads this
- *  on mount so the user's most recent color/stroke survive a toggle off →
- *  on. Tool defaults to 'none' (no draw): the user must explicitly pick a
- *  tool before clicks on the overlay turn into strokes — that keeps the
- *  first click after enabling annotation from being an accidental drag. */
+/** Single source of truth for the live drawing state. The recording-toolbar
+ *  renderer reads this on mount via annotation:get-state so the user's most
+ *  recent color/stroke survive a toggle off → on. Tool defaults to 'none'
+ *  (no draw): the user must explicitly pick a tool before clicks on the
+ *  overlay turn into strokes — that keeps the first click after enabling
+ *  annotation from being an accidental drag. */
 interface AnnotationState {
   tool: 'none' | 'select' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
   color: string
@@ -51,52 +53,6 @@ function loadRoute(win: BrowserWindow, route: string) {
   }
 }
 
-const TOOLBAR_W = 800
-// Tall enough to fit the pill plus the in-DOM hover tooltip directly below
-// it. Native HTML title tooltips can't be used here — Windows renders them
-// as a separate top-level HWND (tooltips_class32) and macOS as a separate
-// NSWindow via NSToolTipManager; neither inherits the palette's content
-// protection, so the tooltip would leak into the recording.
-const TOOLBAR_H = 92
-
-// Visual offsets within each toolbar window. Both pills are anchored to
-// the top of their window with `pt-1.5` (6px) — the rest of the window
-// is empty space reserved for that bar's hover tooltip. Positioning the
-// palette window relative to the recording WINDOW would leave a huge
-// visual gap between the two pills (~50px); we instead position relative
-// to the recording PILL's visual bottom so the two pills sit close
-// together. The two windows physically overlap as a result, which is
-// fine — both are transparent fullscreen layers and tooltip regions
-// briefly overlapping is acceptable.
-const RECORDING_PILL_BOTTOM = 60   // anchor.y + this = visual bottom of recording pill
-const PALETTE_PILL_HEIGHT = 46     // visual height of the palette pill
-const PILL_TOP_INSET = 6           // pt-1.5 inside the palette window
-const VISUAL_GAP = 4               // visual gap between the two pills
-
-/** Position the palette directly under the recording toolbar's pill,
- *  not its window — see comment block above for the offset rationale.
- *  Centred on the toolbar (the palette is wider) and clamped to the
- *  display so it never falls off-screen. */
-function computeToolbarBounds(display: Electron.Display, anchor: { x: number; y: number; width: number; height: number }) {
-  const dx = display.bounds.x
-  const dy = display.bounds.y
-  const dw = display.bounds.width
-  const dh = display.bounds.height
-
-  const cx = anchor.x + anchor.width / 2
-  const x = Math.round(Math.max(dx + 8, Math.min(dx + dw - TOOLBAR_W - 8, cx - TOOLBAR_W / 2)))
-  const below = anchor.y + RECORDING_PILL_BOTTOM + VISUAL_GAP - PILL_TOP_INSET
-  const above = anchor.y - PALETTE_PILL_HEIGHT - VISUAL_GAP
-  // Prefer below; fall back to above if the palette would slide off the
-  // bottom of the display, then clamp to the top edge as a last resort.
-  let y = below + TOOLBAR_H + 8 <= dy + dh
-    ? below
-    : above >= dy + 8
-      ? above
-      : Math.max(dy + 8, dy + dh - TOOLBAR_H - 8)
-  return { x, y, width: TOOLBAR_W, height: TOOLBAR_H }
-}
-
 function createOverlayWindow(display: Electron.Display) {
   const { x, y, width, height } = display.bounds
   const win = new BrowserWindow({
@@ -115,10 +71,10 @@ function createOverlayWindow(display: Electron.Display) {
     // before the transparent body is drawn — causes a visible flash on
     // every "Annotate" toggle. ready-to-show below brings it back.
     show: false,
-    // Non-focusable so the OS doesn't raise the overlay above the toolbar
-    // windows when it briefly takes focus (e.g., during stroke draw, when
+    // Non-focusable so the OS doesn't raise the overlay above the recording
+    // toolbar when it briefly takes focus (e.g., during stroke draw, when
     // creating it). Without this Windows can place the topmost overlay
-    // ahead of the topmost toolbars and swallow clicks meant for buttons.
+    // ahead of the topmost toolbar and swallow clicks meant for buttons.
     focusable: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -138,12 +94,12 @@ function createOverlayWindow(display: Electron.Display) {
   })
   win.setMenu(null)
   // Stay above the recorded app (including fullscreen games / videos) so
-  // strokes paint on top. The recording toolbar, border, and annotation
-  // palette use the same level + relativeLevel:1 so they stack above this
-  // overlay on macOS without any moveTop race. On Windows there are no
-  // levels, so SetWindowPos(HWND_TOPMOST) is still applied via
-  // raiseAboveOverlay below to keep their buttons clickable despite the
-  // overlay being a fullscreen click-capturing window.
+  // strokes paint on top. The recording toolbar and border use the same
+  // level + relativeLevel:1 so they stack above this overlay on macOS
+  // without any moveTop race. On Windows there are no levels, so
+  // SetWindowPos(HWND_TOPMOST) is still applied via raiseAboveOverlay
+  // below to keep the toolbar buttons clickable despite the overlay
+  // being a fullscreen click-capturing window.
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   // Overlay is intentionally NOT content-protected — strokes have to land
@@ -153,81 +109,28 @@ function createOverlayWindow(display: Electron.Display) {
   return win
 }
 
-function createToolbarWindow(display: Electron.Display, anchor: { x: number; y: number; width: number; height: number }) {
-  const bounds = computeToolbarBounds(display, anchor)
-  const win = new BrowserWindow({
-    ...bounds,
-    transparent: true,
-    backgroundColor: '#00000000',
-    frame: false,
-    resizable: false,
-    movable: true,
-    alwaysOnTop: true,
-    skipTaskbar: true,
-    hasShadow: false,
-    // See createOverlayWindow — defer show until the first paint to avoid
-    // the white-flash that bare BrowserWindows have on Windows.
-    show: false,
-    webPreferences: {
-      preload: join(__dirname, '../preload/index.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-      backgroundThrottling: false,
-    },
-  })
-  win.once('ready-to-show', () => {
-    if (win.isDestroyed()) return
-    if (process.platform === 'win32') win.setBounds(bounds)
-    // Re-apply content protection right before the window becomes visible
-    // and again after. The palette is created during an already-running
-    // capture session (user toggles Annotate mid-recording), and Electron's
-    // setContentProtection from the constructor isn't reliable for
-    // transparent + frame:false windows in that case: on Windows, WGC
-    // keeps showing the palette in the captured stream; on macOS the same
-    // class of bug exists with NSWindowSharingNone via SCK. Re-applying
-    // after the HWND/NSWindow is fully realised + visible forces the OS
-    // capture session to honour the exclusion.
-    win.setContentProtection(true)
-    win.showInactive()
-    win.setContentProtection(true)
-    // Belt and braces on Windows: bypass Electron and call
-    // SetWindowDisplayAffinity directly so we know WDA_EXCLUDEFROMCAPTURE
-    // is set on the real HWND. Some Electron builds skip the call when
-    // the window has WS_EX_LAYERED (transparent) + WS_EX_TRANSPARENT.
-    forceWindowsExcludeFromCapture(win)
-  })
-  win.setMenu(null)
-  // relativeLevel:1 puts the palette one step above the annotation overlay
-  // (which uses plain 'screen-saver') so clicks land on the buttons no
-  // matter when each window's ready-to-show fires. This replaces the
-  // earlier moveTop-on-timer hack which was racy when the overlay's
-  // showInactive arrived after the moveTop call.
-  win.setAlwaysOnTop(true, 'screen-saver', 1)
-  win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
-  // Toolbar buttons must NOT show up in the recording.
-  win.setContentProtection(true)
-  loadRoute(win, '/annotation-toolbar')
-  win.on('closed', () => { toolbarWin = null })
-  return win
-}
-
 function sendToOverlay(channel: string, ...args: unknown[]) {
   if (overlayWin && !overlayWin.isDestroyed()) {
     overlayWin.webContents.send(channel, ...args)
   }
 }
 
-function sendToToolbar(channel: string, ...args: unknown[]) {
-  if (toolbarWin && !toolbarWin.isDestroyed()) {
-    toolbarWin.webContents.send(channel, ...args)
+/** Broadcast the current annotation state to every BrowserWindow.
+ *  Both the overlay (which renders strokes with this colour/stroke) and
+ *  the recording toolbar (which renders the palette UI in its second pill
+ *  row) listen for 'annotation:state'. Sending to a window that doesn't
+ *  subscribe is a no-op, so a coarse broadcast keeps the call sites
+ *  simple. */
+function broadcastAnnotationState() {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send('annotation:state', state)
   }
 }
 
-/** True iff the user has the palette open AND the overlay is capturing
- *  clicks for drawing. Distinct from "the overlay window exists at all" —
- *  see hasLiveAnnotations. */
+/** True iff the user has the "Annotate" toggle on. Distinct from "the
+ *  overlay window exists at all" — see hasLiveAnnotations. */
 export function isAnnotationOpen(): boolean {
-  return toolbarWin !== null && !toolbarWin.isDestroyed()
+  return annotationActive
 }
 
 /** True iff there's an overlay window alive — possibly hidden away as a
@@ -237,18 +140,11 @@ function hasLiveAnnotations(): boolean {
   return overlayWin !== null && !overlayWin.isDestroyed()
 }
 
-/** Listener pair installed by linkToolbarDrag. Held module-side so we can
- *  detach them on close — without this, leftover listeners would resurrect
- *  the palette/toolbar coupling the next time the user starts recording. */
-let dragLinkCleanup: (() => void) | null = null
-
 export function openAnnotation(
   displayId: number,
-  rect: { x: number; y: number; width: number; height: number } | undefined,
   topmostAfter: BrowserWindow[] = [],
-  recordingToolbar?: BrowserWindow | null,
 ) {
-  if (isAnnotationOpen()) return
+  if (annotationActive) return
   const display = screen.getAllDisplays().find(d => d.id === displayId) ?? screen.getPrimaryDisplay()
 
   // Always start without a tool selected so the user picks deliberately —
@@ -260,116 +156,58 @@ export function openAnnotation(
     overlayWin = createOverlayWindow(display)
   }
 
-  // Anchor the palette directly under the recording toolbar so the two
-  // controls read as a single floating cluster. Falls back to the
-  // recording rect (region/window mode) or a centred screen-mode position
-  // if the recording toolbar isn't around for whatever reason.
-  const anchor = recordingToolbar && !recordingToolbar.isDestroyed()
-    ? recordingToolbar.getBounds()
-    : rect
-      ? { x: display.bounds.x + rect.x, y: display.bounds.y + rect.y, width: rect.width, height: rect.height }
-      : { x: display.bounds.x, y: display.bounds.y, width: display.bounds.width, height: display.bounds.height }
-  toolbarWin = createToolbarWindow(display, anchor)
-
   // tool='none' = interact mode: clicks pass through the overlay to the
   // recorded app underneath. set-tool will flip this back to capturing
   // when the user picks an actual drawing tool.
   overlayWin!.setIgnoreMouseEvents(true, { forward: true })
 
-  // Reused overlays keep whatever tool the user had before — its renderer
-  // doesn't re-fetch state on its own, so the cursor would stay stuck as
-  // the previous "+" crosshair until the user picked a new tool from the
-  // palette. Push the reset state down so the cursor flips to default.
-  if (reusingOverlay) {
-    sendToOverlay('annotation:state', state)
-  }
+  // Tell every subscriber (overlay + recording toolbar's annotation row)
+  // about the freshly-reset tool. Reused overlays would otherwise stay
+  // stuck on the previous "+" crosshair, and the recording toolbar's
+  // annotation row would mount with stale active swatches.
+  broadcastAnnotationState()
 
-  // Keep the recording toolbar and palette in lockstep — drag either one,
-  // both move with the same delta. Captures their relative offset now and
-  // preserves it across both windows' move events.
-  if (recordingToolbar && !recordingToolbar.isDestroyed()) {
-    dragLinkCleanup = linkToolbarDrag(recordingToolbar, toolbarWin)
-  }
+  annotationActive = true
 
-  // On Windows there are no NSWindowLevel-style layers, only HWND_TOPMOST
-  // as a binary flag — order within the topmost group is creation/raise
-  // order, and the LAST raised window ends up on top. Force the palette +
-  // caller-supplied windows above the overlay via SetWindowPos(HWND_TOPMOST).
-  // On macOS this is unnecessary because the toolbars/border use
-  // relativeLevel:1 above the overlay's plain 'screen-saver' level, so the
-  // OS already enforces the stacking.
+  // On Windows there are no NSWindowLevel-style layers — only the binary
+  // HWND_TOPMOST flag — so order within the topmost group is determined by
+  // the most recent SetWindowPos call. Force the recording toolbar / border
+  // above the freshly-created overlay so their buttons stay clickable.
+  // macOS uses relativeLevel:1 on those windows, so the OS already enforces
+  // the stacking (see comment in createOverlayWindow).
   //
-  // Order matters: the recording toolbar's BrowserWindow is 440×92 with the
-  // visible pill only ~46px tall at the top. The remaining ~46px is empty,
-  // transparent space reserved for in-DOM hover tooltips, and it physically
-  // overlaps the top of the palette window (the two pills sit close together
-  // by design). If the recording toolbar sits ABOVE the palette in Z order,
-  // its empty bottom strip swallows clicks aimed at the palette's pill —
-  // user-visible symptom: only the leftmost/rightmost ends of the palette
-  // (the parts wider than 440px) react to clicks. Raising the palette LAST
-  // puts its HWND on top so the entire pill stays clickable; the recording
-  // pill is unaffected because the two pills don't overlap visually.
-  //
-  // Critically: SetWindowPos on a still-hidden window has no effect on the
-  // visible Z order, so we have to wait until the toolbar's HWND is
-  // realised + visible before raising. The +50ms timer alone races with
-  // the toolbar's ready-to-show — when first paint takes longer, the raise
-  // fires first and the toolbar pops up below the overlay.
-  const wins = [...topmostAfter, toolbarWin]
-  toolbarWin.once('ready-to-show', () => raiseAboveOverlay(wins))
-  // Belt-and-braces: re-raise on a short timer too in case ready-to-show
-  // fired before we attached the handler (cached renderer paint).
+  // SetWindowPos on a still-hidden HWND has no effect on the visible Z
+  // order, so wait until the overlay's own ready-to-show before raising
+  // the others — only at that point is the overlay HWND in the topmost
+  // group and visible. The +50ms timer is a safety net for the cached-
+  // paint case where ready-to-show has already fired.
+  const wins = [...topmostAfter]
+  if (overlayWin) {
+    overlayWin.once('ready-to-show', () => raiseAboveOverlay(wins))
+  }
   setTimeout(() => raiseAboveOverlay(wins), 50)
 }
 
-/** Couple two windows so dragging either one moves both. Tracks the
- *  initial offset between them and propagates every position change while
- *  guarding against the feedback loop that would otherwise have each
- *  window's move event re-trigger the other's. */
-function linkToolbarDrag(a: BrowserWindow, b: BrowserWindow): () => void {
-  const initial = b.getBounds()
-  const aInit = a.getBounds()
-  // b.position relative to a.position. Stays constant for the rest of the
-  // session — when a moves by (dx, dy), b moves by (dx, dy) too, so the
-  // offset is invariant and we can just recompute b.x = a.x + offsetX.
-  const offsetX = initial.x - aInit.x
-  const offsetY = initial.y - aInit.y
-
-  let suppressing = false
-
-  const onMoveA = () => {
-    if (suppressing) return
-    if (a.isDestroyed() || b.isDestroyed()) return
-    const ab = a.getBounds()
-    const bb = b.getBounds()
-    const targetX = ab.x + offsetX
-    const targetY = ab.y + offsetY
-    if (bb.x === targetX && bb.y === targetY) return
-    suppressing = true
-    b.setPosition(targetX, targetY, false)
-    // Release after the next tick so the synthetic move fires while we're
-    // still suppressing, but a real subsequent user drag isn't blocked.
-    setImmediate(() => { suppressing = false })
+/** Toggle the "Annotate" indicator off without erasing the strokes the
+ *  user has already drawn. The overlay window stays alive but flips to
+ *  click-through so the user can interact with the recorded app
+ *  underneath while their annotations remain visible (and being
+ *  recorded). Strokes only go away on destroyAnnotation(). */
+export function closeAnnotation() {
+  annotationActive = false
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    overlayWin.setIgnoreMouseEvents(true, { forward: true })
   }
-  const onMoveB = () => {
-    if (suppressing) return
-    if (a.isDestroyed() || b.isDestroyed()) return
-    const ab = a.getBounds()
-    const bb = b.getBounds()
-    const targetX = bb.x - offsetX
-    const targetY = bb.y - offsetY
-    if (ab.x === targetX && ab.y === targetY) return
-    suppressing = true
-    a.setPosition(targetX, targetY, false)
-    setImmediate(() => { suppressing = false })
-  }
+}
 
-  a.on('move', onMoveA)
-  b.on('move', onMoveB)
-  return () => {
-    if (!a.isDestroyed()) a.off('move', onMoveA)
-    if (!b.isDestroyed()) b.off('move', onMoveB)
+/** Tear down the overlay too. Called from closeRecordingSession when
+ *  the recording stops or is cancelled. */
+export function destroyAnnotation() {
+  annotationActive = false
+  if (overlayWin && !overlayWin.isDestroyed()) {
+    try { overlayWin.close() } catch { /* ignore */ }
   }
+  overlayWin = null
 }
 
 /** Re-raise each window above the live annotation overlay on Windows.
@@ -410,35 +248,6 @@ function forceWindowsTopmost(wins: (BrowserWindow | null)[]) {
   }
 }
 
-/** Toggle the palette off without erasing the strokes the user has
- *  already drawn. The overlay window stays alive but flips to
- *  click-through so the user can interact with the recorded app
- *  underneath while their annotations remain visible (and being
- *  recorded). Strokes only go away on destroyAnnotation(). */
-export function closeAnnotation() {
-  if (dragLinkCleanup) { dragLinkCleanup(); dragLinkCleanup = null }
-  if (toolbarWin && !toolbarWin.isDestroyed()) {
-    try { toolbarWin.close() } catch { /* ignore */ }
-  }
-  toolbarWin = null
-  if (overlayWin && !overlayWin.isDestroyed()) {
-    overlayWin.setIgnoreMouseEvents(true, { forward: true })
-  }
-}
-
-/** Tear down everything — overlay included. Called from
- *  closeRecordingSession when the recording stops or is cancelled. */
-export function destroyAnnotation() {
-  if (dragLinkCleanup) { dragLinkCleanup(); dragLinkCleanup = null }
-  for (const w of [overlayWin, toolbarWin]) {
-    if (w && !w.isDestroyed()) {
-      try { w.close() } catch { /* ignore */ }
-    }
-  }
-  overlayWin = null
-  toolbarWin = null
-}
-
 export function setupAnnotation() {
   ipcMain.handle('annotation:get-state', () => state)
 
@@ -452,28 +261,16 @@ export function setupAnnotation() {
       if (tool === 'none') overlayWin.setIgnoreMouseEvents(true, { forward: true })
       else overlayWin.setIgnoreMouseEvents(false)
     }
-    sendToOverlay('annotation:state', state)
+    broadcastAnnotationState()
   })
   ipcMain.handle('annotation:set-color', (_e, color: string) => {
     state.color = color
-    sendToOverlay('annotation:state', state)
+    broadcastAnnotationState()
   })
   ipcMain.handle('annotation:set-stroke', (_e, strokeWidth: number) => {
     state.strokeWidth = strokeWidth
-    sendToOverlay('annotation:state', state)
+    broadcastAnnotationState()
   })
   ipcMain.handle('annotation:clear', () => sendToOverlay('annotation:clear'))
   ipcMain.handle('annotation:undo', () => sendToOverlay('annotation:undo'))
-
-  // The toolbar's close button — same effect as the recording-toolbar's
-  // Annotate toggle going off. Tear down the annotation windows and
-  // notify every BrowserWindow via the recording-toolbar:state channel
-  // so the Annotate button on the recording toolbar reflects the new
-  // state without requiring it to subscribe to a separate channel.
-  ipcMain.handle('annotation:close', () => {
-    closeAnnotation()
-    for (const w of BrowserWindow.getAllWindows()) {
-      if (!w.isDestroyed()) w.webContents.send('toolbar:state', { annotationOn: false })
-    }
-  })
 }

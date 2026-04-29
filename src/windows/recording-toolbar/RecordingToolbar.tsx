@@ -29,6 +29,35 @@ function Tip({ text, show }: { text: string; show: boolean }) {
 
 type Phase = 'init' | 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error'
 
+type Tool = 'none' | 'select' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
+
+const ANNOTATE_TOOLS: { id: Tool; icon: string; label: string }[] = [
+  // 'none' is the interact mode — overlay flips to click-through so the
+  // user can drive the recorded app with the cursor again. Picking any of
+  // the actual drawing tools below re-locks the overlay for ink.
+  { id: 'none',        icon: 'arrow_selector_tool', label: 'Cursor (interact with app)' },
+  // 'select' lets the user click an existing shape to bring up an X
+  // delete handle; click the X to remove just that one stroke.
+  { id: 'select',      icon: 'highlight_alt',  label: 'Select stroke to delete' },
+  { id: 'pen',         icon: 'draw',          label: 'Pen' },
+  { id: 'arrow',       icon: 'arrow_forward', label: 'Arrow' },
+  { id: 'rect',        icon: 'crop_square',   label: 'Rectangle' },
+  { id: 'ellipse',     icon: 'circle',        label: 'Ellipse' },
+  { id: 'highlighter', icon: 'highlight',     label: 'Highlighter' },
+]
+
+const ANNOTATE_COLORS = [
+  '#f87171', // red
+  '#fbbf24', // amber
+  '#34d399', // emerald
+  '#60a5fa', // blue
+  '#a78bfa', // violet
+  '#ffffff', // white
+  '#000000', // black
+]
+
+const ANNOTATE_STROKE_PRESETS = [2, 4, 8, 14] as const
+
 const COUNTDOWN_START = 3
 
 function formatTime(ms: number): string {
@@ -46,7 +75,22 @@ export default function RecordingToolbar() {
   const [annotationOn, setAnnotationOn] = useState(false)
   const [error, setError] = useState<string>('')
 
+  // Annotation tool state. Lives here now that the palette is merged into
+  // the recording toolbar — main process is still the source of truth, we
+  // just mirror it for instant button-state feedback.
+  const [tool, setTool] = useState<Tool>('none')
+  const [annotateColor, setAnnotateColor] = useState('#f87171')
+  const [strokeWidth, setStrokeWidth] = useState<number>(4)
+
   const countdownTimer = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  // Refs on each visible pill so the hover hit-test below can ask the OS
+  // window to capture clicks only when the cursor is actually over a pill.
+  // Keeps the empty transparent area between/around pills click-through to
+  // whatever's beneath the toolbar window.
+  const recordingPillRef = useRef<HTMLDivElement>(null)
+  const annotationPillRef = useRef<HTMLDivElement>(null)
+  const interactiveRef = useRef(false)
 
   // Body transparent
   useEffect(() => {
@@ -54,6 +98,31 @@ export default function RecordingToolbar() {
     document.documentElement.style.background = 'transparent'
     document.body.style.margin = '0'
     document.body.style.overflow = 'hidden'
+  }, [])
+
+  // Hover-driven click-through. The toolbar window starts in
+  // setIgnoreMouseEvents(true, forward:true) — clicks pass through to the
+  // recorded app, but mousemove events still reach the renderer. We
+  // hit-test the cursor against each pill's bounding rect on every move
+  // and tell main to flip ignoreMouseEvents off only while the cursor is
+  // over a pill. Sending IPC only on transition keeps traffic bounded.
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const insidePill = (ref: React.RefObject<HTMLDivElement>) => {
+        const el = ref.current
+        if (!el) return false
+        const r = el.getBoundingClientRect()
+        return e.clientX >= r.left && e.clientX <= r.right &&
+               e.clientY >= r.top  && e.clientY <= r.bottom
+      }
+      const inside = insidePill(recordingPillRef) || insidePill(annotationPillRef)
+      if (inside !== interactiveRef.current) {
+        interactiveRef.current = inside
+        window.electronAPI?.toolbarSetInteractive?.(inside)
+      }
+    }
+    document.addEventListener('mousemove', onMove)
+    return () => document.removeEventListener('mousemove', onMove)
   }, [])
 
   // Listen for state updates from main
@@ -89,6 +158,28 @@ export default function RecordingToolbar() {
     return () => { window.electronAPI?.removeAllListeners?.('toolbar:state') }
   }, [])
 
+  // Mirror the annotation state from main. Fetch once at mount and listen
+  // for live broadcasts after — main pushes a fresh state object on every
+  // tool/color/stroke change AND on each openAnnotation (which resets tool
+  // to 'none'). Keeping this in sync ahead of time means the annotation row
+  // mounts with the correct active swatches immediately, instead of paint
+  // once with defaults and re-render once the fetch resolves (a noticeable
+  // flicker on toggle-on).
+  useEffect(() => {
+    window.electronAPI?.annotationGetState?.().then((s) => {
+      if (!s) return
+      setTool(s.tool as Tool)
+      setAnnotateColor(s.color)
+      setStrokeWidth(s.strokeWidth)
+    }).catch(() => { /* ignore */ })
+    window.electronAPI?.onAnnotationState?.((s) => {
+      setTool(s.tool as Tool)
+      setAnnotateColor(s.color)
+      setStrokeWidth(s.strokeWidth)
+    })
+    return () => { window.electronAPI?.removeAllListeners?.('annotation:state') }
+  }, [])
+
   // Cleanup countdown interval on unmount
   useEffect(() => {
     return () => { if (countdownTimer.current) clearInterval(countdownTimer.current) }
@@ -109,18 +200,32 @@ export default function RecordingToolbar() {
     window.electronAPI?.toolbarToggleAnnotation?.(next)
   }
 
+  const pickTool = (t: Tool) => { setTool(t); window.electronAPI?.annotationSetTool?.(t) }
+  const pickColor = (c: string) => { setAnnotateColor(c); window.electronAPI?.annotationSetColor?.(c) }
+  const pickStroke = (n: number) => { setStrokeWidth(n); window.electronAPI?.annotationSetStroke?.(n) }
+  const onAnnotateUndo = () => window.electronAPI?.annotationUndo?.()
+  const onAnnotateClear = () => window.electronAPI?.annotationClear?.()
+
   const isRecording = phase === 'recording'
   const isPaused = phase === 'paused'
   const isBusy = phase === 'stopping' || phase === 'saving'
+  const showAnnotationRow = annotationOn && (isRecording || isPaused)
 
   return (
-    <div className="fixed inset-0 flex flex-col items-center justify-start pt-1.5" style={{ fontFamily: 'Manrope, sans-serif' }}>
+    <div className="fixed inset-0 flex flex-col items-center justify-start pt-1.5 gap-1.5" style={{ fontFamily: 'Manrope, sans-serif' }}>
       <div
-        className="flex items-center gap-2 px-3 py-2 glass-refractive rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+        ref={recordingPillRef}
+        className="relative flex items-center gap-2 px-3 py-2 glass-refractive rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
         style={{
           WebkitAppRegion: 'drag',
           background: 'rgba(20,20,28,0.85)',
           border: '1px solid rgba(255,255,255,0.08)',
+          // glass-refractive applies backdrop-filter, which creates a
+          // stacking context that traps Tip inside this pill. Bump the
+          // recording pill above the annotation pill (z:10) at the
+          // outer-wrapper level so tooltips dropping from this row paint
+          // over the annotation row instead of being hidden behind it.
+          zIndex: 20,
         } as React.CSSProperties}
       >
         {/* Countdown view */}
@@ -244,6 +349,53 @@ export default function RecordingToolbar() {
           </>
         )}
       </div>
+
+      {/* Annotation row — same window, second pill below the recording
+          row. Used to live in its own BrowserWindow that visually anchored
+          to this one; merging eliminates an entire class of z-order bugs
+          where the recording toolbar's transparent bottom strip swallowed
+          clicks aimed at the palette's centre. */}
+      {showAnnotationRow && (
+        <div
+          ref={annotationPillRef}
+          className="relative flex items-center gap-1.5 px-2 py-1.5 rounded-full shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+          style={{
+            WebkitAppRegion: 'drag',
+            background: 'rgba(20,20,28,0.92)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            backdropFilter: 'blur(20px)',
+            // Below the recording pill's z:20 so tooltips dropping from
+            // the row above paint over this pill's body.
+            zIndex: 10,
+          } as React.CSSProperties}
+        >
+          {/* Tool buttons */}
+          {ANNOTATE_TOOLS.map(t => (
+            <AnnotateToolBtn key={t.id} icon={t.icon} label={t.label} active={tool === t.id} onClick={() => pickTool(t.id)} />
+          ))}
+
+          <Sep />
+
+          {/* Stroke size */}
+          {ANNOTATE_STROKE_PRESETS.map(n => (
+            <StrokeBtn key={n} size={n} active={strokeWidth === n} onClick={() => pickStroke(n)} />
+          ))}
+
+          <Sep />
+
+          {/* Color swatches */}
+          {ANNOTATE_COLORS.map(c => (
+            <ColorBtn key={c} color={c} active={annotateColor === c} onClick={() => pickColor(c)} />
+          ))}
+
+          <Sep />
+
+          {/* Undo + Clear + Close */}
+          <AnnotateToolBtn icon="undo"         label="Undo"             onClick={onAnnotateUndo} />
+          <AnnotateToolBtn icon="delete_sweep" label="Clear all"        onClick={onAnnotateClear} />
+          <AnnotateToolBtn icon="close"        label="Close annotation" onClick={handleAnnotation} accent="red" />
+        </div>
+      )}
     </div>
   )
 }
@@ -282,6 +434,85 @@ function ToolbarBtn({
     >
       <span className={`material-symbols-outlined ${compact ? 'text-[16px]' : 'text-[18px]'}`}>{icon}</span>
       <Tip text={label} show={hover && !disabled} />
+    </button>
+  )
+}
+
+function Sep() {
+  return <div className="w-px h-5 bg-white/10 mx-0.5" />
+}
+
+function AnnotateToolBtn({
+  icon, label, onClick, active = false, accent,
+}: {
+  icon: string
+  label: string
+  onClick: () => void
+  active?: boolean
+  accent?: 'red'
+}) {
+  const [hover, setHover] = useState(false)
+  let cls = 'text-slate-300 hover:text-white hover:bg-white/10'
+  if (active) cls = 'bg-white/20 text-white'
+  if (accent === 'red') cls = 'text-slate-300 hover:text-white hover:bg-red-500/70'
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={`relative w-8 h-8 rounded-full flex items-center justify-center transition-all ${cls}`}
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+    >
+      <span className="material-symbols-outlined text-[18px]">{icon}</span>
+      <Tip text={label} show={hover} />
+    </button>
+  )
+}
+
+function StrokeBtn({ size, active, onClick }: { size: number; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      aria-label={`Stroke ${size}px`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={`relative w-7 h-7 rounded-full flex items-center justify-center transition-all ${
+        active ? 'bg-white/20' : 'hover:bg-white/10'
+      }`}
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+    >
+      <span
+        className="rounded-full bg-white"
+        style={{
+          width: Math.min(18, Math.max(3, size * 1.2)),
+          height: Math.min(18, Math.max(3, size * 1.2)),
+        }}
+      />
+      <Tip text={`Stroke ${size}px`} show={hover} />
+    </button>
+  )
+}
+
+function ColorBtn({ color, active, onClick }: { color: string; active: boolean; onClick: () => void }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      aria-label={`Color ${color}`}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      className={`relative w-6 h-6 rounded-full transition-all ${
+        active ? 'ring-2 ring-white ring-offset-2 ring-offset-[rgb(20,20,28)]' : 'hover:scale-110'
+      }`}
+      style={{
+        WebkitAppRegion: 'no-drag',
+        backgroundColor: color,
+        border: color === '#ffffff' || color === '#000000' ? '1px solid rgba(255,255,255,0.2)' : 'none',
+      } as React.CSSProperties}
+    >
+      <Tip text={color} show={hover} />
     </button>
   )
 }

@@ -12,7 +12,6 @@ import './index.css'
 // renders so even ready-to-show fires against an already-clear body.
 const TRANSPARENT_HASHES = [
   '#/annotation-overlay',
-  '#/annotation-toolbar',
   '#/recording-toolbar',
   '#/recording-border',
   '#/recorder-host',

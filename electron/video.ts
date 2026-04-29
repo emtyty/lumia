@@ -101,14 +101,17 @@ function loadRoute(win: BrowserWindow, route: string) {
 
 // ── Recording windows (toolbar + border + host) ────────────────────────────
 
+// Recording toolbar dimensions. Fixed size — wide and tall enough for the
+// annotation row to fit below the recording pill at all times. The
+// annotation row hides via React state when off; the empty transparent
+// area beneath the recording pill is invisible visually. Avoiding a
+// runtime resize entirely sidesteps the flicker that comes from racing
+// the BrowserWindow.setBounds against the renderer's mount/unmount of
+// the annotation row.
+const TOOLBAR_W = 800
+const TOOLBAR_H = 150
+
 function computeToolbarBounds(display: Electron.Display, rect?: { x: number; y: number; width: number; height: number }) {
-  const TOOLBAR_W = 440
-  // Tall enough for the pill plus the in-DOM hover tooltip directly below
-  // each button. We can't use HTML title tooltips — Windows renders those
-  // as a separate top-level HWND (tooltips_class32) and macOS as a
-  // separate NSWindow via NSToolTipManager, neither of which inherits the
-  // toolbar's content protection, so they'd leak into the recording.
-  const TOOLBAR_H = 92
   const displayX = display.bounds.x
   const displayY = display.bounds.y
   const displayW = display.bounds.width
@@ -199,6 +202,15 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
   if (process.platform === 'win32') {
     win.setBounds(bounds)
   }
+  // The toolbar window is fixed at the larger annotating size at all times
+  // (see TOOLBAR_W / TOOLBAR_H). That leaves transparent empty area around
+  // the pills which would otherwise swallow clicks aimed at the recorded
+  // app or the annotation overlay underneath. setIgnoreMouseEvents with
+  // forward:true makes the WHOLE window click-through by default, while
+  // still forwarding mousemove events to the renderer so it can hit-test
+  // the cursor against pill bounds and flip back to capture-mode via
+  // 'toolbar:set-interactive' IPC.
+  win.setIgnoreMouseEvents(true, { forward: true })
   win.once('ready-to-show', () => {
     if (win.isDestroyed()) return
     if (process.platform === 'win32') win.setBounds(bounds)
@@ -537,6 +549,19 @@ export function setupVideo() {
     closeRecordingSession()
     showMain()
   })
+  // Renderer-driven hover hit-test: capture clicks while the cursor is over
+  // a pill, otherwise pass them through to the recorded app (and the
+  // annotation overlay if active). Sent on transition only, so traffic is
+  // bounded to a few messages per pill enter/leave.
+  ipcMain.on('toolbar:set-interactive', (_e, interactive: boolean) => {
+    if (!recordingToolbar || recordingToolbar.isDestroyed()) return
+    if (interactive) {
+      recordingToolbar.setIgnoreMouseEvents(false)
+    } else {
+      recordingToolbar.setIgnoreMouseEvents(true, { forward: true })
+    }
+  })
+
   ipcMain.handle('toolbar:toggle-mic', (_e, enabled: boolean) => {
     sendToHost('recorder:mic-toggle', enabled)
     // Echo only the mic state — no phase. Toggling mid-countdown must not
@@ -544,10 +569,11 @@ export function setupVideo() {
     sendToToolbar('toolbar:state', { micEnabled: enabled })
   })
 
-  // Live annotation overlay — opens a transparent canvas + tool palette
-  // on the recording display so the user can draw on screen during the
-  // recording. Drawings are captured naturally by desktopCapturer (the
-  // overlay is intentionally NOT content-protected).
+  // Live annotation overlay — opens a transparent canvas on the recording
+  // display so the user can draw on screen during the recording. The tool
+  // palette itself lives in the recording toolbar window (second pill row,
+  // shown when annotationOn). Drawings are captured naturally by
+  // desktopCapturer (the overlay is intentionally NOT content-protected).
   ipcMain.handle('toolbar:toggle-annotation', (_e, enabled: boolean) => {
     if (enabled) {
       if (!recordingTarget) return
@@ -556,13 +582,11 @@ export function setupVideo() {
       // overlay is created, annotation forces these windows back to the
       // top of the OS topmost-stack via SetWindowPos(HWND_TOPMOST), which
       // re-raises an already-topmost window even when setAlwaysOnTop /
-      // moveTop don't. The recording toolbar also doubles as the anchor
-      // and drag-partner for the annotation palette so they read as a
-      // single floating cluster.
+      // moveTop don't.
       const topmostAfter: BrowserWindow[] = []
       if (recordingToolbar && !recordingToolbar.isDestroyed()) topmostAfter.push(recordingToolbar)
       if (recordingBorder && !recordingBorder.isDestroyed()) topmostAfter.push(recordingBorder)
-      openAnnotation(recordingTarget.displayId, recordingTarget.rect, topmostAfter, recordingToolbar)
+      openAnnotation(recordingTarget.displayId, topmostAfter)
     } else {
       closeAnnotation()
     }

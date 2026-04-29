@@ -19,9 +19,8 @@ const RecordingToolbar = lazy(() => import('./windows/recording-toolbar/Recordin
 const RecordingBorder = lazy(() => import('./windows/recording-border/RecordingBorder'))
 const RecorderHost = lazy(() => import('./windows/recorder-host/RecorderHost'))
 const AnnotationOverlay = lazy(() => import('./windows/annotation-overlay/AnnotationOverlay'))
-const AnnotationToolbar = lazy(() => import('./windows/annotation-toolbar/AnnotationToolbar'))
 
-const STANDALONE_ROUTES = ['/overlay', '/recording-toolbar', '/recording-border', '/recorder-host', '/annotation-overlay', '/annotation-toolbar']
+const STANDALONE_ROUTES = ['/overlay', '/recording-toolbar', '/recording-border', '/recorder-host', '/annotation-overlay']
 
 function isStandaloneHash(): boolean {
   const hash = window.location.hash.replace(/^#/, '')
@@ -60,7 +59,6 @@ export default function App() {
           <Route path="/recording-border" element={<RecordingBorder />} />
           <Route path="/recorder-host" element={<RecorderHost />} />
           <Route path="/annotation-overlay" element={<AnnotationOverlay />} />
-          <Route path="/annotation-toolbar" element={<AnnotationToolbar />} />
         </Routes>
       </Suspense>
     )
