@@ -109,15 +109,22 @@ function cancelAutoInstall() {
   autoInstallTimer = null
 }
 
-/** Track the dock icon to the main window's visibility on macOS: hidden when
- *  the window is closed to tray, visible when the window is open. Without
- *  this, the dock shortcut sticks around pointing at "nothing", and reopening
- *  via the tray leaves a stale dock icon behind. No-op on Windows/Linux. */
-function syncDockVisibility() {
+/** Hide the dock icon — called only when the user explicitly closes the
+ *  main window to the tray (red X) or when the app launches hidden via the
+ *  login item. Hiding the dock flips macOS into Accessory activation
+ *  policy, which prevents app.focus() from stealing focus reliably; we
+ *  must NOT do it for transient hides (capture flow, Cmd+H, etc.) or the
+ *  overlay won't receive mouse / keyboard input. */
+function hideDock() {
   if (process.platform !== 'darwin') return
-  const visible = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
-  if (visible) app.dock?.show().catch(() => { /* ignore */ })
-  else app.dock?.hide()
+  app.dock?.hide()
+}
+
+/** Show the dock icon — called when the main window surfaces from tray.
+ *  Idempotent (already visible → no-op). Returns app to Regular policy. */
+function showDock() {
+  if (process.platform !== 'darwin') return
+  app.dock?.show().catch(() => { /* ignore */ })
 }
 
 export function getMainWindow() { return mainWindow }
@@ -230,13 +237,18 @@ function createMainWindow(startHidden = false): BrowserWindow {
       win.webContents.send('navigate', '/dashboard')
       return
     }
+    // Explicit user close → hide window to tray AND drop the dock icon.
+    // This is the only path that should put the app into Accessory mode;
+    // transient hides (capture flow, Cmd+H) intentionally leave the dock
+    // alone so app activation keeps working for the overlay.
+    hideDock()
     win.hide()
   })
 
   // After the window goes to the tray, schedule install of any pending update.
   // Cancelled if the user surfaces the window again within the grace window.
-  win.on('hide', () => { scheduleAutoInstall(); syncDockVisibility() })
-  win.on('show', () => { cancelAutoInstall(); syncDockVisibility() })
+  win.on('hide', () => { scheduleAutoInstall() })
+  win.on('show', () => { cancelAutoInstall(); showDock() })
 
   win.on('closed', () => { mainWindow = null })
   return win
@@ -334,6 +346,12 @@ export function createOverlayWindows(): Map<number, BrowserWindow> {
   // Lazy fallback: caller might invoke this before whenReady has finished
   // wiring up the pool (e.g. tests, or display-added racing with first capture).
   if (!overlayPoolReady) setupOverlayPool()
+
+  // macOS: ensure the dock icon is visible — app is being used regardless of
+  // how the capture was invoked. If we were in Accessory mode (user closed
+  // main to tray, then triggered capture via hotkey / tray menu), this flips
+  // back to Regular activation policy so the overlay can take focus.
+  showDock()
 
   const allDisplays = screen.getAllDisplays()
   const cursorPoint = screen.getCursorScreenPoint()
@@ -484,11 +502,10 @@ app.whenReady().then(async () => {
   const startHidden = wasLaunchedAtStartup()
   mainWindow = createMainWindow(startHidden)
 
-  // macOS: dock icon tracks main-window visibility (see syncDockVisibility).
-  // For a normal launch the window is visible → dock visible. For login-item
-  // startup (startHidden) the window is hidden → dock hidden too, so the
-  // user only sees Lumia in the menubar tray as expected.
-  syncDockVisibility()
+  // macOS: normal launches leave the dock visible (default). Login-item
+  // startups boot straight to the tray, so drop the dock icon explicitly —
+  // user only sees Lumia in the menubar as expected.
+  if (startHidden) hideDock()
 
   // Keep the OS login-item entry in sync with the stored preference on every
   // launch (covers app moves, reinstalls, and settings changed while offline).
@@ -1695,10 +1712,12 @@ app.on('before-quit', (e) => {
   // / app:quit IPC), `isQuitting` is already true and we let it through.
   if (isQuitting) return
   // Otherwise this is Cmd+Q / dock right-click → Quit on macOS, or the
-  // taskbar Close on Windows. Treat it as "hide to tray" — the user can
-  // fully exit via the tray menu's Quit item. Mirrors how WhatsApp and
-  // similar tray-resident apps behave.
+  // taskbar Close on Windows. Treat it as "hide to tray" — same end state
+  // as the red X close button: window hidden + dock icon dropped. The user
+  // can still fully exit via the tray menu's Quit item. Mirrors WhatsApp /
+  // similar tray-resident apps.
   e.preventDefault()
+  hideDock()
   mainWindow?.hide()
 })
 
