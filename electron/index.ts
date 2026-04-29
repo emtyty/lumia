@@ -145,7 +145,9 @@ function createMainWindow(startHidden = false): BrowserWindow {
     minHeight: 600,
     backgroundColor: '#07070b',
     icon: ICON_PATH,
-    show: !startHidden,
+    // Defer first paint via ready-to-show below to avoid an empty frame flash
+    // on slow renderer cold-starts. startHidden boot keeps the window hidden.
+    show: false,
     // VSCode-style: frameless on both platforms
     // macOS: traffic lights inset; Windows: native overlay controls
     frame: false,
@@ -173,10 +175,14 @@ function createMainWindow(startHidden = false): BrowserWindow {
   if (isDev) {
     win.loadURL('http://localhost:5173/#/dashboard')
     // win.webContents.openDevTools({ mode: 'detach' })
-  
+
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
+
+  win.once('ready-to-show', () => {
+    if (!startHidden && !win.isDestroyed()) win.show()
+  })
 
   // Intercept close: keep the app alive in the tray instead of exiting. Only
   // actually close when we're explicitly quitting (tray Quit / hotkey / IPC).
@@ -226,6 +232,10 @@ export function createOverlayWindows(): Map<number, BrowserWindow> {
       resizable: false,
       movable: false,
       enableLargerThanScreen: true,
+      // Defer show until first paint — transparent windows on Windows
+      // briefly render an opaque white frame before the body paints,
+      // which would flash through every overlay on every capture.
+      show: false,
       webPreferences: {
         preload: join(__dirname, '../preload/index.js'),
         contextIsolation: true,
@@ -260,6 +270,7 @@ export function createOverlayWindows(): Map<number, BrowserWindow> {
         win.setBounds(displayBounds)
         // Tell this overlay whether it's the active one
         win.webContents.send('overlay:set-active', display.id === activeOverlayDisplayId)
+        win.show()
       }
     })
 

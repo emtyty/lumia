@@ -183,6 +183,9 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
     alwaysOnTop: true,
     skipTaskbar: true,
     hasShadow: false,
+    // Defer show until first paint to avoid the white flash transparent
+    // windows have on Windows before the body becomes see-through.
+    show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -193,10 +196,14 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
   // Same per-monitor DPI correction as the border window.
   if (process.platform === 'win32') {
     win.setBounds(bounds)
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) win.setBounds(bounds)
-    })
   }
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return
+    if (process.platform === 'win32') win.setBounds(bounds)
+    // showInactive so we don't yank focus away from whatever the user is
+    // recording the moment the toolbar materialises.
+    win.showInactive()
+  })
   win.setMenu(null)
   // screen-saver is the highest Z level available — stays above fullscreen
   // apps, browser fullscreen video, games, etc. Together with the
@@ -230,6 +237,8 @@ function createRecordingBorder(display: Electron.Display, rect: { x: number; y: 
     focusable: false,
     hasShadow: false,
     enableLargerThanScreen: true,
+    // Defer show — same flash issue as the toolbar window.
+    show: false,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
@@ -242,10 +251,12 @@ function createRecordingBorder(display: Electron.Display, rect: { x: number; y: 
   // factor ends up short of the edges and exposes the taskbar.
   if (process.platform === 'win32') {
     win.setBounds(bounds)
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) win.setBounds(bounds)
-    })
   }
+  win.once('ready-to-show', () => {
+    if (win.isDestroyed()) return
+    if (process.platform === 'win32') win.setBounds(bounds)
+    win.showInactive()
+  })
   win.setMenu(null)
   // relativeLevel:1 keeps the border above the annotation overlay on macOS.
   win.setAlwaysOnTop(true, 'screen-saver', 1)
