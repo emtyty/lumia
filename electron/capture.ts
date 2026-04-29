@@ -4,11 +4,13 @@ import { join } from 'path'
 import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays } from './index'
 import { getWindowAtPointPhysical } from './native-input'
 import { getMacWindowAtPoint } from './mac-window-pick'
-import { setOverlayMode } from './scroll-capture'
+import { setOverlayMode, resetOverlayMode } from './scroll-capture'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { showNotification } from './notify'
 import { applyWatermark } from './watermark'
+import { getSettings } from './settings'
+import { startVideoCapture } from './video'
 
 /** Canonical folder for original captures (both images and videos). Not
  *  user-configurable — user-chosen locations are for the Save-As dialog only,
@@ -93,13 +95,10 @@ export function dispatchCapture(mode: CaptureMode) {
 }
 
 /** Re-invoke the mode the user most recently used. Branches on stored kind,
- *  then on the specific image/video mode. Scrolling and video live in sibling
- *  modules — loaded lazily to avoid import cycles with capture.ts. */
+ *  then on the specific image/video mode. */
 export async function dispatchLastCapture() {
-  const { getSettings } = await import('./settings')
   const s = getSettings()
   if (s.lastCaptureKind === 'video') {
-    const { startVideoCapture } = await import('./video')
     await startVideoCapture(s.lastVideoMode)
     return
   }
@@ -107,7 +106,6 @@ export async function dispatchLastCapture() {
     const main = getMainWindow()
     if (main && !main.isDestroyed()) main.hide()
     await new Promise(r => setTimeout(r, 200))
-    const { setOverlayMode } = await import('./scroll-capture')
     setOverlayMode('scroll-region')
     createOverlayWindows()
     return
@@ -121,7 +119,6 @@ export function setupCapture() {
 
   ipcMain.handle('region:confirm', async (_e, payload: { dataUrl: string; rect: { x: number; y: number; width: number; height: number } }) => {
     const displayId = getOverlayDisplayId()
-    const { resetOverlayMode } = await import('./scroll-capture')
     resetOverlayMode()
     closeAllOverlays()
     await waitForOverlayGone()
@@ -246,7 +243,6 @@ export function setupCapture() {
     const overlayId = getOverlayDisplayId()
     const cached = lastWindowPickPhysical
     lastWindowPickPhysical = null
-    const { resetOverlayMode } = await import('./scroll-capture')
     resetOverlayMode()
     closeAllOverlays()
     await waitForOverlayGone()
@@ -258,13 +254,13 @@ export function setupCapture() {
   })
 
   ipcMain.handle('window-pick:cancel', () => {
-    import('./scroll-capture').then(m => m.resetOverlayMode())
+    resetOverlayMode()
     closeAllOverlays()
     showMainWindow()
   })
 
   ipcMain.handle('region:cancel', () => {
-    import('./scroll-capture').then(m => m.resetOverlayMode())
+    resetOverlayMode()
     closeAllOverlays()
     showMainWindow()
   })
@@ -285,7 +281,6 @@ export function setupCapture() {
     const displayId = getOverlayDisplayId()
     const allDisplays = screen.getAllDisplays()
     const target = allDisplays.find(d => d.id === displayId) ?? screen.getPrimaryDisplay()
-    const { resetOverlayMode } = await import('./scroll-capture')
     resetOverlayMode()
     closeAllOverlays()
     await waitForOverlayGone()
@@ -295,7 +290,7 @@ export function setupCapture() {
   })
 
   ipcMain.handle('monitor-pick:cancel', () => {
-    import('./scroll-capture').then(m => m.resetOverlayMode())
+    resetOverlayMode()
     closeAllOverlays()
     showMainWindow()
   })

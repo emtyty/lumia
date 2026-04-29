@@ -2,8 +2,16 @@ import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, scr
 import { join, dirname } from 'path'
 import fs from 'fs/promises'
 import { constants as fsConstants } from 'fs'
-import { setupCapture } from './capture'
+import { setupCapture, ORIGINALS_DIR } from './capture'
 import { setupVideo } from './video'
+import { uploadToR2 } from './uploaders/r2'
+import {
+  uploadToGoogleDrive,
+  refreshGoogleToken,
+  revokeGoogleToken,
+  exchangeGoogleAuthCode,
+} from './uploaders/googledrive'
+import { localTimestamp } from './utils'
 import { registerOverlayHwnd, unregisterOverlayHwnd } from './native-input'
 import { setupHotkeys, teardownHotkeys, getHotkeys, saveHotkeys, resetHotkeys, defaultHotkeys, type HotkeyConfig } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
@@ -773,7 +781,6 @@ app.whenReady().then(async () => {
 
     const { readFile } = await import('fs/promises')
     const { extname } = await import('path')
-    const { uploadToR2 } = await import('./uploaders/r2')
 
     // Prefer the annotated sidecar when present so shared links carry the
     // user's final edited version rather than the untouched original.
@@ -838,7 +845,6 @@ app.whenReady().then(async () => {
 
     if (Date.now() >= settings.googleDriveTokenExpiresAt - 60_000) {
       try {
-        const { refreshGoogleToken } = await import('./uploaders/googledrive')
         const refreshed = await refreshGoogleToken(
           import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID,
           import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET,
@@ -863,7 +869,6 @@ app.whenReady().then(async () => {
       : (ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png')
     const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
 
-    const { uploadToGoogleDrive } = await import('./uploaders/googledrive')
     const res = await uploadToGoogleDrive(dataUrl, token, settings.googleDriveFolderId, {
       filename: basename(sourcePath),
       mimeType,
@@ -898,13 +903,10 @@ app.whenReady().then(async () => {
     try {
       if (item && item.type === 'screenshot' && !item.filePath && typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/')) {
         const { writeFile, mkdir } = await import('fs/promises')
-        const { ORIGINALS_DIR } = await import('./capture')
-        const { join: joinPath } = await import('path')
-        const { localTimestamp } = await import('./utils')
         await mkdir(ORIGINALS_DIR, { recursive: true })
         const ext = item.dataUrl.startsWith('data:image/jpeg') ? 'jpg' : 'png'
         const filename = `capture-${localTimestamp()}.${ext}`
-        const filePath = joinPath(ORIGINALS_DIR, filename)
+        const filePath = join(ORIGINALS_DIR, filename)
         const base64 = item.dataUrl.replace(/^data:image\/\w+;base64,/, '')
         await writeFile(filePath, Buffer.from(base64, 'base64'))
         item = { ...item, name: item.name ?? filename, filePath }
@@ -1013,7 +1015,6 @@ app.whenReady().then(async () => {
 
   ipcMain.handle('gdrive:startAuth', async () => {
     const { createServer } = await import('http')
-    const { exchangeGoogleAuthCode } = await import('./uploaders/googledrive')
     const clientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
     const clientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
 
@@ -1337,7 +1338,6 @@ app.whenReady().then(async () => {
 
     if (Date.now() >= googleDriveTokenExpiresAt - 60_000) {
       try {
-        const { refreshGoogleToken } = await import('./uploaders/googledrive')
         const refreshed = await refreshGoogleToken(
           import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID,
           import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET,
@@ -1502,7 +1502,6 @@ app.whenReady().then(async () => {
     const tokenToRevoke = googleDriveRefreshToken || googleDriveAccessToken
     if (tokenToRevoke) {
       try {
-        const { revokeGoogleToken } = await import('./uploaders/googledrive')
         await revokeGoogleToken(tokenToRevoke)
       } catch {
         // Best-effort: still clear local tokens even if revoke fails (offline, already revoked, etc.)

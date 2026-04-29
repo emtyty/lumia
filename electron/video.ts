@@ -9,6 +9,7 @@ import {
   getOverlayDisplayId,
 } from './index'
 import { ORIGINALS_DIR } from './capture'
+import { uploadToR2 } from './uploaders/r2'
 import { resetOverlayMode, setOverlayMode } from './scroll-capture'
 import { showNotification } from './notify'
 import { resolveSaveStartDir, rememberSaveDir } from './settings'
@@ -664,7 +665,6 @@ export function setupVideoActions() {
   ipcMain.handle('video:upload-r2', async (_e, filePath: string) => {
     if (!filePath) throw new Error('No video file path')
     const { readFile } = await import('fs/promises')
-    const { uploadToR2 } = await import('./uploaders/r2')
     try {
       const buffer = await readFile(filePath)
       const ext = extname(filePath).replace(/^\./, '').toLowerCase() || 'webm'

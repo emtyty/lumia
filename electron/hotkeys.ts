@@ -5,6 +5,7 @@ import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } f
 import { startVideoCapture, requestStop as requestVideoStop, isRecordingActive } from './video'
 import { setSetting } from './settings'
 import type { LastImageMode, LastVideoMode } from './settings'
+import { setOverlayMode } from './scroll-capture'
 
 export interface HotkeyConfig {
   [action: string]: string
@@ -156,7 +157,6 @@ export function setupHotkeys() {
       const main = getMainWindow()
       if (main && !main.isDestroyed()) main.hide()
       await new Promise(r => setTimeout(r, 200))
-      const { setOverlayMode } = await import('./scroll-capture')
       setOverlayMode('scroll-region')
       createOverlayWindows()
     }),

@@ -7,7 +7,7 @@ import type { WorkflowResult, UploadResult, UploadDestination } from './types'
 import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive'
 import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
-import { getSettings, resolveSaveStartDir, rememberSaveDir } from './settings'
+import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { getMainWindow } from './index'
@@ -203,7 +203,6 @@ export class WorkflowEngine {
       try {
         const refreshed = await refreshGoogleToken(googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken)
         googleDriveAccessToken = refreshed.accessToken
-        const { setSetting } = await import('./settings')
         setSetting('googleDriveAccessToken', refreshed.accessToken)
         setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
       } catch (err) {
