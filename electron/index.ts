@@ -42,6 +42,15 @@ if (!app.requestSingleInstanceLock()) {
 
 let mainWindow: BrowserWindow | null = null
 let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
+// Pre-warmed pool: one hidden overlay per display, kept alive for the app's
+// lifetime. Reusing a loaded renderer drops region-capture from
+// "hotkey → first paint" of ~300–500ms (window create + React boot) down to
+// the time it takes to call show() + send a mode reset (~30ms).
+const overlayPool: Map<number, BrowserWindow> = new Map()
+let overlayPoolReady = false
+// Mirror of the currently-active overlays (subset of overlayPool that is
+// visible). Kept separate so getOverlayWindow / broadcastToOverlays stay
+// scoped to the active session.
 const overlayWindows: Map<number, BrowserWindow> = new Map()
 let activeOverlayDisplayId: number | null = null
 let overlayPollTimer: ReturnType<typeof setInterval> | null = null
@@ -122,8 +131,11 @@ export function closeAllOverlays() {
     overlayPollTimer = null
   }
   overlayDrawingInProgress = false
+  // Hide instead of destroy — the windows live in overlayPool and get reused
+  // on the next createOverlayWindows() call. Destroying them would force a
+  // full BrowserWindow + renderer rebuild on every capture.
   for (const [, win] of overlayWindows) {
-    if (!win.isDestroyed()) win.close()
+    if (!win.isDestroyed() && win.isVisible()) win.hide()
   }
   overlayWindows.clear()
   activeOverlayDisplayId = null
@@ -208,90 +220,135 @@ function createMainWindow(startHidden = false): BrowserWindow {
   return win
 }
 
+function addOverlayToPool(display: Electron.Display): BrowserWindow {
+  const { x, y, width, height } = display.bounds
+  const displayBounds = { x, y, width, height }
+
+  const win = new BrowserWindow({
+    ...displayBounds,
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    enableLargerThanScreen: true,
+    // Pre-warmed: kept hidden until the user triggers a capture / record.
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    }
+  })
+
+  if (process.platform === 'win32') {
+    win.setBounds(displayBounds)
+  }
+
+  win.setAlwaysOnTop(true, 'pop-up-menu')
+  win.setVisibleOnAllWorkspaces(true)
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173/#/overlay')
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
+  }
+
+  // One-time per-window setup: register the HWND for the native click-through
+  // helper. The overlay is reused across captures so this only fires once.
+  win.once('ready-to-show', () => {
+    if (process.platform === 'win32' && !win.isDestroyed()) {
+      const hwnd = win.getNativeWindowHandle().readInt32LE(0)
+      registerOverlayHwnd(hwnd)
+    }
+  })
+
+  win.on('closed', () => {
+    if (process.platform === 'win32') {
+      try {
+        const hwnd = win.getNativeWindowHandle().readInt32LE(0)
+        unregisterOverlayHwnd(hwnd)
+      } catch { /* window already destroyed */ }
+    }
+    overlayPool.delete(display.id)
+    overlayWindows.delete(display.id)
+  })
+
+  overlayPool.set(display.id, win)
+  return win
+}
+
+/** Initialise the overlay pool: one hidden BrowserWindow per display, plus
+ *  listeners that keep the pool in sync with monitor plug/unplug events.
+ *  Idempotent — safe to call multiple times. */
+export function setupOverlayPool() {
+  if (overlayPoolReady) return
+  overlayPoolReady = true
+
+  for (const display of screen.getAllDisplays()) {
+    addOverlayToPool(display)
+  }
+
+  screen.on('display-added', (_e, display) => {
+    if (!overlayPool.has(display.id)) addOverlayToPool(display)
+  })
+  screen.on('display-removed', (_e, display) => {
+    const win = overlayPool.get(display.id)
+    if (win && !win.isDestroyed()) win.destroy()
+  })
+  screen.on('display-metrics-changed', (_e, display) => {
+    const win = overlayPool.get(display.id)
+    if (win && !win.isDestroyed()) {
+      win.setBounds(display.bounds)
+    }
+  })
+}
+
 export function createOverlayWindows(): Map<number, BrowserWindow> {
   closeAllOverlays()
+  // Lazy fallback: caller might invoke this before whenReady has finished
+  // wiring up the pool (e.g. tests, or display-added racing with first capture).
+  if (!overlayPoolReady) setupOverlayPool()
 
   const allDisplays = screen.getAllDisplays()
   const cursorPoint = screen.getCursorScreenPoint()
   const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint)
   activeOverlayDisplayId = cursorDisplay.id
 
+  // Reconcile pool against current displays — covers any display change
+  // events that fired between `setupOverlayPool` and now.
   for (const display of allDisplays) {
+    if (!overlayPool.has(display.id)) addOverlayToPool(display)
+  }
+
+  const currentMode = getOverlayMode()
+
+  for (const display of allDisplays) {
+    const win = overlayPool.get(display.id)
+    if (!win || win.isDestroyed()) continue
+
     const { x, y, width, height } = display.bounds
     const displayBounds = { x, y, width, height }
     const isActive = display.id === activeOverlayDisplayId
 
-    const win = new BrowserWindow({
-      ...displayBounds,
-      transparent: true,
-      backgroundColor: '#00000000',
-      frame: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      hasShadow: false,
-      resizable: false,
-      movable: false,
-      enableLargerThanScreen: true,
-      // Defer show until first paint — transparent windows on Windows
-      // briefly render an opaque white frame before the body paints,
-      // which would flash through every overlay on every capture.
-      show: false,
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        contextIsolation: true,
-        nodeIntegration: false,
-      }
-    })
-
-    // On Windows, per-monitor DPI awareness can distort bounds when the overlay
-    // is created on a secondary display with a different scale factor.
-    if (process.platform === 'win32') {
-      win.setBounds(displayBounds)
-    }
-
-    // Inactive overlays pass mouse events through so cursor can reach active display
+    win.setBounds(displayBounds)
     if (!isActive) {
       win.setIgnoreMouseEvents(true, { forward: true })
     } else {
       win.setIgnoreMouseEvents(false)
     }
 
-    win.setAlwaysOnTop(true, 'pop-up-menu')
-    win.setVisibleOnAllWorkspaces(true)
-
-    if (isDev) {
-      win.loadURL('http://localhost:5173/#/overlay')
-    } else {
-      win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
-    }
-
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) {
-        win.setBounds(displayBounds)
-        // Tell this overlay whether it's the active one
-        win.webContents.send('overlay:set-active', display.id === activeOverlayDisplayId)
-        win.show()
-      }
-    })
-
-    win.once('ready-to-show', () => {
-      if (process.platform === 'win32') {
-        const hwnd = win.getNativeWindowHandle().readInt32LE(0)
-        registerOverlayHwnd(hwnd)
-      }
-    })
-
-    win.on('closed', () => {
-      if (process.platform === 'win32') {
-        try {
-          const hwnd = win.getNativeWindowHandle().readInt32LE(0)
-          unregisterOverlayHwnd(hwnd)
-        } catch { /* window already destroyed */ }
-      }
-      overlayWindows.delete(display.id)
-    })
+    // Reset renderer state for a fresh session: pushes the current mode and
+    // clears any leftover draw state from a previous capture. The renderer
+    // listens for 'overlay:mode-changed' and resets startPos/currentPos/etc.
+    win.webContents.send('overlay:mode-changed', currentMode)
+    win.webContents.send('overlay:set-active', isActive)
 
     overlayWindows.set(display.id, win)
+    win.show()
   }
 
   // Poll cursor position to switch active overlay when mouse moves between displays
@@ -420,6 +477,11 @@ app.whenReady().then(async () => {
   setupHotkeys()
   setupTray()
   setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
+
+  // Pre-warm the overlay pool: one hidden BrowserWindow per display, with
+  // the renderer already loaded. The first capture after boot drops from
+  // ~300–500ms (window construct + React boot) to ~30ms (show + IPC reset).
+  setupOverlayPool()
 
   // Surface OS permission prompts (Screen Recording / Microphone / Accessibility
   // on macOS, Microphone on Windows) at startup rather than mid-capture. Skip
@@ -1612,6 +1674,12 @@ app.on('window-all-closed', () => {
 app.on('will-quit', () => {
   teardownHotkeys()
   destroyTray()
+  // Tear down the pre-warmed overlay pool so Electron can exit cleanly.
+  // closeAllOverlays only hides; on quit we actually destroy.
+  for (const [, win] of overlayPool) {
+    if (!win.isDestroyed()) win.destroy()
+  }
+  overlayPool.clear()
 })
 
 app.on('second-instance', () => {
