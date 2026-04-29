@@ -143,6 +143,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   videoSaveAs:   (filePath: string) => ipcRenderer.invoke('video:save-as', filePath),
   videoCopyFile: (filePath: string) => ipcRenderer.invoke('video:copy-file', filePath),
   videoUploadR2: (filePath: string) => ipcRenderer.invoke('video:upload-r2', filePath),
+  videoUploadGoogleDrive: (filePath: string) => ipcRenderer.invoke('video:upload-google-drive', filePath),
 
   // Video recording — overlay mode selection
   startVideoCapture: (mode: 'region' | 'window' | 'screen') =>

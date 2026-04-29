@@ -11,6 +11,38 @@ interface RecordingTarget {
   outputSize?: { width: number; height: number }
 }
 
+const TARGET_FPS = 60
+// Bits-per-pixel-per-frame quality factor. VP9 real-time mode is conservative
+// for screen content with motion (scroll, animation), so we run hot: 0.25
+// puts 1920×1080@60 at ≈30 Mbps and 1922×1200@60 at ≈34 Mbps. The
+// MediaRecorder default is roughly 2.5 Mbps regardless of resolution, which
+// crushes UI text on high-DPI displays.
+const VIDEO_QUALITY_FACTOR = 0.25
+// Hard ceiling so 4K@60 doesn't ask for the encoder to fill ~120 Mbps. WebM
+// playback above ~50 Mbps gives diminishing returns for screen content.
+const VIDEO_BITRATE_CAP = 50_000_000
+const VIDEO_BITRATE_FLOOR = 4_000_000
+const AUDIO_BITRATE = 192_000
+
+function pickMimeType(): string {
+  const candidates = [
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ]
+  for (const c of candidates) {
+    if (MediaRecorder.isTypeSupported(c)) return c
+  }
+  return 'video/webm'
+}
+
+function computeVideoBitrate(width: number, height: number, fps: number): number {
+  const raw = Math.round(width * height * fps * VIDEO_QUALITY_FACTOR)
+  return Math.max(VIDEO_BITRATE_FLOOR, Math.min(VIDEO_BITRATE_CAP, raw))
+}
+
 /** Headless renderer that owns the MediaRecorder. No user-facing UI — the
  *  toolbar (separate window) issues commands via main-process IPC. */
 export default function RecorderHost() {
@@ -65,7 +97,7 @@ export default function RecorderHost() {
               maxWidth:  physW,
               minHeight: physH,
               maxHeight: physH,
-              maxFrameRate: 30,
+              maxFrameRate: TARGET_FPS,
             },
           },
         })
@@ -133,11 +165,24 @@ export default function RecorderHost() {
       const out = outStreamRef.current
       if (!out || recorderRef.current) return
 
-      const mime = MediaRecorder.isTypeSupported('video/webm;codecs=vp8')
-        ? 'video/webm;codecs=vp8'
-        : 'video/webm'
+      const mime = pickMimeType()
 
-      const recorder = new MediaRecorder(out, { mimeType: mime })
+      // Resolve actual output dimensions for bitrate sizing. Region/window
+      // record from the canvas (outputSize); screen mode passes the full
+      // physical desktop stream through.
+      const target = targetRef.current
+      const outW = target?.outputSize?.width
+        ?? Math.round((target?.displayDipSize.width  ?? 1920) * (target?.displayScaleFactor ?? 1))
+      const outH = target?.outputSize?.height
+        ?? Math.round((target?.displayDipSize.height ?? 1080) * (target?.displayScaleFactor ?? 1))
+      const videoBitsPerSecond = computeVideoBitrate(outW, outH, TARGET_FPS)
+
+      const hasAudio = out.getAudioTracks().length > 0
+      const recorder = new MediaRecorder(out, {
+        mimeType: mime,
+        videoBitsPerSecond,
+        ...(hasAudio ? { audioBitsPerSecond: AUDIO_BITRATE } : {}),
+      })
       recorder.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data) }
       recorder.onstop = finalizeRecording
       recorder.start(1000)
@@ -312,7 +357,7 @@ function buildCroppedStream(
   }
   loopRef.current = requestAnimationFrame(draw)
 
-  return canvas.captureStream(30)
+  return canvas.captureStream(TARGET_FPS)
 }
 
 /** Extract a JPEG thumbnail from ~25% into the recorded blob. Handles the

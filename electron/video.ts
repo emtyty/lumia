@@ -10,6 +10,7 @@ import {
 } from './index'
 import { ORIGINALS_DIR } from './capture'
 import { uploadToR2 } from './uploaders/r2'
+import { uploadFileBufferToDrive } from './google-drive-service'
 import { resetOverlayMode, setOverlayMode } from './scroll-capture'
 import { showNotification } from './notify'
 import { resolveSaveStartDir, rememberSaveDir } from './settings'
@@ -727,6 +728,26 @@ export function setupVideoActions() {
       return res
     } catch (err: any) {
       return { destination: 'r2', success: false, error: err?.message ?? String(err) }
+    }
+  })
+
+  /** Upload the raw video file to Google Drive via resumable upload. Same
+   *  shape as the R2 handler so the editor can dispatch generically. */
+  ipcMain.handle('video:upload-google-drive', async (_e, filePath: string) => {
+    if (!filePath) throw new Error('No video file path')
+    const { readFile } = await import('fs/promises')
+    try {
+      const buffer = await readFile(filePath)
+      const ext = extname(filePath).replace(/^\./, '').toLowerCase() || 'webm'
+      const contentType = ext === 'mp4' ? 'video/mp4' : 'video/webm'
+      const filename = basename(filePath)
+      const res = await uploadFileBufferToDrive(buffer, contentType, filename)
+      if (res.success && res.url) {
+        clipboard.writeText(res.url)
+      }
+      return res
+    } catch (err: any) {
+      return { destination: 'google-drive', success: false, error: err?.message ?? String(err) }
     }
   })
 

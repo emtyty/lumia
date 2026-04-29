@@ -108,6 +108,73 @@ export async function uploadToGoogleDrive(
 }
 
 /**
+ * Upload a binary file (typically a video recording) using Google Drive's
+ * resumable upload protocol. Multipart upload caps out at 5 MB, which most
+ * screen recordings exceed, so we always use resumable here.
+ *
+ * Flow: POST metadata to start a session and read the upload URL out of the
+ * Location header, then PUT the raw bytes to that URL in a single request.
+ * Drive supports chunked PUTs for resilience but a single upload is fine for
+ * the file sizes Lumia produces (typically tens of MB).
+ */
+export async function uploadFileToGoogleDrive(
+  buffer: Buffer,
+  contentType: string,
+  filename: string,
+  accessToken: string,
+  folderId?: string
+): Promise<UploadResult> {
+  if (!accessToken) {
+    return { destination: 'google-drive', success: false, error: 'No access token — please connect Google Drive in Settings' }
+  }
+
+  let resolvedFolderId = folderId
+  if (folderId && !looksLikeDriveId(folderId)) {
+    try {
+      const found = await findFolderByName(folderId, accessToken)
+      resolvedFolderId = found ?? await createFolder(folderId, accessToken)
+    } catch (err) {
+      return { destination: 'google-drive', success: false, error: `Folder error: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
+
+  const metadata: Record<string, unknown> = { name: filename, mimeType: contentType }
+  if (resolvedFolderId) metadata.parents = [resolvedFolderId]
+
+  const initRes = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json; charset=UTF-8',
+      'X-Upload-Content-Type': contentType,
+      'X-Upload-Content-Length': String(buffer.length),
+    },
+    body: JSON.stringify(metadata),
+  })
+  if (!initRes.ok) {
+    const text = await initRes.text()
+    return { destination: 'google-drive', success: false, error: `Upload init failed: HTTP ${initRes.status}: ${text}` }
+  }
+  const sessionUrl = initRes.headers.get('Location')
+  if (!sessionUrl) {
+    return { destination: 'google-drive', success: false, error: 'Upload init returned no session URL' }
+  }
+
+  const putRes = await fetch(sessionUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType, 'Content-Length': String(buffer.length) },
+    body: buffer,
+  })
+  if (!putRes.ok) {
+    const text = await putRes.text()
+    return { destination: 'google-drive', success: false, error: `HTTP ${putRes.status}: ${text}` }
+  }
+
+  const json = await putRes.json() as { id: string; name: string }
+  return { destination: 'google-drive', success: true, url: `https://drive.google.com/file/d/${json.id}/view` }
+}
+
+/**
  * Exchange an authorization code for tokens using Google OAuth2.
  */
 export async function exchangeGoogleAuthCode(
