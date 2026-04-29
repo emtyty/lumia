@@ -274,8 +274,10 @@ export default function Editor() {
           const res = await window.electronAPI?.videoUploadR2?.(videoFilePath)
           if (res?.success && res.url) showToast('Uploaded — link copied', 'check_circle')
           else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
-        } else {
-          showToast(`${dest?.type ?? 'Destination'} doesn't support video yet`, 'error', 'error')
+        } else if (dest?.type === 'google-drive') {
+          const res = await window.electronAPI?.videoUploadGoogleDrive?.(videoFilePath)
+          if (res?.success && res.url) showToast('Uploaded to Drive — link copied', 'check_circle')
+          else                         showToast(res?.error ?? 'Upload failed', 'error', 'error')
         }
       }
     } catch (err: any) {

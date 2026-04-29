@@ -15,10 +15,8 @@ export const DEST_META: Record<string, { icon: string; label: string }> = {
   r2:            { icon: 'share',        label: 'Lumia' },
 }
 
-/** Destinations known to handle video uploads. GDrive still assumes image
- *  data URLs, so it's hidden in video mode until the uploader grows
- *  file-buffer support. */
-const VIDEO_CAPABLE_DESTINATIONS = new Set(['r2'])
+/** Destinations known to handle video uploads. */
+const VIDEO_CAPABLE_DESTINATIONS = new Set(['r2', 'google-drive'])
 
 /** Map a workflow template's steps + destinations into the button list that
  *  drives the Editor header actions. Destinations are filtered out when their

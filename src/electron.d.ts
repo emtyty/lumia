@@ -96,6 +96,7 @@ declare global {
       videoSaveAs:   (filePath: string) => Promise<{ canceled: boolean; savedPath?: string }>
       videoCopyFile: (filePath: string) => Promise<{ ok: boolean; fallback?: 'text'; error?: string }>
       videoUploadR2: (filePath: string) => Promise<import('./types').UploadResult>
+      videoUploadGoogleDrive: (filePath: string) => Promise<import('./types').UploadResult>
 
       // Video recording — overlay mode selection
       startVideoCapture: (mode: 'region' | 'window' | 'screen') => Promise<void>

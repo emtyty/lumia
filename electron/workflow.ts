@@ -4,10 +4,10 @@ import { dirname, join } from 'path'
 import { homedir } from 'os'
 import type { TemplateStore } from './templates'
 import type { WorkflowResult, UploadResult, UploadDestination } from './types'
-import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive'
+import { uploadImageDataUrlToDrive } from './google-drive-service'
 import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
-import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir } from './settings'
+import { resolveSaveStartDir, rememberSaveDir } from './settings'
 import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { getMainWindow } from './index'
@@ -192,28 +192,6 @@ export class WorkflowEngine {
   }
 
   private async uploadToGoogleDrive(imageData: string, folderId?: string): Promise<UploadResult> {
-    const settings = getSettings()
-    let { googleDriveAccessToken } = settings
-    const { googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
-    const googleDriveClientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
-    const googleDriveClientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
-
-    // Auto-refresh token if expired
-    if (googleDriveRefreshToken && Date.now() >= googleDriveTokenExpiresAt - 60_000) {
-      try {
-        const refreshed = await refreshGoogleToken(googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken)
-        googleDriveAccessToken = refreshed.accessToken
-        setSetting('googleDriveAccessToken', refreshed.accessToken)
-        setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
-      } catch (err) {
-        return { destination: 'google-drive', success: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
-      }
-    }
-
-    const folder = folderId || settings.googleDriveFolderId
-    if (!folder) {
-      return { destination: 'google-drive', success: false, error: 'No Drive folder selected — choose one in Settings → Google Drive.' }
-    }
-    return uploadToGoogleDrive(imageData, googleDriveAccessToken, folder)
+    return uploadImageDataUrlToDrive(imageData, folderId)
   }
 }
