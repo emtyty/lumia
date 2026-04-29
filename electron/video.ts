@@ -108,7 +108,11 @@ function loadRoute(win: BrowserWindow, route: string) {
 // runtime resize entirely sidesteps the flicker that comes from racing
 // the BrowserWindow.setBounds against the renderer's mount/unmount of
 // the annotation row.
-const TOOLBAR_W = 800
+// Width is wider than the annotation pill itself so the in-DOM tooltips
+// hovering off either edge button still have room to render — too tight
+// and the tooltip clips against the window boundary on the outermost
+// tool / action buttons.
+const TOOLBAR_W = 920
 const TOOLBAR_H = 150
 
 function computeToolbarBounds(display: Electron.Display, rect?: { x: number; y: number; width: number; height: number }) {
