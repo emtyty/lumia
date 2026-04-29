@@ -24,6 +24,7 @@ import { showNotification } from './notify'
 import type { HistoryItem } from './types'
 import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
 import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
+import { setSnippingHijack } from './printscreen-key'
 import { preflightPermissions } from './permissions'
 import { autoUpdater } from 'electron-updater'
 import log from 'electron-log'
@@ -492,6 +493,12 @@ app.whenReady().then(async () => {
   // Keep the OS login-item entry in sync with the stored preference on every
   // launch (covers app moves, reinstalls, and settings changed while offline).
   applyLaunchAtStartup(getSettings().launchAtStartup)
+
+  // Mirror the PrintScreen-as-capture preference into Windows's registry on
+  // every launch. The toggle being on means: snipping hijack must be off so
+  // PrtSc reaches our globalShortcut. fire-and-forget; warnings are surfaced
+  // only via the IPC return when the user explicitly toggles in Settings.
+  void setSnippingHijack(!getSettings().printScreenAsCapture)
 
   setupCapture()
   setupVideo()
@@ -992,6 +999,25 @@ app.whenReady().then(async () => {
     setSetting(key, value as AppSettings[typeof key])
     if (key === 'launchAtStartup') applyLaunchAtStartup(value as boolean)
     if (key === 'historyRetentionDays') runHistoryPrune()
+  })
+
+  // Dedicated IPC for the PrintScreen toggle: it has two side-effects (rebind
+  // the global shortcut, write a Windows registry value) and the registry op
+  // can fail in a way the renderer needs to surface as a warning, so we don't
+  // route it through the generic settings:set channel. Returns
+  // `{ warning?: string }` — a present `warning` means "the setting was
+  // saved + shortcut updated, but registry write failed; Snipping Tool may
+  // still eat PrtSc on Windows".
+  ipcMain.handle('printscreen:set-enabled', async (_e, enabled: boolean) => {
+    setSetting('printScreenAsCapture', enabled)
+    // Manually toggling the setting also counts as "we asked, user answered"
+    // so the first-run prompt doesn't pop up later and confuse the user.
+    setSetting('printScreenPromptShown', true)
+    // Tear down + rebuild the hotkey table so setupHotkeys() picks up the
+    // new setting and (un)registers the PrtSc binding accordingly.
+    teardownHotkeys()
+    setupHotkeys()
+    return setSnippingHijack(!enabled)
   })
 
   // IPC: OCR & Auto-Blur

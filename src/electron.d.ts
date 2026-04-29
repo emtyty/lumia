@@ -13,6 +13,8 @@ interface AppSettings {
   lastCaptureKind: 'image' | 'video'
   lastImageMode: 'region' | 'window' | 'all-screen' | 'screen' | 'scrolling'
   lastVideoMode: 'region' | 'window' | 'screen'
+  printScreenAsCapture: boolean
+  printScreenPromptShown: boolean
 }
 
 declare global {
@@ -50,6 +52,7 @@ declare global {
       setHotkeyRecording: (recording: boolean) => Promise<void>
       getSettings: () => Promise<AppSettings>
       setSetting: (key: keyof AppSettings, value: unknown) => Promise<void>
+      setPrintScreenAsCapture: (enabled: boolean) => Promise<{ warning?: string }>
 
       gdriveStartAuth: () => Promise<{ success: boolean; error?: string; cancelled?: boolean }>
       gdriveCancelAuth: () => Promise<{ ok: boolean }>

@@ -21,7 +21,27 @@ export interface AppSettings {
   lastCaptureKind: CaptureKind
   lastImageMode: LastImageMode
   lastVideoMode: LastVideoMode
+  /** When true, the physical PrintScreen key is bound to "New Capture" via a
+   *  globalShortcut, and on Windows the "PrintScreen opens Snipping Tool"
+   *  registry hijack is turned off so the keystroke reaches us. The binding
+   *  is fixed (PrintScreen only) — toggle on/off only, no rebinding. */
+  printScreenAsCapture: boolean
+  /** True once the first-run prompt asking the user whether to bind PrintScreen
+   *  has been shown (and answered, either way). Used to suppress the prompt
+   *  on subsequent launches. Also flipped to true whenever the user toggles
+   *  printScreenAsCapture from Settings, so manual configuration counts as
+   *  having been asked. */
+  printScreenPromptShown: boolean
 }
+
+// On macOS, binding PrintScreen has no downside: built-in Apple keyboards
+// don't have a PrtSc key (so the globalShortcut never fires unintentionally),
+// the Windows registry hijack doesn't exist (setSnippingHijack is a no-op),
+// and external PC-style keyboards plugged into a Mac will Just Work. So
+// default to enabled there and skip the first-run prompt entirely. On
+// Windows it's opt-in via the dialog because flipping the registry value
+// affects Snipping Tool, which the user might rely on.
+const PRINT_SCREEN_DEFAULT = process.platform === 'darwin'
 
 const store = new Store<AppSettings>({
   name: 'settings',
@@ -38,7 +58,9 @@ const store = new Store<AppSettings>({
     historyRetentionDays: 0,
     lastCaptureKind: 'image',
     lastImageMode: 'region',
-    lastVideoMode: 'region'
+    lastVideoMode: 'region',
+    printScreenAsCapture: PRINT_SCREEN_DEFAULT,
+    printScreenPromptShown: PRINT_SCREEN_DEFAULT
   }
 })
 
@@ -66,7 +88,9 @@ export function getSettings(): AppSettings {
     historyRetentionDays: store.get('historyRetentionDays'),
     lastCaptureKind: store.get('lastCaptureKind'),
     lastImageMode: store.get('lastImageMode'),
-    lastVideoMode: store.get('lastVideoMode')
+    lastVideoMode: store.get('lastVideoMode'),
+    printScreenAsCapture: store.get('printScreenAsCapture'),
+    printScreenPromptShown: store.get('printScreenPromptShown')
   }
 }
 

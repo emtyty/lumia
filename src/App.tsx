@@ -6,6 +6,7 @@ import Dashboard from './windows/dashboard/Dashboard'
 import { AboutDialog } from './components/AboutDialog'
 import { ReleaseNotesDialog } from './components/ReleaseNotesDialog'
 import { UpdateNotification } from './components/UpdateNotification'
+import { PrintScreenPromptDialog } from './components/PrintScreenPromptDialog'
 
 // Code-split heavy routes. Konva (~150KB) only loads when Editor opens;
 // each standalone window only pulls its own renderer chunk instead of the
@@ -112,6 +113,7 @@ export default function App() {
       <AboutDialog />
       <ReleaseNotesDialog />
       <UpdateNotification />
+      <PrintScreenPromptDialog />
     </div>
   )
 }

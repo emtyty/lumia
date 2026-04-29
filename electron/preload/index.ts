@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Settings
   getSettings: () => ipcRenderer.invoke('settings:get'),
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
+  setPrintScreenAsCapture: (enabled: boolean) =>
+    ipcRenderer.invoke('printscreen:set-enabled', enabled),
 
   // Google Drive
   gdriveStartAuth: () => ipcRenderer.invoke('gdrive:startAuth'),
