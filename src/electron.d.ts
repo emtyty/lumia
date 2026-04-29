@@ -115,6 +115,7 @@ declare global {
         displayScaleFactor: number                                       // pins stream to exact physical dims
         outputSize?: { width: number; height: number }                   // physical-pixel output canvas dims (region/window)
       } | null>
+      recorderGetWatermark: () => Promise<string | null>
       recorderReady: (ok: boolean, error?: string) => Promise<void>
       recorderStateChange: (state: 'countdown' | 'recording' | 'paused' | 'stopping' | 'saving' | 'done' | 'error', payload?: unknown) => Promise<void>
       recorderTick: (elapsedMs: number) => Promise<void>

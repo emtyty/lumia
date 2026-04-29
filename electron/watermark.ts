@@ -40,6 +40,22 @@ function loadLogo(): Electron.NativeImage | null {
   }
 }
 
+/** Tunable watermark constants, shared with the video recorder so video
+ *  frames stamp the logo at the same size/opacity/margin as still images. */
+export const WATERMARK_SIZE_PCT = LOGO_SIZE_PCT
+export const WATERMARK_OPACITY = LOGO_OPACITY
+export const WATERMARK_MARGIN_PCT = LOGO_MARGIN_PCT
+
+/** Returns the watermark logo as a PNG data URL, or null if the asset is
+ *  missing. The video recorder ships this string to the headless recorder
+ *  renderer so it can decode the logo into an HTMLImageElement once and
+ *  composite it onto every frame on the canvas pipeline. */
+export function getWatermarkLogoDataUrl(): string | null {
+  const logo = loadLogo()
+  if (!logo) return null
+  return logo.toDataURL()
+}
+
 export function applyWatermark(dataUrl: string): string {
   try {
     if (!dataUrl || !dataUrl.startsWith('data:image/')) return dataUrl

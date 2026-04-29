@@ -157,6 +157,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Video recording — RecorderHost & Toolbar
   recorderGetTarget: () => ipcRenderer.invoke('recorder:get-target'),
+  recorderGetWatermark: () => ipcRenderer.invoke('recorder:get-watermark'),
   recorderReady: (ok: boolean, error?: string) => ipcRenderer.invoke('recorder:ready', ok, error),
   recorderStateChange: (state: string, payload?: unknown) =>
     ipcRenderer.invoke('recorder:state', state, payload),

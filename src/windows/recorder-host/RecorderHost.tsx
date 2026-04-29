@@ -121,23 +121,28 @@ export default function RecorderHost() {
           check()
         })
 
-        // Build the output stream that MediaRecorder will consume.
-        // - Region/window: pipe through a <canvas> so we only record the crop.
-        // - Screen: pass the desktop stream through directly.
-        let outStream: MediaStream
-        if ((target.kind === 'region' || target.kind === 'window') && target.rect && target.outputSize) {
-          outStream = buildCroppedStream(
-            desktopStream,
-            target.rect,
-            target.displayDipSize,
-            target.outputSize,
-            videoElRef,
-            canvasElRef,
-            drawLoopRef,
-          )
-        } else {
-          outStream = desktopStream
+        // Decode the watermark logo once. Failure here is non-fatal — the
+        // recording still proceeds, just without the corner stamp.
+        let logoImg: HTMLImageElement | null = null
+        try {
+          const logoDataUrl = await window.electronAPI?.recorderGetWatermark?.()
+          if (logoDataUrl) logoImg = await loadImage(logoDataUrl)
+        } catch {
+          logoImg = null
         }
+        if (!mounted) return
+
+        // Always pipe through a <canvas> so the watermark can be composited
+        // onto every recorded frame (region/window already needed canvas for
+        // cropping; screen mode now does too for parity).
+        const outStream = buildOutputStream(
+          desktopStream,
+          target,
+          logoImg,
+          videoElRef,
+          canvasElRef,
+          drawLoopRef,
+        )
         outStreamRef.current = outStream
 
         // Try to pre-acquire mic so the toggle is instant (muted by default).
@@ -317,26 +322,52 @@ export default function RecorderHost() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-/** Pipe the desktop stream through a <video> + <canvas> so the recorded
- *  output only contains the DIP rect the user selected in the overlay.
+// Watermark constants. Mirror electron/watermark.ts so the corner stamp on
+// recorded frames matches the one applied to still images.
+const WATERMARK_SIZE_PCT = 0.025
+const WATERMARK_OPACITY = 0.2
+const WATERMARK_MARGIN_PCT = 0.15
+
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image load failed'))
+    img.src = src
+  })
+}
+
+/** Pipe the desktop stream through a <video> + <canvas> so MediaRecorder
+ *  consumes a stream we control. Region/window crops via srcRect; screen
+ *  mode draws the full frame. Either way the watermark logo is composited
+ *  in the bottom-left every frame, matching the still-image stamp.
  *
  *  The DIP→stream-pixel scale is derived from actual frame dims at draw
- *  time (same pattern as image region capture). The stream is pinned to
- *  the display's physical resolution upstream via getUserMedia min=max
- *  constraints, so sx and sy should match the display's scale factor. */
-function buildCroppedStream(
+ *  time. The desktop stream is pinned to the display's physical resolution
+ *  upstream via getUserMedia min=max constraints, so sx and sy should
+ *  match the display's scale factor. */
+function buildOutputStream(
   desktopStream: MediaStream,
-  rectDip: { x: number; y: number; width: number; height: number },
-  displayDipSize: { width: number; height: number },
-  outputSize: { width: number; height: number },
+  target: RecordingTarget,
+  logoImg: HTMLImageElement | null,
   videoRef: React.MutableRefObject<HTMLVideoElement | null>,
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
   loopRef: React.MutableRefObject<(() => void) | null>,
 ): MediaStream {
   const video = videoRef.current!
   const canvas = canvasRef.current!
-  canvas.width = outputSize.width
-  canvas.height = outputSize.height
+
+  // Output canvas dims: explicit outputSize for region/window crops, full
+  // physical desktop dims for screen mode.
+  const isCrop = (target.kind === 'region' || target.kind === 'window') && target.rect != null && target.outputSize != null
+  const outW = isCrop
+    ? target.outputSize!.width
+    : Math.max(1, Math.round(target.displayDipSize.width  * target.displayScaleFactor))
+  const outH = isCrop
+    ? target.outputSize!.height
+    : Math.max(1, Math.round(target.displayDipSize.height * target.displayScaleFactor))
+  canvas.width = outW
+  canvas.height = outH
 
   video.srcObject = desktopStream
   video.muted = true
@@ -344,17 +375,38 @@ function buildCroppedStream(
   video.play().catch(() => { /* autoplay policy — muted is allowed */ })
 
   const ctx = canvas.getContext('2d', { alpha: false })!
+
+  // Pre-compute watermark placement off the output canvas dims, not the
+  // source stream — the logo follows the recorded frame even if the stream
+  // is larger (region crop) or matches it (screen).
+  const logoW = Math.max(12, Math.round(Math.min(outW, outH) * WATERMARK_SIZE_PCT))
+  const logoAspect = logoImg ? logoImg.naturalHeight / logoImg.naturalWidth : 1
+  const logoH = Math.round(logoW * logoAspect)
+  const logoMargin = Math.max(2, Math.round(logoW * WATERMARK_MARGIN_PCT))
+  const logoX = logoMargin
+  const logoY = outH - logoH - logoMargin
+
   const drawFrame = () => {
     const vw = video.videoWidth
     const vh = video.videoHeight
     if (vw <= 0 || vh <= 0) return
-    const sx = vw / displayDipSize.width
-    const sy = vh / displayDipSize.height
-    const srcX = Math.max(0, Math.min(vw - 1, Math.round(rectDip.x * sx)))
-    const srcY = Math.max(0, Math.min(vh - 1, Math.round(rectDip.y * sy)))
-    const srcW = Math.max(1, Math.min(vw - srcX, Math.round(rectDip.width  * sx)))
-    const srcH = Math.max(1, Math.min(vh - srcY, Math.round(rectDip.height * sy)))
-    ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
+    if (isCrop) {
+      const rectDip = target.rect!
+      const sx = vw / target.displayDipSize.width
+      const sy = vh / target.displayDipSize.height
+      const srcX = Math.max(0, Math.min(vw - 1, Math.round(rectDip.x * sx)))
+      const srcY = Math.max(0, Math.min(vh - 1, Math.round(rectDip.y * sy)))
+      const srcW = Math.max(1, Math.min(vw - srcX, Math.round(rectDip.width  * sx)))
+      const srcH = Math.max(1, Math.min(vh - srcY, Math.round(rectDip.height * sy)))
+      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, outW, outH)
+    } else {
+      ctx.drawImage(video, 0, 0, vw, vh, 0, 0, outW, outH)
+    }
+    if (logoImg) {
+      ctx.globalAlpha = WATERMARK_OPACITY
+      ctx.drawImage(logoImg, logoX, logoY, logoW, logoH)
+      ctx.globalAlpha = 1
+    }
   }
 
   // Prefer requestVideoFrameCallback so we redraw exactly once per source
@@ -375,6 +427,7 @@ function buildCroppedStream(
       v.requestVideoFrameCallback!(tick)
     }
     v.requestVideoFrameCallback(tick)
+    loopRef.current = () => { cancelled = true }
   } else {
     let raf = 0
     const tick = () => {
@@ -384,9 +437,7 @@ function buildCroppedStream(
     }
     raf = requestAnimationFrame(tick)
     loopRef.current = () => { cancelled = true; cancelAnimationFrame(raf) }
-    return canvas.captureStream(TARGET_FPS)
   }
-  loopRef.current = () => { cancelled = true }
 
   return canvas.captureStream(TARGET_FPS)
 }

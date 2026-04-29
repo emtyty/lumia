@@ -18,6 +18,7 @@ import { localTimestamp } from './utils'
 import { makeThumbnail } from './thumbnail'
 import { openAnnotation, closeAnnotation, destroyAnnotation, isAnnotationOpen, setupAnnotation } from './annotation'
 import { forceWindowsExcludeFromCapture } from './native-input'
+import { getWatermarkLogoDataUrl } from './watermark'
 
 const HIDE_DELAY_MS = process.platform === 'darwin' ? 250 : 200
 const OVERLAY_GONE_DELAY_MS = 120
@@ -520,6 +521,11 @@ export function setupVideo() {
 
   // RecorderHost fetches its target on load
   ipcMain.handle('recorder:get-target', () => recordingTarget)
+
+  // Logo dataURL for the watermark composited onto every recorded frame.
+  // Shipped on demand (not bundled in the renderer) because the asset lives
+  // under resources/ and is reachable only from the main process.
+  ipcMain.handle('recorder:get-watermark', () => getWatermarkLogoDataUrl())
 
   // RecorderHost reports readiness (stream acquired or error)
   ipcMain.handle('recorder:ready', (_e, ok: boolean, error?: string) => {
