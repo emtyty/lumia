@@ -891,10 +891,16 @@ footer a { color: var(--primary); text-decoration: none; }
       var dbg = gl.getExtension('WEBGL_debug_renderer_info');
       var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
       if (!renderer) return null;
-      // Apple Silicon: "Apple GPU", "Apple M1", "Apple M2 Pro", ...
-      // Intel Mac:     "Intel Iris ...", "AMD Radeon ...", "ATI ..."
-      if (/Apple/i.test(renderer)) return 'arm64';
-      return 'x64';
+      // Chrome / Edge on macOS use ANGLE's Metal backend, which always prefixes
+      // the renderer with "ANGLE (Apple, ANGLE Metal Renderer: <real GPU>, ...)"
+      // — the literal "Apple" appears even on Intel Macs, so check the real GPU
+      // name first.
+      //   Intel Mac: "ANGLE (Apple, ANGLE Metal Renderer: Intel(R) UHD Graphics 630, ...)"
+      //   M-series:  "ANGLE (Apple, ANGLE Metal Renderer: Apple M2 Pro, ...)"
+      //   Safari M:  "Apple GPU"
+      if (/Intel|AMD|Radeon|NVIDIA|GeForce|ATI/i.test(renderer)) return 'x64';
+      if (/Apple GPU|Apple M\d/i.test(renderer)) return 'arm64';
+      return null;
     } catch (e) { return null; }
   }
 
