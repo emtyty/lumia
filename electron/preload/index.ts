@@ -188,6 +188,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   annotationSetStroke: (size: number) => ipcRenderer.invoke('annotation:set-stroke', size),
   annotationClear: () => ipcRenderer.invoke('annotation:clear'),
   annotationUndo: () => ipcRenderer.invoke('annotation:undo'),
+  // Hover-driven click-through for the live annotation overlay. The overlay
+  // sits in pass-through mode while tool='none' so the user can interact
+  // with the recorded app — cursor entering a stroke flips the overlay
+  // back to capture so the click selects the shape (for delete/drag),
+  // cursor leaving flips it back. Same pattern as toolbar:set-interactive.
+  annotationOverlaySetInteractive: (interactive: boolean) =>
+    ipcRenderer.send('annotation-overlay:set-interactive', interactive),
   onAnnotationState: (cb: (state: { tool: string; color: string; strokeWidth: number }) => void) =>
     ipcRenderer.on('annotation:state', (_e, state) => cb(state)),
   onAnnotationClear: (cb: () => void) =>

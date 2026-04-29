@@ -32,13 +32,11 @@ type Phase = 'init' | 'countdown' | 'recording' | 'paused' | 'stopping' | 'savin
 type Tool = 'none' | 'select' | 'pen' | 'arrow' | 'rect' | 'ellipse' | 'highlighter'
 
 const ANNOTATE_TOOLS: { id: Tool; icon: string; label: string }[] = [
-  // 'none' is the interact mode — overlay flips to click-through so the
-  // user can drive the recorded app with the cursor again. Picking any of
-  // the actual drawing tools below re-locks the overlay for ink.
-  { id: 'none',        icon: 'arrow_selector_tool', label: 'Cursor (interact with app)' },
-  // 'select' lets the user click an existing shape to bring up an X
-  // delete handle; click the X to remove just that one stroke.
-  { id: 'select',      icon: 'highlight_alt',  label: 'Select stroke to delete' },
+  // 'none' doubles as the select mode now — clicks pass through to the
+  // recorded app on empty area, but clicking an existing stroke's outline
+  // selects it for delete/drag. Picking any of the drawing tools below
+  // re-locks the overlay for ink.
+  { id: 'none',        icon: 'arrow_selector_tool', label: 'Cursor (interact / select)' },
   { id: 'pen',         icon: 'draw',          label: 'Pen' },
   { id: 'arrow',       icon: 'arrow_forward', label: 'Arrow' },
   { id: 'rect',        icon: 'crop_square',   label: 'Rectangle' },

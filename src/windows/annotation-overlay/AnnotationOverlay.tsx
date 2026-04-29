@@ -41,11 +41,13 @@ export default function AnnotationOverlay() {
   const stageRef = useRef<Konva.Stage>(null)
   const trRef = useRef<Konva.Transformer>(null)
 
-  // Drop the selection whenever the user switches away from select mode
-  // (drawing on top of the X handle would be confusing) or the shape it
-  // points at goes away (e.g. via Clear / Undo).
+  // Drop the selection whenever the user switches to a drawing tool
+  // (drawing on top of the X handle would be confusing). Selection is
+  // valid in both 'select' and 'none' modes — 'none' acts like 'select'
+  // for shape clicks while still passing empty-area clicks through to
+  // the recorded app underneath.
   useEffect(() => {
-    if (draw.tool !== 'select') setSelectedId(null)
+    if (draw.tool !== 'select' && draw.tool !== 'none') setSelectedId(null)
   }, [draw.tool])
   useEffect(() => {
     if (selectedId && !shapes.some(s => s.id === selectedId)) setSelectedId(null)
@@ -156,11 +158,13 @@ export default function AnnotationOverlay() {
     const stage = e.target.getStage()
     const pos = stage?.getPointerPosition()
     if (!pos) return
-    if (draw.tool === 'select') {
-      // Clicking empty stage area in select mode dismisses the X handle.
-      // Per-shape clicks are handled by their own onClick listener and
-      // don't bubble up here because Konva stops propagation by default
-      // when a child sets a target.
+    if (draw.tool === 'select' || draw.tool === 'none') {
+      // Clicking empty stage area dismisses the X handle. Per-shape
+      // clicks have their own onClick listener and don't bubble up
+      // because Konva stops propagation when a child claims the target.
+      // In 'none' mode this fires only when a selection is active —
+      // that's the only state where the overlay captures empty-area
+      // clicks (see the selection-driven setInteractive effect above).
       if (e.target === stage) setSelectedId(null)
       return
     }
@@ -193,19 +197,49 @@ export default function AnnotationOverlay() {
     setShapes(prev => [...prev, s])
   }
 
+  // In tool='none' mode the overlay starts in click-through (so the user
+  // can drive the recorded app underneath), but we still want clicking on
+  // an existing stroke to select it for delete/drag. Toggle the OS-level
+  // ignoreMouseEvents flag from Konva enter/leave so the cursor over a
+  // shape captures clicks, while empty area stays click-through.
+  // Skipped while a selection is active — that case is governed by the
+  // selection effect below, which forces capture on so empty-area clicks
+  // can dismiss the selection instead of leaking through to the app.
+  const setOverlayInteractive = (interactive: boolean) => {
+    if (draw.tool !== 'none') return
+    if (selectedId) return
+    window.electronAPI?.annotationOverlaySetInteractive?.(interactive)
+  }
+
+  // While a shape is selected in 'none' mode, force the overlay into
+  // capture so an empty-area click dismisses the selection (handled in
+  // onPointerDown below) instead of falling through to the recorded app
+  // and leaving the X handle stranded. When selection clears, revert to
+  // hover-driven pass-through so the user can interact with the app
+  // through empty space again.
+  useEffect(() => {
+    if (draw.tool !== 'none') return
+    window.electronAPI?.annotationOverlaySetInteractive?.(!!selectedId)
+  }, [selectedId, draw.tool])
+
   const renderShape = (s: Shape, key: number | string, isPreview = false) => {
     const isHighlight = s.highlight === true
     const opacity = isHighlight ? 0.35 : 1
-    // In select mode, every committed shape is interactive: listening +
-    // draggable, click selects it. The currently-being-drawn preview is
-    // still rendered every frame so we exclude it from selection / drag
-    // — it has no committed id yet.
-    const selectable = !isPreview && draw.tool === 'select'
+    // Shapes are interactive (click to select, drag to move) in either
+    // 'select' mode or 'none' mode. 'select' captures the whole overlay
+    // unconditionally; 'none' only captures while the cursor is over a
+    // shape, with empty area passing clicks through to the recorded app.
+    // Preview (the in-flight drawing) is excluded — it has no committed id.
+    const selectable = !isPreview && (draw.tool === 'select' || draw.tool === 'none')
 
     // Visual node — colours and geometry. Konva's hit-testing cascades
     // from the wrapping Group's `listening`, so we don't need to explicitly
     // set listening here. hitStrokeWidth makes thin pen strokes easier to
-    // grab when the user is in select mode.
+    // grab when the user is in select mode. fillEnabled:false on Rect /
+    // Ellipse drops the interior off the hit canvas so the user can only
+    // grab them by their outline — clicking the transparent interior
+    // (which has no visible fill anyway) falls through, matching what
+    // the user sees on screen.
     const inner = (() => {
       const visual = {
         stroke: s.color,
@@ -227,10 +261,10 @@ export default function AnnotationOverlay() {
       if (s.kind === 'rect') {
         const x = s.w < 0 ? s.x + s.w : s.x
         const y = s.h < 0 ? s.y + s.h : s.y
-        return <Rect {...visual} x={x} y={y} width={Math.abs(s.w)} height={Math.abs(s.h)} />
+        return <Rect {...visual} fillEnabled={false} x={x} y={y} width={Math.abs(s.w)} height={Math.abs(s.h)} />
       }
       if (s.kind === 'ellipse') {
-        return <Ellipse {...visual} x={s.x} y={s.y} radiusX={s.rx} radiusY={s.ry} />
+        return <Ellipse {...visual} fillEnabled={false} x={s.x} y={s.y} radiusX={s.rx} radiusY={s.ry} />
       }
       return (
         <Arrow
@@ -252,8 +286,16 @@ export default function AnnotationOverlay() {
         listening={selectable}
         draggable={selectable}
         onClick={(e) => { if (selectable) { e.cancelBubble = true; setSelectedId(s.id) } }}
-        onMouseEnter={() => { if (selectable) document.body.style.cursor = 'pointer' }}
-        onMouseLeave={() => { if (selectable) document.body.style.cursor = 'default' }}
+        onMouseEnter={() => {
+          if (!selectable) return
+          document.body.style.cursor = 'pointer'
+          setOverlayInteractive(true)
+        }}
+        onMouseLeave={() => {
+          if (!selectable) return
+          document.body.style.cursor = 'default'
+          setOverlayInteractive(false)
+        }}
         onDragEnd={(e) => {
           const node = e.target
           const dx = node.x()
@@ -326,8 +368,19 @@ export default function AnnotationOverlay() {
             x={deleteHandle.x + 12}
             y={deleteHandle.y - 12}
             onClick={(e) => { e.cancelBubble = true; deleteSelected() }}
-            onMouseEnter={() => { document.body.style.cursor = 'pointer' }}
-            onMouseLeave={() => { document.body.style.cursor = 'default' }}
+            onMouseEnter={() => {
+              document.body.style.cursor = 'pointer'
+              // X handle floats above-right of the shape — outside the
+              // shape's own bounding rect — so cursor leaving the shape
+              // would otherwise revert the overlay to pass-through and
+              // the X click would land on the app underneath. Keep
+              // capture on while the cursor is over the X.
+              setOverlayInteractive(true)
+            }}
+            onMouseLeave={() => {
+              document.body.style.cursor = 'default'
+              setOverlayInteractive(false)
+            }}
           >
             <Circle radius={11} fill="#ef4444" stroke="#ffffff" strokeWidth={2} shadowColor="#000" shadowBlur={6} shadowOpacity={0.4} />
             <Line points={[-4, -4, 4, 4]} stroke="#ffffff" strokeWidth={2} lineCap="round" />

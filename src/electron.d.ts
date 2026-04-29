@@ -149,6 +149,7 @@ declare global {
       annotationSetStroke: (size: number) => Promise<void>
       annotationClear: () => Promise<void>
       annotationUndo: () => Promise<void>
+      annotationOverlaySetInteractive: (interactive: boolean) => void
       onAnnotationState: (cb: (state: { tool: string; color: string; strokeWidth: number }) => void) => void
       onAnnotationClear: (cb: () => void) => void
       onAnnotationUndo: (cb: () => void) => void

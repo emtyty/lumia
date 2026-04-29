@@ -273,4 +273,22 @@ export function setupAnnotation() {
   })
   ipcMain.handle('annotation:clear', () => sendToOverlay('annotation:clear'))
   ipcMain.handle('annotation:undo', () => sendToOverlay('annotation:undo'))
+
+  // Renderer-driven hover hit-test for tool='none' mode. The overlay is in
+  // pass-through (setIgnoreMouseEvents true,forward) by default so the
+  // user can interact with the recorded app. When the cursor enters an
+  // existing stroke, the renderer flips the overlay back to capture so
+  // the click registers as a select; on leave, back to pass-through.
+  // Sent on transition only.
+  ipcMain.on('annotation-overlay:set-interactive', (_e, interactive: boolean) => {
+    if (!overlayWin || overlayWin.isDestroyed()) return
+    // Don't override drawing/select modes — those want full capture
+    // unconditionally. The hit-test toggle only applies in 'none'.
+    if (state.tool !== 'none') return
+    if (interactive) {
+      overlayWin.setIgnoreMouseEvents(false)
+    } else {
+      overlayWin.setIgnoreMouseEvents(true, { forward: true })
+    }
+  })
 }
