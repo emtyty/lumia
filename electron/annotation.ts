@@ -137,10 +137,12 @@ function createOverlayWindow(display: Electron.Display) {
   })
   win.setMenu(null)
   // Stay above the recorded app (including fullscreen games / videos) so
-  // strokes paint on top. The recording toolbar and the annotation
-  // palette are pushed above this via SetWindowPos(HWND_TOPMOST) once
-  // the overlay is shown — that's how their buttons stay clickable
-  // despite the overlay being a fullscreen click-capturing window.
+  // strokes paint on top. The recording toolbar, border, and annotation
+  // palette use the same level + relativeLevel:1 so they stack above this
+  // overlay on macOS without any moveTop race. On Windows there are no
+  // levels, so SetWindowPos(HWND_TOPMOST) is still applied via
+  // raiseAboveOverlay below to keep their buttons clickable despite the
+  // overlay being a fullscreen click-capturing window.
   win.setAlwaysOnTop(true, 'screen-saver')
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   // Overlay is intentionally NOT content-protected — strokes have to land
@@ -194,7 +196,12 @@ function createToolbarWindow(display: Electron.Display, anchor: { x: number; y: 
     forceWindowsExcludeFromCapture(win)
   })
   win.setMenu(null)
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // relativeLevel:1 puts the palette one step above the annotation overlay
+  // (which uses plain 'screen-saver') so clicks land on the buttons no
+  // matter when each window's ready-to-show fires. This replaces the
+  // earlier moveTop-on-timer hack which was racy when the overlay's
+  // showInactive arrived after the moveTop call.
+  win.setAlwaysOnTop(true, 'screen-saver', 1)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   // Toolbar buttons must NOT show up in the recording.
   win.setContentProtection(true)
@@ -274,16 +281,12 @@ export function openAnnotation(
     dragLinkCleanup = linkToolbarDrag(recordingToolbar, toolbarWin)
   }
 
-  // Force the palette + caller-supplied windows (recording toolbar, border)
-  // to the top of the OS topmost-stack. Plain setAlwaysOnTop doesn't
-  // reliably re-raise an already-topmost window; we need a real re-order:
-  //   - Win32: SetWindowPos(HWND_TOPMOST) via koffi.
-  //   - macOS: BrowserWindow.moveTop() → NSWindow.orderFrontRegardless:,
-  //     which re-orders within the screen-saver level group without
-  //     stealing key focus from the recorded app.
-  // Without this, the overlay (created last, same `screen-saver` level)
-  // ends up above the pre-existing recording toolbar / border, so any
-  // drawing tool would swallow clicks meant for the Stop button.
+  // On Windows there are no NSWindowLevel-style layers, only HWND_TOPMOST
+  // as a binary flag — order within the topmost group is creation/raise
+  // order. Force the palette + caller-supplied windows above the overlay
+  // via SetWindowPos(HWND_TOPMOST). On macOS this is unnecessary because
+  // the toolbars/border use relativeLevel:1 above the overlay's plain
+  // 'screen-saver' level, so the OS already enforces the stacking.
   //
   // Defer until the next tick so the overlay's window handle is fully
   // realised in the topmost group before we re-raise the others on top.
@@ -341,23 +344,14 @@ function linkToolbarDrag(a: BrowserWindow, b: BrowserWindow): () => void {
   }
 }
 
-/** Re-raise each window above the live annotation overlay. The overlay
- *  shares the same `screen-saver` level as the toolbars, so we have to
- *  do an explicit re-order — relying on the level alone leaves the
- *  most-recently-created window (the overlay) on top within that group.
- *
- *  Win32: SetWindowPos(HWND_TOPMOST) via koffi.
- *  macOS / Linux: moveTop() → NSWindow.orderFrontRegardless:, which
- *  re-orders within the same NSWindowLevel without stealing key focus. */
+/** Re-raise each window above the live annotation overlay on Windows.
+ *  Windows has no level-style stacking — only the binary HWND_TOPMOST
+ *  flag — so order within the topmost group is determined by the most
+ *  recent SetWindowPos call. macOS and Linux rely on relativeLevel:1
+ *  applied at window creation, so this is a no-op there. */
 function raiseAboveOverlay(wins: (BrowserWindow | null)[]) {
-  if (process.platform === 'win32') {
-    forceWindowsTopmost(wins)
-    return
-  }
-  for (const w of wins) {
-    if (!w || w.isDestroyed()) continue
-    try { w.moveTop() } catch { /* ignore */ }
-  }
+  if (process.platform !== 'win32') return
+  forceWindowsTopmost(wins)
 }
 
 /** Direct Win32 SetWindowDisplayAffinity(HWND, WDA_EXCLUDEFROMCAPTURE).

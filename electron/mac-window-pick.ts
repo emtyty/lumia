@@ -34,7 +34,7 @@ let busy = false
 
 function getBinaryPath(): string | null {
   // Dev: <project>/electron/helpers/window-at-point (resolved relative to out/main)
-  const devPath = resolve(__dirname, '..', 'electron', 'helpers', 'window-at-point')
+  const devPath = resolve(__dirname, '..', '..', 'electron', 'helpers', 'window-at-point')
   if (existsSync(devPath)) return devPath
 
   // Prod: bundled via electron-builder extraResources → Contents/Resources/window-at-point

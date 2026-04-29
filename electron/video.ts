@@ -201,8 +201,10 @@ function createRecordingToolbar(display: Electron.Display, rect?: { x: number; y
   // screen-saver is the highest Z level available — stays above fullscreen
   // apps, browser fullscreen video, games, etc. Together with the
   // visibleOnFullScreen flag this keeps the Stop button reachable no matter
-  // what the user is recording.
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // what the user is recording. relativeLevel:1 keeps this above the
+  // annotation overlay (which sits at plain screen-saver) on macOS without
+  // a moveTop race — the OS enforces the ordering.
+  win.setAlwaysOnTop(true, 'screen-saver', 1)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   // Exclude from screen capture so the toolbar itself never shows up in the
   // recorded video (Win 10 1903+ / macOS 10.15+). Without this, screen-mode
@@ -245,7 +247,8 @@ function createRecordingBorder(display: Electron.Display, rect: { x: number; y: 
     })
   }
   win.setMenu(null)
-  win.setAlwaysOnTop(true, 'screen-saver')
+  // relativeLevel:1 keeps the border above the annotation overlay on macOS.
+  win.setAlwaysOnTop(true, 'screen-saver', 1)
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   win.setIgnoreMouseEvents(true, { forward: false })
   // Exclude from screen capture — the red border is a UI annotation, not
