@@ -63,6 +63,9 @@ export default function ShareDialog({ imageDataUrl, templateId, onClose }: Props
     setStatus('loading')
     try {
       await window.electronAPI?.saveFile(imageDataUrl, res.filePath)
+      // Pass dataUrl through so the main process can derive a thumbnail.
+      // The full image is already on disk at res.filePath and won't be stored
+      // in the history JSON — only a compact thumbnail ends up persisted.
       window.electronAPI?.addHistoryItem({
         id: crypto.randomUUID(),
         timestamp: Date.now(),

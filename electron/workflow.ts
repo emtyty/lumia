@@ -1,16 +1,17 @@
-import { clipboard, nativeImage, shell, Notification } from 'electron'
+import { clipboard, dialog, nativeImage, shell } from 'electron'
 import { writeFile, mkdir } from 'fs/promises'
-import { join } from 'path'
+import { dirname, join } from 'path'
 import { homedir } from 'os'
 import type { TemplateStore } from './templates'
 import type { WorkflowResult, UploadResult, UploadDestination } from './types'
-import { uploadToImgur } from './uploaders/imgur'
-import { uploadToCustom } from './uploaders/custom'
 import { uploadToGoogleDrive, refreshGoogleToken } from './uploaders/googledrive'
 import { uploadToR2 } from './uploaders/r2'
 import { HistoryStore } from './history'
-import { getSettings } from './settings'
+import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir } from './settings'
+import { localTimestamp } from './utils'
+import { makeThumbnail } from './thumbnail'
 import { getMainWindow } from './index'
+import { showNotification } from './notify'
 import { v4 as uuidv4 } from 'uuid'
 
 export class WorkflowEngine {
@@ -18,7 +19,7 @@ export class WorkflowEngine {
 
   constructor(private templateStore: TemplateStore) {}
 
-  async run(templateId: string, imageData: string, destinationIndex?: number): Promise<WorkflowResult> {
+  async run(templateId: string, imageData: string, destinationIndex?: number, historyId?: string): Promise<WorkflowResult> {
     const template = this.templateStore.getById(templateId)
     if (!template) throw new Error(`Template not found: ${templateId}`)
 
@@ -37,13 +38,15 @@ export class WorkflowEngine {
       }
 
       if (step.type === 'save') {
-        const ts = new Date().toISOString().replace(/[:.]/g, '-')
-        const filename = `capture-${ts}.png`
-        const dir = step.path && step.path.trim()
-          ? step.path
-          : getSettings().defaultSavePath || join(homedir(), 'Pictures', 'ShareAnywhere')
-        await mkdir(dir, { recursive: true })
-        const filePath = join(dir, filename)
+        // Empty path = "surface a Save button in the editor only". The button
+        // calls runInlineAction('save', ...) which opens a Save-As dialog.
+        // Skip here so destination clicks don't silently auto-save a duplicate.
+        if (!step.path || !step.path.trim()) continue
+        const ts = localTimestamp()
+        const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+        const filename = `capture-${ts}.${ext}`
+        await mkdir(step.path, { recursive: true })
+        const filePath = join(step.path, filename)
         const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
         await writeFile(filePath, Buffer.from(base64, 'base64'))
         result.savedPath = filePath
@@ -99,23 +102,39 @@ export class WorkflowEngine {
         if (uploaded > 0) parts.push(`Uploaded to ${uploaded} destination${uploaded > 1 ? 's' : ''}`)
         if (failed > 0) parts.push(`${failed} upload${failed > 1 ? 's' : ''} failed`)
 
-        new Notification({
-          title: 'ShareAnywhere',
-          body: parts.join(' · ') || 'Capture complete'
-        }).show()
+        showNotification({
+          body: parts.join(' · ') || 'Capture complete',
+          thumbnailDataUrl: imageData,
+        })
       }
     }
 
     // ── Save to history ──
-    this.historyStore.add({
-      id: uuidv4(),
-      timestamp: Date.now(),
-      name: `capture-${new Date().toLocaleString()}`,
-      dataUrl: imageData,
-      filePath: result.savedPath,
-      type: 'screenshot',
-      uploads: result.uploads
-    })
+    // When the Editor is acting on an existing history item (annotations, a
+    // prior capture), merge the new uploads into it rather than adding a
+    // duplicate row. Without this, clicking Share on a history-opened item
+    // created a second identical entry every time.
+    if (historyId) {
+      const existing = this.historyStore.getAll().find(i => i.id === historyId)
+      if (existing) {
+        const nextByDest = new Map(result.uploads.map(u => [u.destination, u]))
+        const mergedUploads: UploadResult[] = [
+          ...(existing.uploads ?? []).filter(u => !nextByDest.has(u.destination)),
+          ...result.uploads,
+        ]
+        this.historyStore.update(historyId, { uploads: mergedUploads })
+      }
+    } else {
+      this.historyStore.add({
+        id: uuidv4(),
+        timestamp: Date.now(),
+        name: `capture-${localTimestamp()}`,
+        thumbnailUrl: makeThumbnail(imageData),
+        filePath: result.savedPath,
+        type: 'screenshot',
+        uploads: result.uploads,
+      })
+    }
 
     // Send result to renderer for the upload summary toast
     getMainWindow()?.webContents.send('workflow:result', result)
@@ -123,25 +142,39 @@ export class WorkflowEngine {
     return result
   }
 
-  async runInlineAction(actionType: 'clipboard' | 'save', imageData: string): Promise<void> {
+  async runInlineAction(actionType: 'clipboard' | 'save', imageData: string): Promise<{ canceled?: boolean }> {
     if (actionType === 'clipboard') {
       const img = nativeImage.createFromDataURL(imageData)
       clipboard.writeImage(img)
-    } else if (actionType === 'save') {
-      const ts = new Date().toISOString().replace(/[:.]/g, '-')
-      const filename = `capture-${ts}.png`
-      const dir = getSettings().defaultSavePath || join(homedir(), 'Pictures', 'Lumia')
-      await mkdir(dir, { recursive: true })
-      const filePath = join(dir, filename)
-      const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
-      await writeFile(filePath, Buffer.from(base64, 'base64'))
+      return {}
     }
+
+    // 'save' — always prompt the user for a location so they can pick the folder.
+    const ts = localTimestamp()
+    const ext = imageData.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+    const filename = `capture-${ts}.${ext}`
+    const startDir = await resolveSaveStartDir()
+
+    const opts: Electron.SaveDialogOptions = {
+      defaultPath: join(startDir, filename),
+      filters: [{ name: 'Image', extensions: [ext] }]
+    }
+    const mainWin = getMainWindow()
+    const result = mainWin
+      ? await dialog.showSaveDialog(mainWin, opts)
+      : await dialog.showSaveDialog(opts)
+
+    if (result.canceled || !result.filePath) return { canceled: true }
+
+    await mkdir(dirname(result.filePath), { recursive: true })
+    const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
+    await writeFile(result.filePath, Buffer.from(base64, 'base64'))
+    rememberSaveDir(dirname(result.filePath))
+    return {}
   }
 
   private async upload(dest: UploadDestination, imageData: string): Promise<UploadResult> {
     switch (dest.type) {
-      case 'imgur': return uploadToImgur(imageData, dest.clientId)
-      case 'custom': return uploadToCustom(imageData, dest.url, dest.headers, dest.fieldName)
       case 'google-drive': return this.uploadToGoogleDrive(imageData, dest.folderId)
       case 'r2': return this.uploadToR2(imageData, dest.bucket)
     }
@@ -161,14 +194,15 @@ export class WorkflowEngine {
   private async uploadToGoogleDrive(imageData: string, folderId?: string): Promise<UploadResult> {
     const settings = getSettings()
     let { googleDriveAccessToken } = settings
-    const { googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+    const { googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+    const googleDriveClientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
+    const googleDriveClientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
 
     // Auto-refresh token if expired
     if (googleDriveRefreshToken && Date.now() >= googleDriveTokenExpiresAt - 60_000) {
       try {
         const refreshed = await refreshGoogleToken(googleDriveClientId, googleDriveClientSecret, googleDriveRefreshToken)
         googleDriveAccessToken = refreshed.accessToken
-        const { setSetting } = await import('./settings')
         setSetting('googleDriveAccessToken', refreshed.accessToken)
         setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
       } catch (err) {
@@ -176,7 +210,10 @@ export class WorkflowEngine {
       }
     }
 
-    const folder = folderId || settings.googleDriveFolderId || undefined
+    const folder = folderId || settings.googleDriveFolderId
+    if (!folder) {
+      return { destination: 'google-drive', success: false, error: 'No Drive folder selected — choose one in Settings → Google Drive.' }
+    }
     return uploadToGoogleDrive(imageData, googleDriveAccessToken, folder)
   }
 }

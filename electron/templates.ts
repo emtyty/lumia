@@ -1,10 +1,10 @@
 import Store from 'electron-store'
 import { v4 as uuidv4 } from 'uuid'
 import type { WorkflowTemplate } from './types'
-import { homedir } from 'os'
-import { join } from 'path'
 
-const defaultSavePath = join(homedir(), 'Pictures', 'Lumia')
+// Originals are auto-saved to ~/Pictures/Lumia/ by capture.ts — workflows no
+// longer include a redundant save step. The editor's Save button opens a
+// Save-As dialog (handled by `runInlineAction('save')`) for user-chosen paths.
 
 const BUILT_IN: WorkflowTemplate[] = [
   {
@@ -18,12 +18,16 @@ const BUILT_IN: WorkflowTemplate[] = [
   },
   {
     id: 'builtin-r2',
-    name: 'Save & Share Link',
+    name: 'Annotate & Share Link',
     icon: 'cloud_upload',
     builtIn: true,
+    // `save` with empty path is a marker: it surfaces a "Save" button in the
+    // editor (via deriveActions) but workflow.ts skips executing it during
+    // destination clicks — so the button opens a Save-As dialog on demand
+    // rather than silently writing a duplicate file every time you upload.
     afterCapture: [
       { type: 'annotate' },
-      { type: 'save', path: defaultSavePath },
+      { type: 'save', path: '' },
       { type: 'clipboard' }
     ],
     destinations: [{ type: 'r2' }, { type: 'google-drive' }],

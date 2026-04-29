@@ -1,30 +1,33 @@
 import { useState, useEffect, useRef } from 'react'
 
 interface AppSettings {
-  imgurClientId: string
-  defaultSavePath: string
-  customUploadUrl: string
-  customUploadHeaders: Record<string, string>
-  customUploadFieldName: string
   theme: 'dark' | 'light' | 'system'
   googleDriveRefreshToken: string
   googleDriveAccessToken: string
   googleDriveTokenExpiresAt: number
   googleDriveFolderId: string
+  launchAtStartup: boolean
+  historyRetentionDays: number
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
-  imgurClientId: '',
-  defaultSavePath: '',
-  customUploadUrl: '',
-  customUploadHeaders: {},
-  customUploadFieldName: 'file',
   theme: 'system',
   googleDriveRefreshToken: '',
   googleDriveAccessToken: '',
   googleDriveTokenExpiresAt: 0,
-  googleDriveFolderId: ''
+  googleDriveFolderId: '',
+  launchAtStartup: true,
+  historyRetentionDays: 0
 }
+
+const RETENTION_OPTIONS = [
+  { value: 0, label: 'Keep forever' },
+  { value: 7, label: '7 days' },
+  { value: 30, label: '30 days' },
+  { value: 90, label: '90 days' },
+  { value: 180, label: '180 days' },
+  { value: 365, label: '1 year' },
+]
 
 export default function Settings() {
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS)
@@ -34,11 +37,27 @@ export default function Settings() {
   const originalRef = useRef<AppSettings>(DEFAULT_SETTINGS)
   const [gdriveConnecting, setGdriveConnecting] = useState(false)
   const [gdriveError, setGdriveError] = useState('')
+  const [gdrivePicking, setGdrivePicking] = useState(false)
+  const [gdriveFolderName, setGdriveFolderName] = useState('')
+  const [confirmingDisconnect, setConfirmingDisconnect] = useState(false)
+  const disconnectConfirmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     window.electronAPI?.getSettings().then(s => {
-      setSettings(s)
-      originalRef.current = s
+      // Pull out only the keys the Settings UI renders — everything else on
+      // AppSettings is managed elsewhere (capture modes, save dialog path,
+      // release gate).
+      const ui: AppSettings = {
+        theme: s.theme,
+        googleDriveRefreshToken: s.googleDriveRefreshToken,
+        googleDriveAccessToken: s.googleDriveAccessToken,
+        googleDriveTokenExpiresAt: s.googleDriveTokenExpiresAt,
+        googleDriveFolderId: s.googleDriveFolderId,
+        launchAtStartup: s.launchAtStartup,
+        historyRetentionDays: s.historyRetentionDays,
+      }
+      setSettings(ui)
+      originalRef.current = ui
       setLoading(false)
     })
   }, [])
@@ -49,6 +68,44 @@ export default function Settings() {
     setSettings(prev => ({ ...prev, [key]: value }))
   }
 
+  const applyTheme = (mode: 'dark' | 'light' | 'system') => {
+    const resolved = mode === 'system'
+      ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+      : mode
+    document.documentElement.classList.toggle('light', resolved === 'light')
+  }
+
+  const handleThemeChange = async (next: 'dark' | 'light' | 'system') => {
+    update('theme', next)
+    applyTheme(next)
+    originalRef.current = { ...originalRef.current, theme: next }
+    await window.electronAPI?.setSetting('theme', next)
+    window.electronAPI?.setTitleBarTheme(next)
+    window.dispatchEvent(new CustomEvent('lumia:theme-changed', { detail: next }))
+  }
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const next = (e as CustomEvent<'dark' | 'light' | 'system'>).detail
+      setSettings(prev => ({ ...prev, theme: next }))
+      originalRef.current = { ...originalRef.current, theme: next }
+    }
+    window.addEventListener('lumia:theme-changed', handler)
+    return () => window.removeEventListener('lumia:theme-changed', handler)
+  }, [])
+
+  // The Browse button on the OAuth Connected page kicks off the picker
+  // outside our IPC promise chain — listen for the resulting selection event
+  // so the Settings UI's folder display stays in sync.
+  useEffect(() => {
+    window.electronAPI?.onGdriveFolderSelected(async () => {
+      const s = await window.electronAPI?.getSettings()
+      if (!s) return
+      setSettings(prev => ({ ...prev, googleDriveFolderId: s.googleDriveFolderId }))
+      originalRef.current = { ...originalRef.current, googleDriveFolderId: s.googleDriveFolderId }
+    })
+  }, [])
+
   const handleSave = async () => {
     for (const [key, value] of Object.entries(settings)) {
       await window.electronAPI?.setSetting(key as keyof AppSettings, value)
@@ -56,16 +113,6 @@ export default function Settings() {
     originalRef.current = { ...settings }
     setSavedToast(true)
     setTimeout(() => setSavedToast(false), 2500)
-  }
-
-  const handlePickFolder = async () => {
-    const result = await window.electronAPI?.showOpenDialog({
-      title: 'Select default save folder',
-      properties: ['openDirectory', 'createDirectory']
-    })
-    if (result && !result.canceled && result.filePaths[0]) {
-      update('defaultSavePath', result.filePaths[0])
-    }
   }
 
   const gdriveConnected = !!settings.googleDriveRefreshToken
@@ -82,27 +129,85 @@ export default function Settings() {
     setGdriveConnecting(true)
     setGdriveError('')
     const result = await window.electronAPI?.gdriveStartAuth()
+    setGdriveConnecting(false)
     if (result?.success) {
       const s = await window.electronAPI?.getSettings()
       if (s) { setSettings(s); originalRef.current = s }
-    } else {
+      // No auto-redirect to the picker — the Connected page in the browser
+      // surfaces a "Browse Drive folders" button so the user picks the folder
+      // there. Falling back to the in-app Browse button covers the case where
+      // they close the tab first.
+      return
+    }
+    if (!result?.cancelled) {
       setGdriveError(result?.error ?? 'Authorization failed')
     }
-    setGdriveConnecting(false)
+  }
+
+  const handleGdriveCancelAuth = async () => {
+    await window.electronAPI?.gdriveCancelAuth()
+    // gdriveStartAuth's promise will resolve with { cancelled: true } and the
+    // handler above will reset gdriveConnecting; no extra state work needed.
   }
 
   const handleGdriveDisconnect = async () => {
+    if (!confirmingDisconnect) {
+      setConfirmingDisconnect(true)
+      if (disconnectConfirmTimerRef.current) clearTimeout(disconnectConfirmTimerRef.current)
+      disconnectConfirmTimerRef.current = setTimeout(() => setConfirmingDisconnect(false), 3000)
+      return
+    }
+    if (disconnectConfirmTimerRef.current) clearTimeout(disconnectConfirmTimerRef.current)
+    setConfirmingDisconnect(false)
     await window.electronAPI?.gdriveDisconnect()
-    update('googleDriveRefreshToken', '')
-    update('googleDriveAccessToken', '')
+    setSettings(prev => {
+      const next = { ...prev, googleDriveRefreshToken: '', googleDriveAccessToken: '', googleDriveFolderId: '' }
+      originalRef.current = { ...originalRef.current, googleDriveRefreshToken: '', googleDriveAccessToken: '', googleDriveFolderId: '' }
+      return next
+    })
+    setGdriveFolderName('')
+  }
+
+  const handleGdrivePickFolder = async () => {
+    setGdrivePicking(true)
+    setGdriveError('')
+    const result = await window.electronAPI?.gdrivePickFolder()
+    setGdrivePicking(false)
+    if (result?.cancelled) return
+    if (!result?.success) {
+      setGdriveError(result?.error ?? 'Folder picker failed')
+      return
+    }
+    if (result.folder) {
+      update('googleDriveFolderId', result.folder.id)
+      originalRef.current = { ...originalRef.current, googleDriveFolderId: result.folder.id }
+      setGdriveFolderName(result.folder.name)
+    }
+  }
+
+  const handleGdriveCancelPickFolder = async () => {
+    await window.electronAPI?.gdriveCancelPickFolder()
+  }
+
+  const platform = window.electronAPI?.platform
+  const supportsStartup = platform === 'win32' || platform === 'darwin'
+
+  const handleLaunchAtStartupChange = async (next: boolean) => {
+    update('launchAtStartup', next)
+    originalRef.current = { ...originalRef.current, launchAtStartup: next }
+    await window.electronAPI?.setSetting('launchAtStartup', next)
+  }
+
+  const handleHistoryRetentionChange = async (next: number) => {
+    update('historyRetentionDays', next)
+    originalRef.current = { ...originalRef.current, historyRetentionDays: next }
+    await window.electronAPI?.setSetting('historyRetentionDays', next)
   }
 
   const NAV_ITEMS = [
+    { id: 'general', icon: 'tune', label: 'General' },
     { id: 'appearance', icon: 'palette', label: 'Appearance' },
-    { id: 'capture', icon: 'add_a_photo', label: 'Capture' },
-    { id: 'imgur', icon: 'image', label: 'Imgur' },
     { id: 'gdrive', icon: 'add_to_drive', label: 'Google Drive' },
-    { id: 'custom', icon: 'api', label: 'Custom Upload' },
     { id: 'hotkeys', icon: 'keyboard', label: 'Hotkeys' },
   ]
 
@@ -175,12 +280,53 @@ export default function Settings() {
         >
           <div className="max-w-xl space-y-6">
 
+            {/* General */}
+            <Section id="general" title="General" icon="tune">
+              {supportsStartup && (
+                <label className="flex items-center justify-between gap-3 cursor-pointer">
+                  <div className="space-y-1">
+                    <span className="text-xs font-semibold text-slate-300 block" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                      Launch at Startup
+                    </span>
+                    <p className="text-[11px] text-slate-500">
+                      {platform === 'darwin'
+                        ? 'Start Lumia automatically when you log in, minimized to the menu bar.'
+                        : 'Start Lumia automatically when Windows boots, minimized to the system tray.'}
+                    </p>
+                  </div>
+                  <input
+                    type="checkbox"
+                    checked={settings.launchAtStartup}
+                    onChange={e => handleLaunchAtStartupChange(e.target.checked)}
+                    className="w-4 h-4 accent-primary cursor-pointer flex-shrink-0"
+                  />
+                </label>
+              )}
+              <div className="flex items-center justify-between gap-3">
+                <div className="space-y-1">
+                  <span className="text-xs font-semibold text-slate-300 block" style={{ fontFamily: 'Manrope, sans-serif' }}>
+                    Delete history after
+                  </span>
+                  <p className="text-[11px] text-slate-500">
+                    Automatically remove captures older than the selected period. Keep forever by default.
+                  </p>
+                </div>
+                <select
+                  value={settings.historyRetentionDays}
+                  onChange={e => handleHistoryRetentionChange(Number(e.target.value))}
+                  className="bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-primary/30 cursor-pointer flex-shrink-0"
+                  style={{ fontFamily: 'Manrope, sans-serif' }}
+                >
+                  {RETENTION_OPTIONS.map(opt => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </Section>
+
             {/* Appearance */}
             <Section id="appearance" title="Appearance" icon="palette">
-              <Field
-                label="Theme"
-                description="Choose how Lumia looks. System will automatically match your OS preference."
-              >
+              <div className="space-y-1.5">
                 <div className="flex gap-2">
                   {([
                     { value: 'light' as const, icon: 'light_mode', label: 'Light' },
@@ -189,7 +335,7 @@ export default function Settings() {
                   ]).map(opt => (
                     <button
                       key={opt.value}
-                      onClick={() => update('theme', opt.value)}
+                      onClick={() => handleThemeChange(opt.value)}
                       className={`flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                         settings.theme === opt.value
                           ? 'bg-primary/15 text-primary border border-primary/30'
@@ -202,56 +348,8 @@ export default function Settings() {
                     </button>
                   ))}
                 </div>
-              </Field>
-            </Section>
-
-            {/* Capture */}
-            <Section id="capture" title="Capture" icon="add_a_photo">
-              <Field
-                label="Default Save Path"
-                description="Where screenshots and recordings are saved when using 'Save to Disk' steps"
-              >
-                <div className="flex gap-2">
-                  <input
-                    value={settings.defaultSavePath}
-                    onChange={e => update('defaultSavePath', e.target.value)}
-                    placeholder="~/Pictures/Lumia"
-                    className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                  />
-                  <button
-                    onClick={handlePickFolder}
-                    className="px-4 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-slate-400 hover:text-white transition-all"
-                    title="Browse"
-                  >
-                    <span className="material-symbols-outlined text-sm">folder_open</span>
-                  </button>
-                </div>
-              </Field>
-            </Section>
-
-            {/* Imgur */}
-            <Section id="imgur" title="Imgur Upload" icon="image">
-              <Field
-                label="Client ID"
-                description="Your Imgur app Client ID. Leave blank to use the built-in anonymous key (rate-limited)."
-              >
-                <input
-                  value={settings.imgurClientId}
-                  onChange={e => update('imgurClientId', e.target.value)}
-                  placeholder="e.g. f0ea04148a54268"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-              <p className="text-[11px] text-slate-500 mt-2">
-                Register a free app at{' '}
-                <button
-                  onClick={() => window.electronAPI?.openExternal('https://api.imgur.com/oauth2/addclient')}
-                  className="text-primary hover:underline"
-                >
-                  api.imgur.com
-                </button>{' '}
-                to get your own Client ID and avoid rate limits.
-              </p>
+                <p className="text-[11px] text-slate-500">Choose how Lumia looks. System will automatically match your OS preference.</p>
+              </div>
             </Section>
 
             {/* Google Drive */}
@@ -264,25 +362,48 @@ export default function Settings() {
                   </div>
                   <button
                     onClick={handleGdriveDisconnect}
-                    className="px-3 py-1.5 text-[11px] font-semibold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-all"
+                    onBlur={() => {
+                      if (disconnectConfirmTimerRef.current) clearTimeout(disconnectConfirmTimerRef.current)
+                      setConfirmingDisconnect(false)
+                    }}
+                    title={confirmingDisconnect ? 'Click again to confirm' : 'Disconnect Google Drive'}
+                    className={`flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold rounded-lg border transition-all ${
+                      confirmingDisconnect
+                        ? 'text-red-300 bg-red-500/25 border-red-500/50'
+                        : 'text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border-red-500/20'
+                    }`}
                     style={{ fontFamily: 'Manrope, sans-serif' }}
                   >
-                    Disconnect
+                    {confirmingDisconnect && <span className="material-symbols-outlined text-xs">warning</span>}
+                    {confirmingDisconnect ? 'Confirm disconnect' : 'Disconnect'}
                   </button>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  <button
-                    onClick={handleGdriveAuth}
-                    disabled={gdriveConnecting}
-                    className="flex items-center gap-2 px-4 py-2.5 primary-gradient text-slate-900 font-bold rounded-xl text-xs hover:scale-[1.02] active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100"
-                    style={{ fontFamily: 'Manrope, sans-serif' }}
-                  >
-                    <span className="material-symbols-outlined text-sm">
-                      {gdriveConnecting ? 'hourglass_empty' : 'add_to_drive'}
-                    </span>
-                    {gdriveConnecting ? 'Waiting for authorization…' : 'Connect Google Drive'}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleGdriveAuth}
+                      disabled={gdriveConnecting}
+                      className="flex items-center gap-2 px-4 py-2.5 primary-gradient text-slate-900 font-bold rounded-xl text-xs hover:scale-[1.02] active:scale-95 transition-transform disabled:opacity-50 disabled:scale-100"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      <span className="material-symbols-outlined text-sm">
+                        {gdriveConnecting ? 'hourglass_empty' : 'add_to_drive'}
+                      </span>
+                      {gdriveConnecting ? 'Waiting for authorization…' : 'Connect Google Drive'}
+                    </button>
+                    {gdriveConnecting && (
+                      <button
+                        onClick={handleGdriveCancelAuth}
+                        title="Cancel and try again"
+                        className="flex items-center gap-1.5 px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 transition-colors"
+                        style={{ fontFamily: 'Manrope, sans-serif' }}
+                      >
+                        <span className="material-symbols-outlined text-sm">close</span>
+                        Cancel
+                      </button>
+                    )}
+                  </div>
                   {gdriveError && (
                     <p className="text-[11px] text-red-400 flex items-center gap-1">
                       <span className="material-symbols-outlined text-sm">error</span>
@@ -291,74 +412,54 @@ export default function Settings() {
                   )}
                 </div>
               )}
-              <Field
-                label="Folder ID (optional)"
-                description="Upload to a specific Drive folder. Leave blank for root."
-              >
-                <input
-                  value={settings.googleDriveFolderId}
-                  onChange={e => update('googleDriveFolderId', e.target.value)}
-                  placeholder="e.g. 1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2wtTs"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-            </Section>
-
-            {/* Custom Upload */}
-            <Section id="custom" title="Custom HTTP Upload" icon="api">
-              <Field
-                label="Endpoint URL"
-                description="POST endpoint that receives the image file. Leave blank to disable."
-              >
-                <input
-                  value={settings.customUploadUrl}
-                  onChange={e => update('customUploadUrl', e.target.value)}
-                  placeholder="https://your-server.com/upload"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-              <Field
-                label="Form Field Name"
-                description="The multipart field name for the image file"
-              >
-                <input
-                  value={settings.customUploadFieldName}
-                  onChange={e => update('customUploadFieldName', e.target.value)}
-                  placeholder="file"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
-              <Field
-                label="Authorization Header"
-                description="Optional Bearer token sent with every upload request"
-              >
-                <input
-                  value={settings.customUploadHeaders['Authorization'] ?? ''}
-                  onChange={e => update('customUploadHeaders', {
-                    ...settings.customUploadHeaders,
-                    ...(e.target.value ? { Authorization: e.target.value } : (() => {
-                      const h = { ...settings.customUploadHeaders }
-                      delete h['Authorization']
-                      return h
-                    })())
-                  })}
-                  placeholder="Bearer your-token"
-                  className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-600 focus:outline-none focus:border-primary/30 transition-colors"
-                />
-              </Field>
+              <div className="space-y-1.5">
+                <div className="flex gap-2">
+                  <input
+                    value={gdriveFolderName ? `${gdriveFolderName} (${settings.googleDriveFolderId})` : settings.googleDriveFolderId}
+                    readOnly
+                    placeholder="No folder selected — required for Drive uploads"
+                    title={settings.googleDriveFolderId || ''}
+                    className={`flex-1 min-w-0 bg-white/5 border rounded-xl px-4 py-2.5 text-sm text-slate-300 placeholder-slate-600 focus:outline-none cursor-default select-text truncate ${
+                      gdriveConnected && !settings.googleDriveFolderId ? 'border-amber-500/40' : 'border-white/10'
+                    }`}
+                  />
+                  <button
+                    onClick={handleGdrivePickFolder}
+                    disabled={!gdriveConnected || gdrivePicking}
+                    title={!gdriveConnected ? 'Connect Google Drive first' : 'Browse Drive'}
+                    className="flex items-center gap-1.5 px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-slate-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ fontFamily: 'Manrope, sans-serif' }}
+                  >
+                    <span className="material-symbols-outlined text-sm">{gdrivePicking ? 'hourglass_empty' : 'folder_open'}</span>
+                    {gdrivePicking ? 'Opening…' : 'Browse'}
+                  </button>
+                  {gdrivePicking && (
+                    <button
+                      onClick={handleGdriveCancelPickFolder}
+                      title="Cancel and try again"
+                      className="flex items-center gap-1.5 px-3 py-2.5 bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl text-xs font-semibold text-slate-300 transition-colors"
+                      style={{ fontFamily: 'Manrope, sans-serif' }}
+                    >
+                      <span className="material-symbols-outlined text-sm">close</span>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                {gdriveConnected && !settings.googleDriveFolderId && (
+                  <p className="text-[11px] text-amber-400 flex items-center gap-1 mt-1">
+                    <span className="material-symbols-outlined text-sm">warning</span>
+                    Pick a folder before sharing — Drive uploads will fail until then.
+                  </p>
+                )}
+              </div>
             </Section>
 
             {/* Hotkeys */}
             <Section id="hotkeys" title="Keyboard Shortcuts" icon="keyboard">
-              <div className="space-y-1">
-                {HOTKEY_REFERENCE.map(({ action, key }) => (
-                  <div key={action} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
-                    <span className="text-xs font-medium text-slate-300" style={{ fontFamily: 'Manrope, sans-serif' }}>{action}</span>
-                    <kbd className="px-2.5 py-1 bg-white/5 border border-white/10 rounded-lg text-[11px] font-mono text-slate-400">{key}</kbd>
-                  </div>
-                ))}
-              </div>
-              <p className="text-[11px] text-slate-500 mt-3">Hotkey rebinding coming in a future release.</p>
+              <HotkeyEditor />
+              <p className="text-[11px] text-slate-500 mt-3">
+                Tip: while a recording is in progress, pressing any of the video hotkeys stops it instead of starting a new one.
+              </p>
             </Section>
 
           </div>
@@ -368,16 +469,185 @@ export default function Settings() {
   )
 }
 
-const HOTKEY_REFERENCE = [
-  { action: 'Region Screenshot',   key: 'Ctrl+Shift+4' },
-  { action: 'Fullscreen',          key: 'Ctrl+Shift+3' },
-  { action: 'Active Window',       key: 'Ctrl+Shift+2' },
-  { action: 'Scrolling Capture',   key: 'Ctrl+Shift+5' },
-  { action: 'Screen Recorder',     key: 'Ctrl+Shift+R' },
-  { action: 'GIF Recorder',        key: 'Ctrl+Shift+G' },
-  { action: 'Stop Recording',      key: 'Ctrl+Shift+S' },
-  { action: 'Open Main Window',    key: 'Ctrl+Shift+X' },
+const HOTKEY_ROWS: { action: string; label: string }[] = [
+  { action: 'RectangleRegion',      label: 'Region (Screenshot)' },
+  { action: 'ActiveWindow',         label: 'Window (Screenshot)' },
+  { action: 'ActiveMonitor',        label: 'Screen (Screenshot)' },
+  { action: 'PrintScreen',          label: 'All Screens (Screenshot)' },
+  { action: 'ScrollingCapture',     label: 'Scrolling (Screenshot)' },
+  { action: 'ScreenRecorder',       label: 'Region (Video)' },
+  { action: 'ScreenRecorderWindow', label: 'Window (Video)' },
+  { action: 'ScreenRecorderScreen', label: 'Screen (Video)' },
 ]
+
+// Map a browser KeyboardEvent.code to the key portion of an Electron accelerator.
+// Returns null when the key isn't a usable hotkey target (modifier-only, dead key, etc.).
+function codeToAcceleratorKey(code: string, key: string): string | null {
+  if (code.startsWith('Digit')) return code.slice(5)
+  if (code.startsWith('Numpad')) {
+    const tail = code.slice(6)
+    if (/^\d$/.test(tail)) return `num${tail}`
+    if (tail === 'Add') return 'numadd'
+    if (tail === 'Subtract') return 'numsub'
+    if (tail === 'Multiply') return 'nummult'
+    if (tail === 'Divide') return 'numdiv'
+    if (tail === 'Decimal') return 'numdec'
+    if (tail === 'Enter') return 'Return'
+  }
+  if (code.startsWith('Key')) return code.slice(3)
+  if (/^F\d{1,2}$/.test(code)) return code
+  switch (code) {
+    case 'Space':       return 'Space'
+    case 'Enter':       return 'Return'
+    case 'Tab':         return 'Tab'
+    case 'Backspace':   return 'Backspace'
+    case 'Delete':      return 'Delete'
+    case 'Insert':      return 'Insert'
+    case 'Home':        return 'Home'
+    case 'End':         return 'End'
+    case 'PageUp':      return 'PageUp'
+    case 'PageDown':    return 'PageDown'
+    case 'ArrowUp':     return 'Up'
+    case 'ArrowDown':   return 'Down'
+    case 'ArrowLeft':   return 'Left'
+    case 'ArrowRight':  return 'Right'
+    case 'Comma':       return ','
+    case 'Period':      return '.'
+    case 'Slash':       return '/'
+    case 'Backslash':   return '\\'
+    case 'Semicolon':   return ';'
+    case 'Quote':       return '\''
+    case 'BracketLeft': return '['
+    case 'BracketRight':return ']'
+    case 'Minus':       return '-'
+    case 'Equal':       return '='
+    case 'Backquote':   return '`'
+  }
+  // Modifier-only events have key like "Control"/"Shift"/"Alt"/"Meta" — reject.
+  if (['Control', 'Shift', 'Alt', 'Meta', 'AltGraph'].includes(key)) return null
+  return null
+}
+
+function eventToAccelerator(e: React.KeyboardEvent | KeyboardEvent): string | null {
+  const key = codeToAcceleratorKey(e.code, e.key)
+  if (!key) return null
+  const parts: string[] = []
+  if (e.ctrlKey)  parts.push('Ctrl')
+  if (e.metaKey)  parts.push(navigator.platform.toLowerCase().includes('mac') ? 'Cmd' : 'Super')
+  if (e.altKey)   parts.push('Alt')
+  if (e.shiftKey) parts.push('Shift')
+  parts.push(key)
+  return parts.join('+')
+}
+
+function isAcceleratorValid(accel: string): boolean {
+  // F-keys are fine alone; everything else needs at least one modifier so it
+  // doesn't steal a plain keystroke globally.
+  if (/^F\d{1,2}$/.test(accel)) return true
+  return /\+/.test(accel) && /^(Ctrl|Cmd|Super|Alt|Shift)\+/.test(accel)
+}
+
+function HotkeyEditor() {
+  const [hotkeys, setHotkeys] = useState<Record<string, string>>({})
+  const [recordingAction, setRecordingAction] = useState<string | null>(null)
+  const [error, setError] = useState<string>('')
+
+  useEffect(() => {
+    window.electronAPI?.getHotkeys().then(h => { if (h) setHotkeys(h) })
+  }, [])
+
+  // Capture key events while recording. Window-level so the user doesn't have
+  // to keep focus on the button. Also pauses global shortcuts in main so the
+  // existing bindings don't fire on whatever keys the user is pressing.
+  useEffect(() => {
+    if (!recordingAction) return
+    void window.electronAPI?.setHotkeyRecording(true)
+    const onKeyDown = (e: KeyboardEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      // Esc with no modifiers cancels the recording.
+      if (e.code === 'Escape' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+        setRecordingAction(null)
+        setError('')
+        return
+      }
+      const accel = eventToAccelerator(e)
+      if (!accel) return // pure modifier press — keep listening
+      if (!isAcceleratorValid(accel)) {
+        setError('Shortcut must include Ctrl, Cmd, Alt, or Shift (or be an F-key).')
+        return
+      }
+      const dupe = Object.entries(hotkeys).find(([a, k]) => a !== recordingAction && k === accel)
+      if (dupe) {
+        const dupeLabel = HOTKEY_ROWS.find(r => r.action === dupe[0])?.label ?? dupe[0]
+        setError(`Already used by "${dupeLabel}". Pick a different combination.`)
+        return
+      }
+      const next = { ...hotkeys, [recordingAction]: accel }
+      setHotkeys(next)
+      setRecordingAction(null)
+      setError('')
+      window.electronAPI?.setHotkeys(next).then(saved => { if (saved) setHotkeys(saved) })
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown, true)
+      void window.electronAPI?.setHotkeyRecording(false)
+    }
+  }, [recordingAction, hotkeys])
+
+  const handleReset = async () => {
+    const restored = await window.electronAPI?.resetHotkeys()
+    if (restored) setHotkeys(restored)
+    setRecordingAction(null)
+    setError('')
+  }
+
+  return (
+    <>
+      <div className="space-y-1">
+        {HOTKEY_ROWS.map(({ action, label }) => {
+          const isRecording = recordingAction === action
+          const current = hotkeys[action] ?? ''
+          return (
+            <div key={action} className="flex items-center justify-between py-2.5 border-b border-white/5 last:border-0">
+              <span className="text-xs font-medium text-slate-300" style={{ fontFamily: 'Manrope, sans-serif' }}>{label}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  setError('')
+                  setRecordingAction(isRecording ? null : action)
+                }}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-mono border transition-colors ${
+                  isRecording
+                    ? 'bg-primary/20 border-primary/50 text-primary animate-pulse'
+                    : 'bg-white/5 border-white/10 text-slate-400 hover:bg-white/10 hover:text-slate-200'
+                }`}
+              >
+                {isRecording ? 'Press keys… (Esc to cancel)' : current || 'Click to set'}
+              </button>
+            </div>
+          )
+        })}
+      </div>
+      {error && (
+        <p className="text-[11px] text-red-400 mt-3">{error}</p>
+      )}
+      <div className="flex items-center gap-3 mt-3">
+        <p className="text-[11px] text-slate-500 flex-1">
+          Click a shortcut, then press the new combination. Must include Ctrl, Cmd, Alt, or Shift.
+        </p>
+        <button
+          type="button"
+          onClick={handleReset}
+          className="shrink-0 self-center text-[11px] font-medium text-slate-400 hover:text-slate-200 px-2.5 py-1 rounded-lg border border-white/10 hover:bg-white/5 whitespace-nowrap"
+        >
+          Reset to defaults
+        </button>
+      </div>
+    </>
+  )
+}
 
 function Section({ id, title, icon, children }: { id: string; title: string; icon: string; children: React.ReactNode }) {
   return (

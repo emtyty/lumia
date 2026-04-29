@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <link rel="icon" type="image/png" href="/favicon.png" />
+  <title>Choose Google Drive folder — Lumia</title>
+  <style>
+    html, body { margin: 0; padding: 0; min-height: 100%; background: #f8fafc; color: #0f172a; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { display: flex; align-items: center; justify-content: center; padding: 24px; box-sizing: border-box; }
+    .card { max-width: 480px; text-align: center; padding: 32px; background: #fff; border: 1px solid #e2e8f0; border-radius: 16px; box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06); }
+    h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
+    p { margin: 0; font-size: 14px; color: #475569; line-height: 1.5; }
+    .error { color: #dc2626; }
+    .success { color: #15803d; }
+    .spinner { width: 28px; height: 28px; border: 3px solid #e2e8f0; border-top-color: #475569; border-radius: 50%; animation: spin 0.8s linear infinite; margin: 0 auto 16px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .hint { margin-top: 16px; font-size: 12px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="spinner" id="spinner"></div>
+    <h1 id="title">Loading folder picker…</h1>
+    <p id="message">Connecting to Google Drive.</p>
+  </div>
+  <script src="https://apis.google.com/js/api.js"></script>
+  <script>
+    (function () {
+      var card = document.getElementById('card')
+      var spinner = document.getElementById('spinner')
+      var title = document.getElementById('title')
+      var message = document.getElementById('message')
+
+      function setError(t, m) {
+        spinner.style.display = 'none'
+        title.textContent = t
+        title.className = 'error'
+        message.textContent = m
+      }
+      function setSuccess(t, m) {
+        spinner.style.display = 'none'
+        title.textContent = t
+        title.className = 'success'
+        message.innerHTML = m + '<div class="hint">You can close this tab.</div>'
+      }
+
+      var params = new URLSearchParams(location.search)
+      var nonce = params.get('nonce')
+      if (!nonce) { setError('Invalid request', 'Open this picker from Lumia.'); return }
+
+      function postResult(result) {
+        return fetch('/result?nonce=' + encodeURIComponent(nonce), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(result),
+          keepalive: true
+        }).catch(function () { /* server may be closed already — ignore */ })
+      }
+
+      fetch('/config?nonce=' + encodeURIComponent(nonce))
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json() })
+        .then(function (cfg) {
+          if (!cfg.token) { setError('Not connected', 'Connect Google Drive in Lumia first, then try again.'); return }
+          if (!cfg.apiKey || !cfg.appId) {
+            setError('Picker credentials missing', 'Set MAIN_VITE_GDRIVE_API_KEY and MAIN_VITE_GDRIVE_PROJECT_NUMBER, then rebuild Lumia.')
+            return
+          }
+
+          gapi.load('picker', {
+            callback: function () {
+              try {
+                var view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+                  .setIncludeFolders(true)
+                  .setSelectFolderEnabled(true)
+                  .setMimeTypes('application/vnd.google-apps.folder')
+                var picker = new google.picker.PickerBuilder()
+                  .setOAuthToken(cfg.token)
+                  .setDeveloperKey(cfg.apiKey)
+                  .setAppId(cfg.appId)
+                  .addView(view)
+                  .setTitle('Choose a folder')
+                  .setCallback(function (data) {
+                    if (data.action === google.picker.Action.PICKED) {
+                      var doc = data.docs && data.docs[0]
+                      var result = doc ? { id: doc.id, name: doc.name } : null
+                      postResult(result).then(function () {
+                        if (doc) setSuccess('Folder selected', '<strong>' + doc.name + '</strong> is now your default Drive folder.')
+                        else setSuccess('Done', 'Selection sent to Lumia.')
+                      })
+                    } else if (data.action === google.picker.Action.CANCEL) {
+                      postResult(null).then(function () { setSuccess('Cancelled', 'No folder was selected.') })
+                    }
+                  })
+                  .build()
+                picker.setVisible(true)
+                card.style.display = 'none'
+              } catch (err) {
+                setError('Picker failed to load', (err && err.message) ? err.message : String(err))
+              }
+            },
+            onerror: function (err) { setError('Failed to load Google Picker', String(err)) }
+          })
+        })
+        .catch(function (err) {
+          setError('Session expired', 'Close this tab and click Browse in Lumia again. (' + err.message + ')')
+        })
+    })()
+  </script>
+</body>
+</html>

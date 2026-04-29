@@ -8,6 +8,8 @@ interface ImportMetaEnv {
   readonly MAIN_VITE_R2_PUBLIC_URL: string
   readonly MAIN_VITE_GDRIVE_CLIENT_ID: string
   readonly MAIN_VITE_GDRIVE_CLIENT_SECRET: string
+  readonly MAIN_VITE_GDRIVE_API_KEY: string
+  readonly MAIN_VITE_GDRIVE_PROJECT_NUMBER: string
 }
 
 interface ImportMeta {

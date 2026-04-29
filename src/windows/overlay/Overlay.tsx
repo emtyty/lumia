@@ -2,8 +2,173 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 
 interface Rect { x: number; y: number; width: number; height: number }
 
+type Mode =
+  | 'region' | 'scroll-region' | 'window-pick' | 'monitor-pick'
+  | 'video-region' | 'video-window' | 'video-screen'
+
+type Intent = 'capture' | 'record'
+type Base = 'region' | 'window' | 'screen'
+
+function intentOf(mode: Mode): Intent {
+  return mode.startsWith('video-') ? 'record' : 'capture'
+}
+
+function baseOf(mode: Mode): Base | 'scroll' {
+  if (mode === 'scroll-region') return 'scroll'
+  if (mode === 'region' || mode === 'video-region') return 'region'
+  if (mode === 'window-pick' || mode === 'video-window') return 'window'
+  if (mode === 'monitor-pick' || mode === 'video-screen') return 'screen'
+  return 'region'
+}
+
+const ACCENT = {
+  capture: {
+    border: 'rgba(182,160,255,0.8)',       // primary purple
+    highlightBorder: 'rgba(96,165,250,0.9)', // blue for window/monitor hover
+    highlightShadow: 'rgba(96,165,250,0.3)',
+    highlightFill: 'rgba(96,165,250,0.06)',
+    activeBg: 'rgba(59,130,246,0.06)',
+    tabGlow: '0 0 12px rgba(182,160,255,0.35)',
+  },
+  record: {
+    border: 'rgba(239,68,68,0.9)',          // red-500
+    highlightBorder: 'rgba(239,68,68,0.9)',
+    highlightShadow: 'rgba(239,68,68,0.3)',
+    highlightFill: 'rgba(239,68,68,0.08)',
+    activeBg: 'rgba(239,68,68,0.05)',
+    tabGlow: '0 0 12px rgba(239,68,68,0.45)',
+  },
+} as const
+
+function HintCard({ icon, children }: { icon: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
+      style={{ fontFamily: 'Manrope, sans-serif' }}
+    >
+      <span className="material-symbols-outlined text-sm mr-2 align-middle">{icon}</span>
+      {children}
+    </div>
+  )
+}
+
+/** Floating top bar: mode switcher + hint. Visible only on the active overlay. */
+function ModeBar({
+  mode, hint, icon, intent,
+}: {
+  mode: Mode
+  hint: string
+  icon: string
+  intent: Intent
+}) {
+  const base = baseOf(mode)
+  const accent = ACCENT[intent]
+
+  const switchTo = (nextBase: Base) => {
+    if (nextBase === base) return
+    const next: Mode = intent === 'record'
+      ? (nextBase === 'region' ? 'video-region' : nextBase === 'window' ? 'video-window' : 'video-screen')
+      : (nextBase === 'region' ? 'region' : nextBase === 'window' ? 'window-pick' : 'monitor-pick')
+    window.electronAPI?.switchOverlayMode?.(next)
+    window.electronAPI?.setSetting?.(intent === 'record' ? 'lastVideoMode' : 'lastImageMode', nextBase)
+  }
+
+  const switchIntent = (nextIntent: Intent) => {
+    if (nextIntent === intent) return
+    // Region/Window map 1:1; capture's screen is 'monitor-pick', record's is 'video-screen'.
+    const safeBase: Base = base === 'region' || base === 'window' || base === 'screen' ? base : 'region'
+    const next: Mode = nextIntent === 'record'
+      ? (safeBase === 'region' ? 'video-region' : safeBase === 'window' ? 'video-window' : 'video-screen')
+      : (safeBase === 'region' ? 'region' : safeBase === 'window' ? 'window-pick' : 'monitor-pick')
+    window.electronAPI?.switchOverlayMode?.(next)
+    window.electronAPI?.setSetting?.('lastCaptureKind', nextIntent === 'record' ? 'video' : 'image')
+  }
+
+  const TabBtn = ({ value, label, tabIcon }: { value: Base; label: string; tabIcon: string }) => {
+    const active = base === value
+    return (
+      <button
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); switchTo(value) }}
+        className={`px-3 py-1.5 rounded-full text-xs font-semibold flex items-center gap-1 transition-all ${
+          active
+            ? (intent === 'record'
+                ? 'bg-red-500 text-white'
+                : 'bg-primary text-slate-900')
+            : 'text-slate-300 hover:text-white hover:bg-white/10'
+        }`}
+        style={{
+          fontFamily: 'Manrope, sans-serif',
+          boxShadow: active ? accent.tabGlow : undefined,
+        }}
+      >
+        <span className="material-symbols-outlined text-[14px]">{tabIcon}</span>
+        {label}
+      </button>
+    )
+  }
+
+  const IntentBtn = ({ value, label, iconName }: { value: Intent; label: string; iconName: string }) => {
+    const active = intent === value
+    return (
+      <button
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onClick={(e) => { e.stopPropagation(); switchIntent(value) }}
+        className={`px-2.5 py-1 rounded-full text-[11px] font-semibold flex items-center gap-1 transition-all ${
+          active
+            ? (value === 'record' ? 'bg-red-500/20 text-red-200' : 'bg-primary/25 text-primary')
+            : 'text-slate-400 hover:text-white'
+        }`}
+        style={{ fontFamily: 'Manrope, sans-serif' }}
+      >
+        <span className="material-symbols-outlined text-[13px]">{iconName}</span>
+        {label}
+      </button>
+    )
+  }
+
+  return (
+    <div
+      className="absolute top-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2"
+      style={{ fontFamily: 'Manrope, sans-serif' }}
+    >
+      <div
+        className="flex items-center gap-3 glass-refractive rounded-full pl-1.5 pr-3 py-1.5"
+        onMouseDown={(e) => e.stopPropagation()}
+        onMouseMove={(e) => e.stopPropagation()}
+        onMouseUp={(e) => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {intent === 'record' && (
+          <div className="ml-2 mr-1 flex items-center gap-1.5 text-red-400">
+            <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_rgba(239,68,68,0.8)]" />
+            <span className="text-[10px] font-bold uppercase tracking-widest">REC</span>
+          </div>
+        )}
+        <div className="flex items-center gap-0.5 p-0.5 rounded-full bg-white/5 border border-white/10">
+          <IntentBtn value="capture" label="Image" iconName="photo_camera" />
+          <IntentBtn value="record"  label="Video" iconName="videocam" />
+        </div>
+        <div className="w-px h-4 bg-white/10" />
+        <div className="flex items-center gap-1">
+          <TabBtn value="region" label="Region" tabIcon="crop" />
+          <TabBtn value="window" label="Window" tabIcon="web_asset" />
+          <TabBtn value="screen" label="Screen" tabIcon="monitor" />
+        </div>
+      </div>
+
+      {/* Hint on its own row — never fights for space with the controls. */}
+      <div className="flex items-center gap-2 glass-refractive rounded-full px-4 py-1 whitespace-nowrap">
+        <span className="material-symbols-outlined text-sm text-white">{icon}</span>
+        <span className="text-xs font-semibold text-white">{hint}</span>
+      </div>
+    </div>
+  )
+}
+
 export default function Overlay() {
-  // Make body fully transparent so the Electron window transparency shows through
   useEffect(() => {
     document.body.style.background = 'transparent'
     document.documentElement.style.background = 'transparent'
@@ -13,54 +178,88 @@ export default function Overlay() {
     }
   }, [])
 
-  const [mode, setMode] = useState<'region' | 'scroll-region'>('region')
+  const [mode, setMode] = useState<Mode>('region')
   const [startPos, setStartPos] = useState<{ x: number; y: number } | null>(null)
   const [currentPos, setCurrentPos] = useState<{ x: number; y: number } | null>(null)
   const [isDrawing, setIsDrawing] = useState(false)
   const [isActive, setIsActive] = useState(true)
+  const [hoveredWindow, setHoveredWindow] = useState<Rect | null>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
+  const pollRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hoveredWindowRef = useRef<{ x: number; y: number; width: number; height: number } | null>(null)
 
-  // Fetch the overlay mode from main process on mount
+  const intent = intentOf(mode)
+  const base = baseOf(mode)
+  const accent = ACCENT[intent]
+
   useEffect(() => {
-    window.electronAPI?.getOverlayMode().then(m => setMode(m))
+    window.electronAPI?.getOverlayMode().then(m => setMode(m as Mode))
   }, [])
 
-  // Listen for active/inactive state from main process (multi-display support)
   useEffect(() => {
-    window.electronAPI?.onOverlaySetActive((active: boolean) => {
-      setIsActive(active)
+    window.electronAPI?.onOverlaySetActive((active: boolean) => setIsActive(active))
+    window.electronAPI?.onOverlayModeChanged?.((m) => {
+      setMode(m as Mode)
+      setStartPos(null)
+      setCurrentPos(null)
+      setIsDrawing(false)
+      setHoveredWindow(null)
     })
     return () => {
       window.electronAPI?.removeAllListeners('overlay:set-active')
+      window.electronAPI?.removeAllListeners('overlay:mode-changed')
     }
   }, [])
 
-  const getRect = (): Rect | null => {
-    if (!startPos || !currentPos) return null
-    const x = Math.min(startPos.x, currentPos.x)
-    const y = Math.min(startPos.y, currentPos.y)
-    const width = Math.abs(currentPos.x - startPos.x)
-    const height = Math.abs(currentPos.y - startPos.y)
-    return { x, y, width, height }
-  }
+  // Window-pick: poll window under cursor (throttled 80ms)
+  const pollWindowAt = useCallback(async (x: number, y: number) => {
+    if (base !== 'window' || !isActive) return
+    const rect = await window.electronAPI?.getWindowAt(x, y)
+    hoveredWindowRef.current = rect ?? null
+    setHoveredWindow(rect ?? null)
+  }, [base, isActive])
+
+  const cancel = useCallback(() => {
+    if (mode === 'scroll-region') window.electronAPI?.cancelScrollRegion()
+    else if (mode === 'window-pick') window.electronAPI?.cancelWindowPick()
+    else if (mode === 'monitor-pick') window.electronAPI?.cancelMonitorPick()
+    else if (mode === 'region') window.electronAPI?.cancelRegion()
+    else window.electronAPI?.cancelVideo?.()
+  }, [mode])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.key === 'Escape') {
-      if (mode === 'scroll-region') {
-        window.electronAPI?.cancelScrollRegion()
-      } else {
-        window.electronAPI?.cancelRegion()
-      }
-    }
-  }, [mode])
+    if (e.key === 'Escape') cancel()
+  }, [cancel])
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [handleKeyDown])
 
+  // ── Region / scroll-region handlers ──────────────────────────────────────
+  const getRect = (): Rect | null => {
+    if (!startPos || !currentPos) return null
+    return {
+      x: Math.min(startPos.x, currentPos.x),
+      y: Math.min(startPos.y, currentPos.y),
+      width: Math.abs(currentPos.x - startPos.x),
+      height: Math.abs(currentPos.y - startPos.y),
+    }
+  }
+
   const handleMouseDown = (e: React.MouseEvent) => {
     if (!isActive) return
+    if (base === 'window') {
+      const x = e.clientX
+      const y = e.clientY
+      if (pollRef.current) clearTimeout(pollRef.current)
+      window.electronAPI?.getWindowAt(x, y).then(rect => {
+        if (!rect) return
+        if (intent === 'record') window.electronAPI?.confirmVideoWindow?.(rect)
+        else window.electronAPI?.confirmWindowPick(rect)
+      })
+      return
+    }
     setStartPos({ x: e.clientX, y: e.clientY })
     setCurrentPos({ x: e.clientX, y: e.clientY })
     setIsDrawing(true)
@@ -68,11 +267,19 @@ export default function Overlay() {
   }
 
   const handleMouseMove = (e: React.MouseEvent) => {
+    if (base === 'window') {
+      const x = e.clientX
+      const y = e.clientY
+      if (pollRef.current) clearTimeout(pollRef.current)
+      pollRef.current = setTimeout(() => pollWindowAt(x, y), 80)
+      return
+    }
     if (!isDrawing) return
     setCurrentPos({ x: e.clientX, y: e.clientY })
   }
 
   const handleMouseUp = async () => {
+    if (base === 'window') return
     if (!isDrawing) return
     setIsDrawing(false)
     window.electronAPI?.overlayDrawing(false)
@@ -80,16 +287,110 @@ export default function Overlay() {
     if (!rect || rect.width < 10 || rect.height < 10) return
     if (mode === 'scroll-region') {
       await window.electronAPI?.confirmScrollRegion(rect)
+    } else if (mode === 'video-region') {
+      await window.electronAPI?.confirmVideoRegion?.(rect)
     } else {
-      await window.electronAPI?.confirmRegion(rect)
+      await window.electronAPI?.confirmRegion({ dataUrl: '', rect })
     }
   }
 
   const rect = getRect()
 
+  // ── Monitor-pick / video-screen UI ───────────────────────────────────────
+  if (base === 'screen') {
+    const onClick = () => {
+      if (!isActive) return
+      if (intent === 'record') window.electronAPI?.confirmVideoScreen?.()
+      else window.electronAPI?.confirmMonitorPick()
+    }
+    const hint = intent === 'record'
+      ? 'Click to record this monitor · ESC to cancel'
+      : 'Click to capture this monitor · ESC to cancel'
+    return (
+      <div
+        className="fixed inset-0 select-none"
+        style={{
+          cursor: isActive ? 'pointer' : 'default',
+          background: isActive ? accent.activeBg : 'transparent',
+        }}
+        onClick={onClick}
+      >
+        {isActive && (
+          <>
+            <div
+              className="absolute inset-4 pointer-events-none"
+              style={{
+                border: `3px dashed ${accent.highlightBorder}`,
+                borderRadius: 8,
+                boxShadow: `inset 0 0 0 1px ${accent.highlightShadow}`,
+              }}
+            />
+            <ModeBar mode={mode} intent={intent} icon="monitor" hint={hint} />
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── Window-pick / video-window UI ────────────────────────────────────────
+  if (base === 'window') {
+    const hint = intent === 'record'
+      ? 'Click a window to record · ESC to cancel'
+      : 'Click a window · ESC to cancel'
+    return (
+      <div
+        className="fixed inset-0 select-none"
+        style={{
+          cursor: isActive ? 'crosshair' : 'default',
+          background: isActive ? 'rgba(0,0,0,0.03)' : 'transparent',
+        }}
+        onMouseMove={handleMouseMove}
+        onMouseDown={handleMouseDown}
+      >
+
+        {isActive && (
+          <ModeBar mode={mode} intent={intent} icon="window" hint={hint} />
+        )}
+
+        {hoveredWindow && isActive && (
+          <>
+            <div
+              className="absolute pointer-events-none"
+              style={{
+                left: hoveredWindow.x,
+                top: hoveredWindow.y,
+                width: hoveredWindow.width,
+                height: hoveredWindow.height,
+                border: `2px dashed ${accent.highlightBorder}`,
+                boxShadow: `0 0 0 9999px rgba(0,0,0,0.08), inset 0 0 0 1px ${accent.highlightShadow}`,
+                borderRadius: 4,
+                background: accent.highlightFill,
+              }}
+            />
+            <div
+              className="absolute glass-refractive text-xs text-white px-3 py-1.5 rounded-full pointer-events-none font-mono"
+              style={{
+                left: hoveredWindow.x + hoveredWindow.width / 2,
+                top: hoveredWindow.y + hoveredWindow.height + 10,
+                transform: 'translateX(-50%)',
+                fontFamily: 'Manrope, sans-serif',
+              }}
+            >
+              {hoveredWindow.width} × {hoveredWindow.height}
+            </div>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── Region / scroll-region / video-region UI ─────────────────────────────
   const hint = mode === 'scroll-region'
     ? 'Drag to select scroll region · ESC to cancel'
-    : 'Drag to select region · ESC to cancel'
+    : intent === 'record'
+      ? 'Drag to select recording area · ESC to cancel'
+      : 'Drag to select region · ESC to cancel'
+  const icon = mode === 'scroll-region' ? 'swipe_down' : intent === 'record' ? 'fiber_manual_record' : 'crop_free'
 
   return (
     <div
@@ -97,64 +398,49 @@ export default function Overlay() {
       className="fixed inset-0 select-none"
       style={{
         cursor: isActive ? 'crosshair' : 'default',
-        background: isActive ? 'rgba(0,0,0,0.35)' : 'rgba(0,0,0,0.55)',
+        background: isActive ? 'rgba(0,0,0,0.08)' : 'transparent',
         transition: 'background 0.15s ease'
       }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
     >
-      {/* Pulse animation for scroll-region mode */}
       <style>{`
         @keyframes scroll-region-border-pulse {
-          0%, 100% { border-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45); }
-          50% { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 0 9999px rgba(0,0,0,0.45), 0 0 12px 2px rgba(56, 189, 248, 0.3); }
+          0%, 100% { border-color: rgba(56, 189, 248, 0.8); box-shadow: 0 0 0 9999px rgba(0,0,0,0.18); }
+          50% { border-color: rgba(56, 189, 248, 0.4); box-shadow: 0 0 0 9999px rgba(0,0,0,0.18), 0 0 12px 2px rgba(56, 189, 248, 0.3); }
         }
-        .scroll-region-pulse {
-          animation: scroll-region-border-pulse 1.5s ease-in-out infinite;
-        }
+        .scroll-region-pulse { animation: scroll-region-border-pulse 1.5s ease-in-out infinite; }
       `}</style>
-      {/* Instruction hint — only on active overlay */}
-      {!isDrawing && isActive && (
-        <div
-          className="absolute top-8 left-1/2 -translate-x-1/2 glass-refractive rounded-full px-6 py-3 text-sm text-white font-semibold pointer-events-none"
-          style={{ fontFamily: 'Manrope, sans-serif' }}
-        >
-          <span className="material-symbols-outlined text-sm mr-2 align-middle">
-            {mode === 'scroll-region' ? 'swipe_down' : 'crop_free'}
-          </span>
-          {hint}
-        </div>
+
+      {isActive && (mode === 'region' || mode === 'video-region') && (
+        <ModeBar mode={mode} intent={intent} icon={icon} hint={hint} />
+      )}
+      {isActive && mode === 'scroll-region' && (
+        <HintCard icon={icon}>{hint}</HintCard>
       )}
 
-      {/* Selection rectangle */}
       {rect && rect.width > 0 && rect.height > 0 && (
         <>
-          {/* Highlight (clear area) */}
           <div
             className={`absolute pointer-events-none${mode === 'scroll-region' ? ' scroll-region-pulse' : ''}`}
             style={{
-              left: rect.x,
-              top: rect.y,
-              width: rect.width,
-              height: rect.height,
+              left: rect.x, top: rect.y, width: rect.width, height: rect.height,
               background: 'transparent',
-              boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
+              boxShadow: '0 0 0 9999px rgba(0,0,0,0.18)',
               border: mode === 'scroll-region'
                 ? '2px solid rgba(56, 189, 248, 0.8)'
-                : '2px solid rgba(182,160,255,0.8)',
-              borderRadius: 4
+                : `2px dashed ${accent.border}`,
+              borderRadius: 4,
             }}
           />
-
-          {/* Size indicator */}
           <div
             className="absolute glass-refractive text-xs text-white px-3 py-1.5 rounded-full pointer-events-none font-mono"
             style={{
               left: rect.x + rect.width / 2,
               top: rect.y + rect.height + 10,
               transform: 'translateX(-50%)',
-              fontFamily: 'Manrope, sans-serif'
+              fontFamily: 'Manrope, sans-serif',
             }}
           >
             {Math.round(rect.width)} × {Math.round(rect.height)}

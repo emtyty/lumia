@@ -1,77 +1,110 @@
 # Lumia
 
-A cross-platform screen capture, annotation, and sharing tool for **Windows** and **macOS** — built with Electron, React, and TypeScript.
+A cross-platform screen capture, screen recording, annotation, and sharing tool for **Windows** and **macOS** — built with Electron, React, and TypeScript.
 
-Inspired by ShareX, rebuilt from scratch as **Lumia** with a modern Liquid Glass UI, a workflow engine, video annotation, and true parallel multi-destination uploads.
+Inspired by ShareX, rebuilt from scratch with a modern Liquid Glass UI, scrolling capture, video recording, OCR-driven auto-blur of sensitive content, and a workflow engine that runs uploads in true parallel.
 
 ---
 
 ## Features
 
-### Capture
-| Mode | Shortcut |
-|---|---|
-| Region (drag to select) | `Ctrl+Shift+4` |
-| Fullscreen | `Ctrl+Shift+3` |
-| Active Window | `Ctrl+Shift+2` |
-| Screen Recorder | `Ctrl+Shift+R` |
-| GIF Recorder | `Ctrl+Shift+G` |
-| Stop Recording | `Ctrl+Shift+S` |
-| Open App | `Ctrl+Shift+X` |
+### Image Capture
 
-All shortcuts use `Ctrl+Shift` — no conflicts with macOS built-ins (`Cmd+Shift`). Every shortcut is rebindable in Settings.
+| Mode | Default Shortcut |
+|---|---|
+| Region (drag to select) | `Ctrl+Shift+1` |
+| Active Window | `Ctrl+Shift+2` |
+| Active Monitor | `Ctrl+Shift+3` |
+| Full Screen | `Ctrl+Shift+4` |
+| Scrolling Capture | `Ctrl+Shift+5` |
+
+Every shortcut uses `Ctrl+Shift` (no conflicts with macOS `Cmd+Shift` system bindings) and is rebindable in Settings. Originals are auto-saved to `~/Pictures/Lumia/`; user-chosen Save-As locations are kept separate so the original is never overwritten.
+
+**Scrolling capture** stitches a tall composite from a multi-frame scroll loop with FFT-based overlap detection — the same technique ShareX uses, ported to Electron with native input simulation (Win32 koffi FFI on Windows, Swift helper on macOS) for instant scroll events.
+
+**Multi-display aware**: one transparent overlay per monitor; cursor movement between displays seamlessly switches the active one.
+
+### Video Recording
+
+| Mode | Default Shortcut |
+|---|---|
+| Record Region | `Ctrl+Shift+6` |
+| Record Window | `Ctrl+Shift+7` |
+| Record Screen | `Ctrl+Shift+8` |
+
+While recording, a floating toolbar offers Pause / Resume / Mic toggle / Stop / Cancel, and a thin border outlines the recorded region. Pressing any record hotkey while a recording is active stops it (Snipping Tool-style toggle). Microphone is pre-acquired so the toggle is instant; recordings save as `.webm` with a corrected duration header.
 
 ### Annotation Editor
-Draw on any screenshot before sharing:
-- **Pen** — freehand with smoothing
-- **Rectangle / Ellipse / Arrow** — drag to draw
-- **Text** — click to place inline input
-- **Blur** — censor sensitive areas
-- **Select** — move and reposition annotations
-- Image auto-scales to fit the viewport; exports at full natural resolution
 
-### Video Annotator
-Open any `.webm` recording for frame-accurate annotation:
-- Scrub the timeline, pause on any frame, and draw annotations
-- All drawing tools available (pen, rect, ellipse, arrow, text)
-- **Extract Frame** — exports the current frame as a PNG into the annotation editor
-- **Export Frame** — composites the current frame + drawings into a shareable PNG
-- **Export Video** — renders a new `.webm` with annotations baked into every frame (real-time render with progress bar + cancel)
-- Duration auto-detected for MediaRecorder WebM files (no duration header issue)
+Konva-powered canvas, opens automatically after capture (or by clicking any item in history). Re-editable: each shape is stored as a vector and replayed on next open.
+
+- **Pen** — freehand with smoothing
+- **Rectangle / Ellipse / Arrow / Line**
+- **Text** — click to place inline input
+- **Blur** — pixelate sensitive areas
+- **Select** — move and reposition annotations
+- Auto-fit to viewport; export at full natural resolution
+- Native undo/redo, with each replayed annotation as its own undo step
+
+### Auto-Blur
+
+OCR scans the capture (Tesseract on Windows, native Vision framework on macOS) and detects:
+
+- Email addresses · Phone numbers · Credit card numbers · SSNs
+- API keys · JWTs · Private keys · Passwords · Bearer tokens
+- IP addresses · URL credentials
+
+Three modes: **off**, **suggest** (regions appear in the editor for one-click apply), or **auto-apply** (blurred before the editor opens). Pixelation block size is configurable (1–20).
 
 ### Workflow Engine
+
 Templates define the full pipeline for every capture:
 
 ```
-After Capture  →  Upload (parallel)  →  After Upload
-annotate           imgur                  copy URL
-save to disk       custom HTTP            open URL
-copy to clipboard                         OS share
-                                          notify
+After Capture     →     Upload (parallel)     →     After Upload
+─────────────           ─────────────────           ──────────────
+annotate                Cloudflare R2               copy URL (first / all)
+clipboard               Google Drive                open URL
+save to disk                                        OS share
+                                                    notify
 ```
 
-- Set any workflow as the **default** with the star button — active workflow is highlighted across the app
-- Four built-in templates ship by default; create unlimited custom templates in the **Destinations** screen
-- Multi-destination upload runs all destinations in parallel via `Promise.allSettled` — one failure never blocks the others
+- Multi-destination uploads run in parallel via `Promise.allSettled` — one failure never blocks the others
+- Two built-in templates ship by default (**Copy to Clipboard**, **Annotate & Share Link**); create unlimited custom templates
+- Set any template as **active** — that's what the editor's Share button uses
+- Re-sharing from history merges new uploads into the existing entry instead of duplicating it
 
-### Sharing Options
-- Copy image to clipboard
-- Save to disk (PNG / WebM)
-- Upload to Imgur (anonymous or with your own Client ID)
-- Upload to any custom HTTP endpoint with optional Bearer token
-- OS native share sheet (Windows 11 / macOS)
+### Sharing Destinations
+
+- **Cloudflare R2** (S3-compatible) with shareable public URLs — credentials baked into the build
+- **Google Drive** with OAuth flow + auto-refresh tokens — per-user, configured in Settings
+- **Clipboard** (image bytes or URL)
+- **Save to disk** (PNG / WebM, opens Save-As dialog with last-used folder remembered)
+- **OS native share sheet** (macOS / Windows)
 
 ### History
-- Every capture is saved with thumbnail, timestamp, file type, and upload status
-- Search by name, filter by type (screenshot / recording)
-- Click any recording to open it directly in the Video Annotator
-- Click any screenshot to open it in the Annotation Editor
+
+- Every capture saved with thumbnail, timestamp, type (screenshot / recording), and upload status
+- Up to 1000 entries; thumbnails inline so the grid is instant
+- Click a recording → opens in the editor with video timeline + frame extraction
+- Click a screenshot → opens in the annotation editor (with previous annotations replayed)
+- Detects missing files and offers a one-click cleanup
+
+### System Integration
+
+- **System tray** with capture shortcuts and quit
+- **Launch at startup** — auto-hides to tray on boot when launched by the OS startup entry
+- **Auto-update** — checks `emtyty/lumia` releases every 4 hours; downloads in background, installs on quit
+- **Single-instance lock** — relaunching focuses the existing window instead of crashing on cache locks
 
 ### Settings
-- **Default Save Path** — folder picker dialog (defaults to system Downloads)
-- **Imgur Client ID** — bring your own to avoid rate limits
-- **Custom HTTP Upload** — endpoint URL, field name, Authorization header
-- **Theme** — dark / light mode toggle (persisted, applies immediately including native title bar controls on Windows)
+
+- Default save path · Theme (dark / light / system, syncs Windows native title-bar overlay colors)
+- Active workflow · Hotkey rebinding for every action
+- Google Drive connect/disconnect · Default Drive folder
+- Auto-blur enable + per-category toggles + intensity
+- History retention (auto-delete entries older than N days)
+- Launch at startup
 
 ---
 
@@ -83,58 +116,81 @@ copy to clipboard                         OS share
 | Build system | electron-vite 2 |
 | UI | React 18 + TypeScript |
 | Routing | React Router 6 (hash mode) |
-| Canvas / Annotation | Konva.js + react-konva |
+| Canvas / Annotation | Konva 9 + react-konva |
 | Styling | Tailwind CSS 4 + Liquid Glass design system |
-| Settings & History | electron-store 8 |
+| OCR | Tesseract.js + macOS Vision framework (Swift helper) |
+| Native input (Windows) | koffi FFI to user32.dll |
+| Logging / Auto-update | electron-log + electron-updater |
+| Persistence | electron-store 8 |
 | Packaging | electron-builder |
+| Package manager | pnpm 10 (enforced via `preinstall`) |
 
 ---
 
 ## Project Structure
 
 ```
-shareanywhere/
-├── electron/
-│   ├── index.ts          # App lifecycle, window factory, all IPC handlers
-│   ├── preload/
-│   │   └── index.ts      # contextBridge — exposes electronAPI to renderer
-│   ├── capture.ts        # desktopCapturer wrapper, region crop
-│   ├── hotkeys.ts        # globalShortcut registration
-│   ├── tray.ts           # System tray icon + context menu
-│   ├── workflow.ts       # WorkflowEngine — parallel upload orchestration
-│   ├── templates.ts      # Built-in templates + user template CRUD
-│   ├── history.ts        # Capture history persistence
-│   ├── settings.ts       # electron-store settings (theme, paths, keys)
+lumia/
+├── electron/                       # Main process (Node)
+│   ├── index.ts                    # Lifecycle, main + overlay window factories, IPC
+│   ├── preload/index.ts            # contextBridge — exposes electronAPI to renderer
+│   ├── capture.ts                  # Image capture (region/window/monitor/fullscreen)
+│   ├── video.ts                    # Recording orchestrator + RecorderHost windows
+│   ├── scroll-capture.ts           # Scrolling screenshot with FFT overlap detection
+│   ├── hotkeys.ts                  # globalShortcut registry + schema migrations
+│   ├── tray.ts                     # System tray icon + menu
+│   ├── notify.ts                   # Toast notifications with hero image
+│   ├── workflow.ts                 # WorkflowEngine — three-phase pipeline
+│   ├── templates.ts                # Built-in + user template CRUD
+│   ├── history.ts                  # Capture history persistence
+│   ├── settings.ts                 # AppSettings electron-store wrapper
+│   ├── startup.ts                  # Launch-at-startup integration
+│   ├── ocr.ts                      # Tesseract / Vision OCR
+│   ├── auto-blur.ts                # Sensitive-region detection + pixelation
+│   ├── sensitive-detect.ts         # Pattern matching (email/phone/key/JWT/...)
+│   ├── native-input.ts             # Win32 koffi FFI (Windows-only)
+│   ├── watermark.ts                # Lumia logo stamp on captures
+│   ├── thumbnail.ts                # Downscaled PNG thumbnail
+│   ├── helpers/                    # Compiled Swift helpers (macOS)
+│   │   ├── ocr-vision              # Vision framework OCR binary
+│   │   └── scroll-helper.swift     # macOS scroll event helper
 │   └── uploaders/
-│       ├── imgur.ts      # Imgur API client
-│       └── custom.ts     # Generic HTTP uploader
-├── src/
-│   ├── main.tsx          # React entry point
-│   ├── App.tsx           # Router + TitleBar + Sidebar layout
-│   ├── index.css         # Liquid Glass design tokens + light/dark mode
-│   ├── electron.d.ts     # window.electronAPI type declarations
-│   ├── types.ts          # Shared renderer types
-│   ├── hooks/
-│   │   └── useLocalVideoUrl.ts  # IPC file read → Blob URL for video playback
+│       ├── r2.ts                   # Cloudflare R2 (S3-compatible)
+│       └── googledrive.ts          # Google Drive OAuth uploader
+├── src/                            # Renderer (React)
+│   ├── main.tsx                    # React entry — HashRouter
+│   ├── App.tsx                     # Layout + route table
+│   ├── index.css                   # Liquid Glass tokens + light/dark mode
+│   ├── electron.d.ts               # Window.electronAPI type declarations
+│   ├── types.ts                    # Renderer types
+│   ├── hooks/                      # useHistory, useLocalVideoUrl
+│   ├── lib/                        # history-actions, workflow-actions
 │   ├── components/
-│   │   ├── TitleBar.tsx             # VSCode-style custom title bar
-│   │   ├── Sidebar.tsx              # Navigation sidebar + theme toggle
-│   │   ├── ShareDialog.tsx          # Share action modal
-│   │   ├── VideoRecorder.tsx        # Screen recording modal
+│   │   ├── TitleBar.tsx · Sidebar.tsx · AppMenu.tsx
+│   │   ├── ShareDialog.tsx · WorkflowSelector.tsx
+│   │   ├── AutoBlurPanel.tsx · BackgroundPanel.tsx
+│   │   ├── HistoryListRow.tsx · DateGroupedGrid.tsx
+│   │   ├── UpdateNotification.tsx · AboutDialog.tsx · ReleaseNotesDialog.tsx
+│   │   ├── ScrollCaptureDialog.tsx
 │   │   └── AnnotationCanvas/
-│   │       └── Canvas.tsx           # Konva stage — all drawing tools, scale-to-fit
-│   └── windows/
-│       ├── dashboard/Dashboard.tsx       # Capture launcher + sortable recent artifacts
-│       ├── editor/Editor.tsx             # Annotation editor
-│       ├── history/History.tsx           # Capture history grid + search/filter
-│       ├── workflow/Workflow.tsx         # Destinations & pipeline editor
-│       ├── settings/Settings.tsx         # App settings
-│       ├── overlay/Overlay.tsx           # Transparent region-select overlay
-│       └── video-annotator/
-│           └── VideoAnnotator.tsx        # Video playback + frame annotation + WebM export
-├── resources/            # App icons (icon.png, icon.ico, icon.icns)
+│   │       ├── Canvas.tsx          # Konva stage — all drawing tools
+│   │       ├── ToolBar.tsx         # In-canvas tool picker
+│   │       └── tools.ts            # Tool union types
+│   └── windows/                    # Routed views — one folder per route
+│       ├── dashboard/Dashboard.tsx           # Capture launcher + history grid
+│       ├── editor/Editor.tsx                 # Image + video annotation
+│       ├── workflow/Workflow.tsx             # Template manager
+│       ├── settings/Settings.tsx             # Preferences
+│       ├── overlay/Overlay.tsx               # Region/window/monitor picker
+│       ├── recorder-host/RecorderHost.tsx    # Hidden — owns MediaRecorder
+│       ├── recording-toolbar/RecordingToolbar.tsx
+│       └── recording-border/RecordingBorder.tsx
+├── resources/                      # App icons + tray icons
+├── build/                          # Notarization, entitlements, icon generator
+├── .github/workflows/release.yml   # CI build + sign + publish
 ├── electron.vite.config.ts
 ├── electron-builder.yml
+├── eng.traineddata                 # Tesseract English language data
 └── package.json
 ```
 
@@ -143,32 +199,64 @@ shareanywhere/
 ## Getting Started
 
 ### Prerequisites
+
 - Node.js 20+
-- npm 10+
+- pnpm 10+ (`npm install -g pnpm`)
 
 ### Install & Run
 
 ```bash
-# Install dependencies
-npm install
+# Install dependencies (must be pnpm — preinstall enforces it)
+pnpm install
 
-# Start in development mode (hot reload + DevTools in hamburger menu)
-npm run dev
+# Set up env vars (R2 + Google Drive credentials baked into builds)
+cp .env.example .env
+# Then fill in MAIN_VITE_R2_* and MAIN_VITE_GDRIVE_* values
 
-# Build for production
-npm run build
+# Start in development mode (renderer at localhost:5173, hot reload)
+pnpm dev
 
-# Package for distribution
-npm run dist        # produces .exe (Windows) and .dmg (macOS)
+# Type-check + bundle for production
+pnpm build
+
+# Package for the host platform (output in release/)
+pnpm build:win   # NSIS installer for x64 + arm64
+pnpm build:mac   # DMG for x64 + arm64
+
+# Regenerate icon sets from resources/icon.png
+pnpm icons
 ```
 
 ### Development Notes
 
-- Renderer runs at `http://localhost:5173` during dev; hash routing (`/#/dashboard`, `/#/editor`, etc.) drives navigation
-- The overlay window is a separate transparent `BrowserWindow` at `/#/overlay`
+- Renderer runs at `http://localhost:5173`; hash routing (`/#/dashboard`, `/#/editor`, …) drives navigation
+- Standalone routes (`/overlay`, `/recording-toolbar`, `/recording-border`, `/recorder-host`) render without sidebar/titlebar so they can be loaded into transparent BrowserWindows
 - All IPC is bridged via `contextBridge` in `preload/index.ts` — no `nodeIntegration`
-- **DevTools** accessible from the hamburger menu (≡) in dev mode
-- On Windows, the native min/max/close buttons (`titleBarOverlay`) update their colors when toggling dark/light mode
+- DevTools accessible via the in-app menu (≡) in dev mode; native dev menu also exposes Reload / Force Reload / Toggle DevTools
+- On Windows the native min/max/close buttons (`titleBarOverlay`) recolor when toggling dark/light mode via the `titlebar:setTheme` IPC
+
+### Adding a new IPC channel
+
+Update three places in this order — TypeScript will fail at the call site otherwise:
+
+1. The relevant module in `electron/` — `ipcMain.handle('my-channel', ...)`
+2. `electron/preload/index.ts` — add the method to the `contextBridge` whitelist
+3. `src/electron.d.ts` — add the TypeScript signature to `Window.electronAPI`
+
+---
+
+## Releases
+
+Production releases are produced by **GitHub Actions** (`.github/workflows/release.yml`), not local commands. Local `build:win` / `build:mac` skip code-signing (`CSC_IDENTITY_AUTO_DISCOVERY=false`); CI provides certs via repo secrets:
+
+| Platform | Required secrets |
+|---|---|
+| Windows | `WIN_CSC_LINK` (base64 .pfx), `WIN_CSC_KEY_PASSWORD` |
+| macOS | `CSC_LINK` (base64 .p12), `CSC_KEY_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` |
+
+`build/notarize.cjs` exits cleanly when notarization credentials are absent, so unsigned local builds still complete.
+
+Published artifacts go to `emtyty/lumia` GitHub Releases. Installed copies poll the same repo every 4 hours via `electron-updater` and install pending updates on the next quit.
 
 ---
 
@@ -176,40 +264,49 @@ npm run dist        # produces .exe (Windows) and .dmg (macOS)
 
 | Template | Pipeline |
 |---|---|
-| **Quick Clipboard** | capture → copy to clipboard → notify |
-| **Save to Disk** | capture → annotate → save to default save path |
-| **Upload & Copy Link** | capture → annotate → upload to Imgur → copy URL → notify |
-| **Full Share** | capture → annotate → save + upload to Imgur (parallel) → copy URL → OS share |
+| **Copy to Clipboard** | capture → copy to clipboard → notify |
+| **Annotate & Share Link** | capture → annotate → save (via editor's Save button) → upload to R2 + Google Drive (parallel) → copy first URL → notify |
 
-Built-in templates cannot be deleted. Set any template as the **active/default** workflow by clicking the star (⭐) next to it in the Destinations screen — the active workflow is shown in the page header and used by the "Share" button in the editor.
+Built-in templates cannot be deleted. Set any template as the active workflow on the Workflow page — the active template is what the editor's Share button invokes.
 
 ---
 
-## Design System — Liquid Glass Architecture
+## Design System — Liquid Glass
 
 | Token | Value |
 |---|---|
-| Background | `#050810` (deep space) |
+| Background | `#07070b` (deep space) |
 | Primary | `#b6a0ff` (lavender) |
 | Secondary | `#00e3fd` (cyan) |
 | Tertiary | `#ff6c95` (pink) |
-| Typography | Manrope (headlines) + Inter (body) |
+| Typography | Manrope (headlines) + Inter (body) + Material Icons |
 
-**Core rules:**
-- All containers translucent — `backdrop-filter: blur(40px)`, never 100% opaque
+Core rules:
+- Containers translucent — `backdrop-filter: blur(40px)`, never 100% opaque
 - No hard borders or dividers — tonal surface shifts and spacing only
 - CTAs use a `135deg` gradient from primary → secondary, `scale(1.02)` on hover
-- Shadows are refractive glows (40–80px blur at ~6% opacity), never solid black
+- Shadows are refractive glows (40–80 px blur at ~6% opacity), never solid black
 
-**Light mode** (`html.light` class): full color variable overrides + Tailwind class remaps, toggled from the sidebar and persisted to settings.
+Light mode (`html.light` class) overrides all color variables and remaps relevant Tailwind utilities. Toggled from the sidebar, persisted to settings, and synced to the Windows native title-bar overlay colors.
 
 ---
 
-## Roadmap
+## Platform Notes
 
-- [ ] More upload destinations (S3, Dropbox, Google Drive)
-- [ ] OCR on captured region
-- [ ] Scrolling capture
-- [ ] Hotkey rebinding UI
-- [ ] GIF recording
-- [ ] Audio recording support in screen recorder
+**Windows**
+- WGC (Windows Graphics Capture) enabled via `--enable-features=WindowsNativeGraphicsCapture` for pixel-perfect screenshots
+- `setAppUserModelId('com.lumia.app')` matches the NSIS shortcut AUMID — required or WinRT silently drops toasts
+- Mixed-DPI displays handled with `setBounds()` after window construction (avoids overlay misplacement on secondary monitors)
+- Native input simulation via koffi FFI to `user32.dll` — replaces PowerShell's ~200–500 ms cold start
+
+**macOS**
+- Hidden inset title bar with traffic lights at `(18, 20)`
+- Universal builds (arm64 + x64); `public.app-category.graphics-design`
+- Hardened runtime + entitlements via `build/entitlements.mac.plist`
+- OCR via the bundled Swift `helpers/ocr-vision` binary (Vision framework) when present, falling back to Tesseract
+
+---
+
+## License
+
+MIT — see [LICENSE](LICENSE).

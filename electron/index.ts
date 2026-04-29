@@ -1,35 +1,123 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, nativeImage, clipboard, screen, Menu, nativeTheme } from 'electron'
-import { join } from 'path'
-import { setupCapture } from './capture'
-import { setupHotkeys, teardownHotkeys, getHotkeys } from './hotkeys'
+import { join, dirname } from 'path'
+import fs from 'fs/promises'
+import { constants as fsConstants } from 'fs'
+import { setupCapture, ORIGINALS_DIR } from './capture'
+import { setupVideo } from './video'
+import { uploadToR2 } from './uploaders/r2'
+import {
+  uploadToGoogleDrive,
+  refreshGoogleToken,
+  revokeGoogleToken,
+  exchangeGoogleAuthCode,
+} from './uploaders/googledrive'
+import { localTimestamp } from './utils'
+import { registerOverlayHwnd, unregisterOverlayHwnd } from './native-input'
+import { setupHotkeys, teardownHotkeys, getHotkeys, saveHotkeys, resetHotkeys, defaultHotkeys, type HotkeyConfig } from './hotkeys'
 import { setupTray, destroyTray } from './tray'
-import { setupScrollCapture, getOverlayMode, resetOverlayMode } from './scroll-capture'
+import { setupScrollCapture, getOverlayMode } from './scroll-capture'
 import { WorkflowEngine } from './workflow'
 import { TemplateStore } from './templates'
 import { HistoryStore } from './history'
-import { getSettings, setSetting, type AppSettings } from './settings'
+import { makeThumbnail } from './thumbnail'
+import { showNotification } from './notify'
+import type { HistoryItem } from './types'
+import { getSettings, setSetting, resolveSaveStartDir, rememberSaveDir, type AppSettings } from './settings'
+import { applyLaunchAtStartup, wasLaunchedAtStartup } from './startup'
+import { preflightPermissions } from './permissions'
 import { autoUpdater } from 'electron-updater'
+import log from 'electron-log'
 
-// Force legacy DXGI/GDI capturer instead of WGC on Windows.
-// appendSwitch with duplicate keys can be ignored; appendArgument always appends.
-// Covers: desktopCapturer (screenshots) + getUserMedia streams (video recording).
+log.transports.file.level = 'info'
+log.transports.console.level = 'info'
+autoUpdater.logger = log
+Object.assign(console, log.functions)
+
+// Enable WGC (Windows Graphics Capture) for pixel-perfect, high-quality screenshots on Windows.
 if (process.platform === 'win32') {
-  app.commandLine.appendArgument(
-    '--disable-features=WindowsNativeGraphicsCapture,' +
-    'WebRtcAllowWgcScreenCapturer,' +
-    'WebRtcAllowWgcWindowCapturer,' +
-    'WebRtcAllowWgcDesktopCapturer'
-  )
+  app.commandLine.appendSwitch('enable-features', 'WindowsNativeGraphicsCapture')
 }
 
 const isDev = !app.isPackaged
 
+// Only allow a single running instance — prevents cache/lock conflicts
+// (cache_util_win.cc "Access is denied" errors) when the user relaunches
+// while the tray instance is still alive.
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+  process.exit(0)
+}
+
 let mainWindow: BrowserWindow | null = null
 let historyStoreInstance: InstanceType<typeof HistoryStore> | null = null
+// Pre-warmed pool: one hidden overlay per display, kept alive for the app's
+// lifetime. Reusing a loaded renderer drops region-capture from
+// "hotkey → first paint" of ~300–500ms (window create + React boot) down to
+// the time it takes to call show() + send a mode reset (~30ms).
+const overlayPool: Map<number, BrowserWindow> = new Map()
+let overlayPoolReady = false
+// Mirror of the currently-active overlays (subset of overlayPool that is
+// visible). Kept separate so getOverlayWindow / broadcastToOverlays stay
+// scoped to the active session.
 const overlayWindows: Map<number, BrowserWindow> = new Map()
 let activeOverlayDisplayId: number | null = null
 let overlayPollTimer: ReturnType<typeof setInterval> | null = null
 let overlayDrawingInProgress = false
+let currentRoute = '/dashboard'
+let isQuitting = false
+// Set by the autoUpdater 'update-downloaded' handler. Allows the install to
+// happen the moment the user drops the app to the tray instead of waiting
+// for an explicit Quit / next launch.
+let updateDownloaded = false
+let autoInstallTimer: ReturnType<typeof setTimeout> | null = null
+// Grace window between "user hid the app" and "we restart the app to install".
+// Long enough that a brief Cmd+H (Mac) or accidental close-to-tray (Windows)
+// doesn't nuke whatever the user is about to come back to. Short enough that
+// a genuinely-idle tray instance picks up the update before the next session.
+const AUTO_INSTALL_GRACE_MS = 30 * 1000
+
+export function markQuitting() { isQuitting = true }
+
+/** Schedule a quit-and-install for an already-downloaded update, but only if
+ *  the window stays hidden for the full grace window. Called from
+ *  `update-downloaded` and from the main window's 'hide' event. */
+function scheduleAutoInstall() {
+  if (autoInstallTimer) clearTimeout(autoInstallTimer)
+  autoInstallTimer = null
+  if (!updateDownloaded) return
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) return
+  autoInstallTimer = setTimeout(() => {
+    autoInstallTimer = null
+    // Re-check: user may have surfaced the window during the grace window.
+    if (!updateDownloaded) return
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible()) return
+    console.log('[autoUpdater] grace period elapsed with window hidden — installing update')
+    updateDownloaded = false
+    isQuitting = true
+    // (isSilent=true, isForceRunAfter=true) — Windows-only knobs. Without
+    // isSilent the NSIS assisted-installer UI pops up on every update;
+    // isForceRunAfter relaunches the app once the install finishes.
+    autoUpdater.quitAndInstall(true, true)
+  }, AUTO_INSTALL_GRACE_MS)
+}
+
+/** Called when the window becomes visible again — cancel any pending install
+ *  so the user isn't kicked out the moment after they reopen. */
+function cancelAutoInstall() {
+  if (autoInstallTimer) clearTimeout(autoInstallTimer)
+  autoInstallTimer = null
+}
+
+/** Track the dock icon to the main window's visibility on macOS: hidden when
+ *  the window is closed to tray, visible when the window is open. Without
+ *  this, the dock shortcut sticks around pointing at "nothing", and reopening
+ *  via the tray leaves a stale dock icon behind. No-op on Windows/Linux. */
+function syncDockVisibility() {
+  if (process.platform !== 'darwin') return
+  const visible = !!(mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible())
+  if (visible) app.dock?.show().catch(() => { /* ignore */ })
+  else app.dock?.hide()
+}
 
 export function getMainWindow() { return mainWindow }
 export function getHistoryStore() { return historyStoreInstance }
@@ -39,14 +127,23 @@ export function getOverlayWindow() {
 }
 export function getOverlayDisplayId() { return activeOverlayDisplayId }
 
+export function broadcastToOverlays(channel: string, ...args: unknown[]) {
+  for (const [, win] of overlayWindows) {
+    if (!win.isDestroyed()) win.webContents.send(channel, ...args)
+  }
+}
+
 export function closeAllOverlays() {
   if (overlayPollTimer) {
     clearInterval(overlayPollTimer)
     overlayPollTimer = null
   }
   overlayDrawingInProgress = false
+  // Hide instead of destroy — the windows live in overlayPool and get reused
+  // on the next createOverlayWindows() call. Destroying them would force a
+  // full BrowserWindow + renderer rebuild on every capture.
   for (const [, win] of overlayWindows) {
-    if (!win.isDestroyed()) win.close()
+    if (!win.isDestroyed() && win.isVisible()) win.hide()
   }
   overlayWindows.clear()
   activeOverlayDisplayId = null
@@ -58,16 +155,19 @@ const ICON_PATH = process.platform === 'win32'
     ? join(__dirname, '../../resources/icons/mac/icon.icns')
     : join(__dirname, '../../resources/icon.png')
 
-function createMainWindow(): BrowserWindow {
+function createMainWindow(startHidden = false): BrowserWindow {
   const isMac = process.platform === 'darwin'
   const isWin = process.platform === 'win32'
   const win = new BrowserWindow({
-    width: 1200,
-    height: 780,
+    width: 1250,
+    height: 700,
     minWidth: 900,
     minHeight: 600,
-    backgroundColor: '#050810',
+    backgroundColor: '#07070b',
     icon: ICON_PATH,
+    // Defer first paint via ready-to-show below to avoid an empty frame flash
+    // on slow renderer cold-starts. startHidden boot keeps the window hidden.
+    show: false,
     // VSCode-style: frameless on both platforms
     // macOS: traffic lights inset; Windows: native overlay controls
     frame: false,
@@ -77,7 +177,7 @@ function createMainWindow(): BrowserWindow {
     } : isWin ? {
       titleBarStyle: 'hidden',
       titleBarOverlay: {
-        color: '#050810',
+        color: '#07070b',
         symbolColor: '#94a3b8',
         height: 40
       }
@@ -95,81 +195,181 @@ function createMainWindow(): BrowserWindow {
   if (isDev) {
     win.loadURL('http://localhost:5173/#/dashboard')
     // win.webContents.openDevTools({ mode: 'detach' })
-  
+
   } else {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
+
+  // Two-stage show: ready-to-show only means the renderer has painted its
+  // initial HTML/CSS, but at that moment Dashboard's IPC fetches and font
+  // downloads are still in-flight, so the window pops up half-loaded. Wait
+  // for the renderer to send 'window:ready' (App.tsx fires it once those
+  // settle) before showing. Fallback timer guarantees the window appears
+  // within 1s even if the signal is dropped (renderer crash, IPC failure).
+  let shown = false
+  const showOnce = () => {
+    if (shown || startHidden || win.isDestroyed() || win.isVisible()) return
+    shown = true
+    win.show()
+  }
+  ipcMain.once('window:ready', () => showOnce())
+  win.once('ready-to-show', () => {
+    setTimeout(showOnce, 1000)
+  })
+
+  // Intercept close: keep the app alive in the tray instead of exiting. Only
+  // actually close when we're explicitly quitting (tray Quit / hotkey / IPC).
+  // On /editor, X is a "discard capture" button — navigate back to the
+  // dashboard and keep the window open instead of hiding to tray.
+  win.on('close', (e) => {
+    if (isQuitting) return
+    e.preventDefault()
+    if (currentRoute === '/editor') {
+      currentRoute = '/dashboard'
+      win.webContents.send('navigate', '/dashboard')
+      return
+    }
+    win.hide()
+  })
+
+  // After the window goes to the tray, schedule install of any pending update.
+  // Cancelled if the user surfaces the window again within the grace window.
+  win.on('hide', () => { scheduleAutoInstall(); syncDockVisibility() })
+  win.on('show', () => { cancelAutoInstall(); syncDockVisibility() })
 
   win.on('closed', () => { mainWindow = null })
   return win
 }
 
-export function createOverlayWindows(): void {
+function addOverlayToPool(display: Electron.Display): BrowserWindow {
+  const { x, y, width, height } = display.bounds
+  const displayBounds = { x, y, width, height }
+
+  const win = new BrowserWindow({
+    ...displayBounds,
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    alwaysOnTop: true,
+    skipTaskbar: true,
+    hasShadow: false,
+    resizable: false,
+    movable: false,
+    enableLargerThanScreen: true,
+    // Pre-warmed: kept hidden until the user triggers a capture / record.
+    show: false,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    }
+  })
+
+  if (process.platform === 'win32') {
+    win.setBounds(displayBounds)
+  }
+
+  win.setAlwaysOnTop(true, 'pop-up-menu')
+  win.setVisibleOnAllWorkspaces(true)
+
+  if (isDev) {
+    win.loadURL('http://localhost:5173/#/overlay')
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
+  }
+
+  // One-time per-window setup: register the HWND for the native click-through
+  // helper. The overlay is reused across captures so this only fires once.
+  win.once('ready-to-show', () => {
+    if (process.platform === 'win32' && !win.isDestroyed()) {
+      const hwnd = win.getNativeWindowHandle().readInt32LE(0)
+      registerOverlayHwnd(hwnd)
+    }
+  })
+
+  win.on('closed', () => {
+    if (process.platform === 'win32') {
+      try {
+        const hwnd = win.getNativeWindowHandle().readInt32LE(0)
+        unregisterOverlayHwnd(hwnd)
+      } catch { /* window already destroyed */ }
+    }
+    overlayPool.delete(display.id)
+    overlayWindows.delete(display.id)
+  })
+
+  overlayPool.set(display.id, win)
+  return win
+}
+
+/** Initialise the overlay pool: one hidden BrowserWindow per display, plus
+ *  listeners that keep the pool in sync with monitor plug/unplug events.
+ *  Idempotent — safe to call multiple times. */
+export function setupOverlayPool() {
+  if (overlayPoolReady) return
+  overlayPoolReady = true
+
+  for (const display of screen.getAllDisplays()) {
+    addOverlayToPool(display)
+  }
+
+  screen.on('display-added', (_e, display) => {
+    if (!overlayPool.has(display.id)) addOverlayToPool(display)
+  })
+  screen.on('display-removed', (_e, display) => {
+    const win = overlayPool.get(display.id)
+    if (win && !win.isDestroyed()) win.destroy()
+  })
+  screen.on('display-metrics-changed', (_e, display) => {
+    const win = overlayPool.get(display.id)
+    if (win && !win.isDestroyed()) {
+      win.setBounds(display.bounds)
+    }
+  })
+}
+
+export function createOverlayWindows(): Map<number, BrowserWindow> {
   closeAllOverlays()
+  // Lazy fallback: caller might invoke this before whenReady has finished
+  // wiring up the pool (e.g. tests, or display-added racing with first capture).
+  if (!overlayPoolReady) setupOverlayPool()
 
   const allDisplays = screen.getAllDisplays()
   const cursorPoint = screen.getCursorScreenPoint()
   const cursorDisplay = screen.getDisplayNearestPoint(cursorPoint)
   activeOverlayDisplayId = cursorDisplay.id
 
+  // Reconcile pool against current displays — covers any display change
+  // events that fired between `setupOverlayPool` and now.
   for (const display of allDisplays) {
+    if (!overlayPool.has(display.id)) addOverlayToPool(display)
+  }
+
+  const currentMode = getOverlayMode()
+
+  for (const display of allDisplays) {
+    const win = overlayPool.get(display.id)
+    if (!win || win.isDestroyed()) continue
+
     const { x, y, width, height } = display.bounds
     const displayBounds = { x, y, width, height }
     const isActive = display.id === activeOverlayDisplayId
 
-    const win = new BrowserWindow({
-      ...displayBounds,
-      transparent: true,
-      backgroundColor: '#00000000',
-      frame: false,
-      alwaysOnTop: true,
-      skipTaskbar: true,
-      hasShadow: false,
-      resizable: false,
-      movable: false,
-      enableLargerThanScreen: true,
-      webPreferences: {
-        preload: join(__dirname, '../preload/index.js'),
-        contextIsolation: true,
-        nodeIntegration: false
-      }
-    })
-
-    // On Windows, per-monitor DPI awareness can distort bounds when the overlay
-    // is created on a secondary display with a different scale factor.
-    if (process.platform === 'win32') {
-      win.setBounds(displayBounds)
-    }
-
-    // Inactive overlays pass mouse events through so cursor can reach active display
+    win.setBounds(displayBounds)
     if (!isActive) {
       win.setIgnoreMouseEvents(true, { forward: true })
     } else {
       win.setIgnoreMouseEvents(false)
     }
 
-    win.setAlwaysOnTop(true, 'pop-up-menu')
-    win.setVisibleOnAllWorkspaces(true)
-
-    if (isDev) {
-      win.loadURL('http://localhost:5173/#/overlay')
-    } else {
-      win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/overlay' })
-    }
-
-    win.once('ready-to-show', () => {
-      if (!win.isDestroyed()) {
-        win.setBounds(displayBounds)
-        // Tell this overlay whether it's the active one
-        win.webContents.send('overlay:set-active', display.id === activeOverlayDisplayId)
-      }
-    })
-
-    win.on('closed', () => {
-      overlayWindows.delete(display.id)
-    })
+    // Reset renderer state for a fresh session: pushes the current mode and
+    // clears any leftover draw state from a previous capture. The renderer
+    // listens for 'overlay:mode-changed' and resets startPos/currentPos/etc.
+    win.webContents.send('overlay:mode-changed', currentMode)
+    win.webContents.send('overlay:set-active', isActive)
 
     overlayWindows.set(display.id, win)
+    win.show()
   }
 
   // Poll cursor position to switch active overlay when mouse moves between displays
@@ -199,6 +399,8 @@ export function createOverlayWindows(): void {
       }
     }
   }, 100)
+
+  return overlayWindows
 }
 
 function navigateTo(route: string) {
@@ -264,35 +466,168 @@ if (isDev) {
 }
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId('Lumia')
+  // Must match `appId` in electron-builder.yml — NSIS registers the Start
+  // Menu shortcut under that AUMID, and WinRT silently drops toasts when
+  // the runtime AUMID doesn't match the shortcut.
+  app.setAppUserModelId('com.lumia.app')
 }
 
 app.whenReady().then(async () => {
-  mainWindow = createMainWindow()
+  // Allow getUserMedia desktop capture in all windows (needed for overlay region capture)
+  const { session } = await import('electron')
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    if (permission === 'media') return callback(true)
+    callback(false)
+  })
+
+  const startHidden = wasLaunchedAtStartup()
+  mainWindow = createMainWindow(startHidden)
+
+  // macOS: dock icon tracks main-window visibility (see syncDockVisibility).
+  // For a normal launch the window is visible → dock visible. For login-item
+  // startup (startHidden) the window is hidden → dock hidden too, so the
+  // user only sees Lumia in the menubar tray as expected.
+  syncDockVisibility()
+
+  // Keep the OS login-item entry in sync with the stored preference on every
+  // launch (covers app moves, reinstalls, and settings changed while offline).
+  applyLaunchAtStartup(getSettings().launchAtStartup)
 
   setupCapture()
+  setupVideo()
   setupHotkeys()
   setupTray()
   setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
+
+  // Pre-warm the overlay pool: one hidden BrowserWindow per display, with
+  // the renderer already loaded. The first capture after boot drops from
+  // ~300–500ms (window construct + React boot) to ~30ms (show + IPC reset).
+  setupOverlayPool()
+
+  // Surface OS permission prompts (Screen Recording / Microphone / Accessibility
+  // on macOS, Microphone on Windows) at startup rather than mid-capture. Skip
+  // when launched hidden at boot — we'll preflight when the user surfaces the
+  // window via the tray. Small delay so the dashboard paints first.
+  if (!startHidden) {
+    setTimeout(() => { void preflightPermissions(mainWindow) }, 1500)
+  } else if (mainWindow) {
+    mainWindow.once('show', () => {
+      setTimeout(() => { void preflightPermissions(mainWindow) }, 800)
+    })
+  }
 
   // IPC: Overlay drawing state — lock active display while user is drawing
   ipcMain.on('overlay:drawing', (_e, drawing: boolean) => {
     overlayDrawingInProgress = drawing
   })
 
+  // IPC: Renderer route tracking — used to intercept close on /editor
+  ipcMain.on('app:route-changed', (_e, route: string) => {
+    currentRoute = route
+  })
+
   // Auto-update
-  if (!isDev) {
-    autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
-    autoUpdater.checkForUpdates()
+  const sendUpdateStatus = (status: string, payload: Record<string, unknown> = {}) => {
+    mainWindow?.webContents.send('update:status', { status, ...payload })
   }
 
+  autoUpdater.on('error', (err) => {
+    console.error('[autoUpdater] error:', err)
+    sendUpdateStatus('error', { error: String(err?.message ?? err) })
+  })
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[autoUpdater] checking...')
+    sendUpdateStatus('checking')
+  })
+  autoUpdater.on('update-available', (info) => {
+    console.log('[autoUpdater] update available:', info.version)
+    sendUpdateStatus('available', { version: info.version })
+  })
+  autoUpdater.on('update-not-available', () => {
+    console.log('[autoUpdater] up to date')
+    sendUpdateStatus('not-available')
+  })
+  autoUpdater.on('download-progress', (p) => {
+    console.log(`[autoUpdater] downloading ${Math.round(p.percent)}% (${p.transferred}/${p.total})`)
+    sendUpdateStatus('downloading', { percent: p.percent })
+  })
   autoUpdater.on('update-downloaded', (info) => {
+    console.log('[autoUpdater] update downloaded:', info.version)
     mainWindow?.webContents.send('update:downloaded', info.version)
+    sendUpdateStatus('downloaded', { version: info.version })
+    updateDownloaded = true
+    // If the user already has the app minimized to tray, the grace window
+    // starts now — install if they don't surface the window within it.
+    scheduleAutoInstall()
   })
+
+  // Probe whether this process can write to the install dir. If not (typical
+  // case: per-machine install on Windows being run by a non-admin user), the
+  // silent NSIS update path can't apply the new bits — and falling back to
+  // the UI installer would pop UAC every check. So we just disable the whole
+  // auto-update pipeline: no check, no download, no banner. Users in this
+  // state must update manually by running the new installer with admin.
+  let canWriteInstallDir = false
+  try {
+    await fs.access(dirname(app.getPath('exe')), fsConstants.W_OK)
+    canWriteInstallDir = true
+  } catch { /* not writable — auto-update disabled */ }
+
+  const UPDATE_CHECK_INTERVAL_MS = 4 * 60 * 60 * 1000
+  if (!isDev && canWriteInstallDir) {
+    autoUpdater.autoDownload = true
+    autoUpdater.autoInstallOnAppQuit = true
+    console.log(`[autoUpdater] current version ${app.getVersion()}, checking for updates...`)
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[autoUpdater] checkForUpdates failed:', err)
+    })
+    setInterval(() => {
+      autoUpdater.checkForUpdates().catch((err) => {
+        console.error('[autoUpdater] periodic check failed:', err)
+      })
+    }, UPDATE_CHECK_INTERVAL_MS)
+  } else if (!isDev) {
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    console.log('[autoUpdater] install dir not writable — auto-update disabled. Update manually via the new installer.')
+  }
+
   ipcMain.handle('update:install', () => {
-    autoUpdater.quitAndInstall()
+    if (!canWriteInstallDir) return
+    // Must set isQuitting before quitAndInstall — electron-updater triggers
+    // app.quit() internally, and our before-quit handler hides to tray
+    // unless isQuitting is true, which would silently swallow the restart.
+    updateDownloaded = false
+    cancelAutoInstall()
+    isQuitting = true
+    // Silent install on Windows so the NSIS UI doesn't surface on every
+    // update; isForceRunAfter brings the app back up after install. No-op
+    // for the macOS update path (zip-based, no installer UI to silence).
+    autoUpdater.quitAndInstall(true, true)
   })
+  ipcMain.handle('update:check', async () => {
+    if (isDev) {
+      sendUpdateStatus('checking')
+      setTimeout(() => sendUpdateStatus('not-available'), 400)
+      return { ok: true, dev: true }
+    }
+    if (!canWriteInstallDir) {
+      sendUpdateStatus('error', { error: 'Auto-update is unavailable because Lumia is installed to a location this user cannot write to. Reinstall with administrator rights to enable updates.' })
+      return { ok: false, error: 'install-dir-not-writable' }
+    }
+    try {
+      await autoUpdater.checkForUpdates()
+      return { ok: true }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      sendUpdateStatus('error', { error: message })
+      return { ok: false, error: message }
+    }
+  })
+  // Renderer reads this to hide the "Check for Updates" menu entry when the
+  // current process can't apply updates anyway. Always true in dev so the
+  // menu item still works for testing the IPC.
+  ipcMain.handle('update:available', () => isDev || canWriteInstallDir)
 
   ipcMain.handle('app:version', () => app.getVersion())
 
@@ -308,8 +643,8 @@ app.whenReady().then(async () => {
   ipcMain.handle('workflow:getTemplates', () => templateStore.getAll())
   ipcMain.handle('workflow:saveTemplate', (_e, template) => templateStore.save(template))
   ipcMain.handle('workflow:deleteTemplate', (_e, id: string) => templateStore.delete(id))
-  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string, destinationIndex?: number) => {
-    return workflowEngine.run(templateId, imageData, destinationIndex)
+  ipcMain.handle('workflow:run', async (_e, templateId: string, imageData: string, destinationIndex?: number, historyId?: string) => {
+    return workflowEngine.run(templateId, imageData, destinationIndex, historyId)
   })
   ipcMain.handle('workflow:inlineAction', async (_e, actionType: 'clipboard' | 'save', imageData: string) => {
     return workflowEngine.runInlineAction(actionType, imageData)
@@ -318,8 +653,255 @@ app.whenReady().then(async () => {
   // IPC: History
   const historyStore = new HistoryStore()
   historyStoreInstance = historyStore
-  ipcMain.handle('history:get', () => historyStore.getAll())
-  ipcMain.handle('history:delete', (_e, id: string) => historyStore.delete(id))
+
+  // One-time upgrade cleanup. Bump HISTORY_CLEANUP_VERSION when the data
+  // model diverges from prior releases badly enough that wiping existing
+  // history + sidecar files is friendlier than trying to migrate. Runs
+  // once per bump (guarded inside HistoryStore), then never again.
+  const HISTORY_CLEANUP_VERSION = 1
+  try {
+    const wiped = await historyStore.runStartupCleanup(HISTORY_CLEANUP_VERSION)
+    if (wiped > 0) console.log(`[history] upgrade reset v${HISTORY_CLEANUP_VERSION} — removed ${wiped} legacy item(s)`)
+  } catch (err) {
+    console.error('[history] upgrade cleanup failed', err)
+  }
+
+  // Background retention cleanup: prune on boot and then hourly. `days <= 0`
+  // means keep forever, so the store skips the scan — cheap to keep running.
+  // Prune unlinks the associated files on disk too (shared with the manual
+  // delete path in HistoryStore), so old captures don't sit around orphaned.
+  const runHistoryPrune = async () => {
+    const days = getSettings().historyRetentionDays
+    const removed = await historyStore.pruneOlderThan(days)
+    if (removed > 0) console.log(`[history] pruned ${removed} item(s) older than ${days} day(s)`)
+  }
+  runHistoryPrune()
+  const HISTORY_PRUNE_INTERVAL_MS = 60 * 60 * 1000
+  const historyPruneTimer = setInterval(runHistoryPrune, HISTORY_PRUNE_INTERVAL_MS)
+  app.on('will-quit', () => clearInterval(historyPruneTimer))
+
+  ipcMain.handle('history:get', async () => {
+    const items = historyStore.getAll()
+    const { access } = await import('fs/promises')
+    // fs.access is microsecond-fast on SSDs; 200 parallel probes are trivial.
+    return Promise.all(items.map(async (item) => {
+      if (!item.filePath) return item
+      try {
+        await access(item.filePath)
+        return item
+      } catch {
+        return { ...item, fileMissing: true }
+      }
+    }))
+  })
+  ipcMain.handle('history:delete', async (_e, id: string) => {
+    // Store.delete unlinks filePath + annotatedFilePath (bounded to homedir,
+    // ENOENT ignored) and then mutates history.json.
+    return historyStore.delete(id)
+  })
+  ipcMain.handle('history:cleanupMissing', async () => {
+    const items = historyStore.getAll()
+    const { access } = await import('fs/promises')
+    const orphanIds: string[] = []
+    await Promise.all(items.map(async (item) => {
+      if (!item.filePath) return
+      try { await access(item.filePath) } catch { orphanIds.push(item.id) }
+    }))
+    await Promise.all(orphanIds.map(id => historyStore.delete(id)))
+    return orphanIds.length
+  })
+  // Persist the current annotation shapes (and optionally a flattened PNG
+  // sidecar) for a history item. Reopening the item replays each shape as
+  // its own Canvas commit so native Undo walks back through them in order.
+  ipcMain.handle('history:saveAnnotations', async (_e, id: string, annotations: unknown[], flattenedDataUrl?: string) => {
+    const items = historyStore.getAll()
+    const item = items.find(i => i.id === id)
+    if (!item) throw new Error('History item not found')
+    if (!item.filePath) throw new Error('History item has no source file')
+
+    const { writeFile, unlink } = await import('fs/promises')
+    const { resolve, normalize, dirname, basename, extname, join } = await import('path')
+    const { homedir } = await import('os')
+    const originalPath = resolve(normalize(item.filePath))
+    if (!originalPath.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+
+    const hasAnnotations = Array.isArray(annotations) && annotations.length > 0
+
+    // Preserve the existing sidecar + thumbnail by default — only the branches
+    // below overwrite them. Without this, a debounced save (which ships only
+    // the vector JSON, no flattened dataUrl) would reset `annotatedFilePath`
+    // to undefined, orphan the sidecar on disk, and force Dashboard Share/
+    // Copy back to the un-annotated original.
+    let annotatedFilePath: string | undefined = item.annotatedFilePath
+    let thumbnailUrl = item.thumbnailUrl
+
+    if (hasAnnotations && typeof flattenedDataUrl === 'string' && flattenedDataUrl.startsWith('data:image/')) {
+      // Write (or overwrite) the sidecar PNG next to the original. Naming
+      // keeps the basename so a user browsing ~/Pictures/Lumia still sees the
+      // original and annotated side-by-side.
+      const dir = dirname(originalPath)
+      const ext = extname(originalPath) || '.png'
+      const stem = basename(originalPath, ext)
+      const sidecar = join(dir, `${stem}-annotated.png`)
+      const base64 = flattenedDataUrl.replace(/^data:image\/\w+;base64,/, '')
+      await writeFile(sidecar, Buffer.from(base64, 'base64'))
+      annotatedFilePath = sidecar
+      thumbnailUrl = makeThumbnail(flattenedDataUrl)
+    }
+
+    if (!hasAnnotations && item.annotatedFilePath) {
+      try {
+        const prev = resolve(normalize(item.annotatedFilePath))
+        if (prev.startsWith(homedir())) await unlink(prev)
+      } catch (err: unknown) {
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          console.error('[history:saveAnnotations] failed to clean up sidecar', err)
+        }
+      }
+      annotatedFilePath = undefined
+      // Regenerate thumbnail from the original now that annotations are gone.
+      try {
+        const { readFile } = await import('fs/promises')
+        const buf = await readFile(originalPath)
+        const ext = extname(originalPath).toLowerCase()
+        const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png'
+        thumbnailUrl = makeThumbnail(`data:${mime};base64,${buf.toString('base64')}`)
+      } catch { /* leave previous thumbnail rather than blank the card */ }
+    }
+
+    return historyStore.update(id, {
+      annotations: hasAnnotations ? (annotations as HistoryItem['annotations']) : undefined,
+      annotatedFilePath,
+      thumbnailUrl,
+    })
+  })
+
+  // Upload a history item's source file to R2 and copy the resulting URL.
+  // Dedup: if the item already has a successful r2 upload, reuse it so repeat
+  // clicks don't re-issue requests (uploadToR2 itself is content-addressable
+  // too, but this path short-circuits before even reading the file).
+  ipcMain.handle('history:shareR2', async (_e, id: string) => {
+    const items = historyStore.getAll()
+    const item = items.find(i => i.id === id)
+    if (!item) throw new Error('History item not found')
+    if (!item.filePath) throw new Error('History item has no source file')
+
+    const existing = item.uploads?.find(u => u.destination === 'r2' && u.success && u.url)
+    if (existing?.url) {
+      clipboard.writeText(existing.url)
+      return existing
+    }
+
+    const { readFile } = await import('fs/promises')
+    const { extname } = await import('path')
+
+    // Prefer the annotated sidecar when present so shared links carry the
+    // user's final edited version rather than the untouched original.
+    const sourcePath = item.annotatedFilePath ?? item.filePath
+    const buffer = await readFile(sourcePath)
+    const ext = extname(sourcePath).replace(/^\./, '').toLowerCase() || (item.type === 'recording' ? 'webm' : 'png')
+    const isVideo = item.type === 'recording'
+    const contentType = isVideo
+      ? (ext === 'mp4' ? 'video/mp4' : 'video/webm')
+      : (ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png')
+    const keyPrefix = isVideo ? 'recordings' : 'captures'
+
+    const res = await uploadToR2(
+      { buffer, contentType, ext, keyPrefix },
+      import.meta.env.MAIN_VITE_R2_ACCOUNT_ID,
+      import.meta.env.MAIN_VITE_R2_ACCESS_KEY_ID,
+      import.meta.env.MAIN_VITE_R2_SECRET_ACCESS_KEY,
+      import.meta.env.MAIN_VITE_R2_BUCKET,
+      import.meta.env.MAIN_VITE_R2_PUBLIC_URL,
+    )
+
+    if (res.success && res.url) {
+      clipboard.writeText(res.url)
+      // Append (or replace) the r2 entry so subsequent shares hit the fast
+      // path above, and so the Dashboard card can flip to "Synced".
+      const uploads = [
+        ...(item.uploads ?? []).filter(u => u.destination !== 'r2'),
+        res,
+      ]
+      historyStore.update(id, { uploads })
+      showNotification({
+        body: 'Link copied to clipboard',
+        thumbnailDataUrl: item.thumbnailUrl,
+      })
+    }
+    return res
+  })
+
+  // Upload a history item's source file to Google Drive and copy the resulting
+  // URL. Mirrors the R2 path: dedup if already uploaded, refresh OAuth token if
+  // expired, persist the upload result so subsequent clicks short-circuit.
+  ipcMain.handle('history:shareGoogleDrive', async (_e, id: string) => {
+    const items = historyStore.getAll()
+    const item = items.find(i => i.id === id)
+    if (!item) throw new Error('History item not found')
+    if (!item.filePath) throw new Error('History item has no source file')
+
+    const existing = item.uploads?.find(u => u.destination === 'google-drive' && u.success && u.url)
+    if (existing?.url) {
+      clipboard.writeText(existing.url)
+      return existing
+    }
+
+    const settings = getSettings()
+    let token = settings.googleDriveAccessToken
+    if (!settings.googleDriveRefreshToken) {
+      return { destination: 'google-drive', success: false, error: 'Not connected to Google Drive' }
+    }
+    if (!settings.googleDriveFolderId) {
+      return { destination: 'google-drive', success: false, error: 'No Drive folder selected — choose one in Settings → Google Drive.' }
+    }
+
+    if (Date.now() >= settings.googleDriveTokenExpiresAt - 60_000) {
+      try {
+        const refreshed = await refreshGoogleToken(
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID,
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET,
+          settings.googleDriveRefreshToken
+        )
+        token = refreshed.accessToken
+        setSetting('googleDriveAccessToken', refreshed.accessToken)
+        setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
+      } catch (err) {
+        return { destination: 'google-drive', success: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+
+    const { readFile } = await import('fs/promises')
+    const { extname, basename } = await import('path')
+    const sourcePath = item.annotatedFilePath ?? item.filePath
+    const buffer = await readFile(sourcePath)
+    const ext = extname(sourcePath).replace(/^\./, '').toLowerCase()
+    const isVideo = item.type === 'recording'
+    const mimeType = isVideo
+      ? (ext === 'mp4' ? 'video/mp4' : 'video/webm')
+      : (ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png')
+    const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`
+
+    const res = await uploadToGoogleDrive(dataUrl, token, settings.googleDriveFolderId, {
+      filename: basename(sourcePath),
+      mimeType,
+    })
+
+    if (res.success && res.url) {
+      clipboard.writeText(res.url)
+      const uploads = [
+        ...(item.uploads ?? []).filter(u => u.destination !== 'google-drive'),
+        res,
+      ]
+      historyStore.update(id, { uploads })
+      showNotification({
+        body: 'Drive link copied to clipboard',
+        thumbnailDataUrl: item.thumbnailUrl,
+      })
+    }
+    return res
+  })
+
   ipcMain.handle('history:openFile', (_e, filePath: string) => {
     const { resolve, normalize } = require('path')
     const { homedir } = require('os')
@@ -327,7 +909,51 @@ app.whenReady().then(async () => {
     if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
     return shell.openPath(normalized)
   })
-  ipcMain.handle('history:addCapture', (_e, item) => historyStore.add(item))
+  ipcMain.handle('history:addCapture', async (_e, item) => {
+    // If a renderer is adding a screenshot with only a dataUrl (e.g. scroll
+    // capture, video-annotator frame extract), persist the original to
+    // ~/Pictures/Lumia/ here so every history item references a real file.
+    try {
+      if (item && item.type === 'screenshot' && !item.filePath && typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/')) {
+        const { writeFile, mkdir } = await import('fs/promises')
+        await mkdir(ORIGINALS_DIR, { recursive: true })
+        const ext = item.dataUrl.startsWith('data:image/jpeg') ? 'jpg' : 'png'
+        const filename = `capture-${localTimestamp()}.${ext}`
+        const filePath = join(ORIGINALS_DIR, filename)
+        const base64 = item.dataUrl.replace(/^data:image\/\w+;base64,/, '')
+        await writeFile(filePath, Buffer.from(base64, 'base64'))
+        item = { ...item, name: item.name ?? filename, filePath }
+      }
+      // Replace the full dataUrl with a compact thumbnail. `filePath` is the
+      // source of truth for the full image — dataUrl is never stored.
+      if (item && typeof item.dataUrl === 'string' && item.dataUrl.startsWith('data:image/')) {
+        const { dataUrl, thumbnailUrl, ...rest } = item
+        item = { ...rest, thumbnailUrl: thumbnailUrl ?? makeThumbnail(dataUrl) }
+      }
+    } catch (err) {
+      console.error('[history:addCapture] failed to persist original', err)
+    }
+    return historyStore.add(item)
+  })
+  ipcMain.handle('history:readAsDataUrl', async (_e, filePath: string) => {
+    const { readFile } = await import('fs/promises')
+    const { resolve, normalize, extname } = await import('path')
+    const { homedir } = await import('os')
+    const normalized = resolve(normalize(filePath))
+    if (!normalized.startsWith(homedir())) throw new Error('Access denied — path outside home directory')
+    const ext = extname(normalized).toLowerCase()
+    const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png'
+    try {
+      const buf = await readFile(normalized)
+      return `data:${mime};base64,${buf.toString('base64')}`
+    } catch (err: unknown) {
+      // File deleted between history:get's fs.access probe and this read —
+      // return null so renderer can refresh into the orphan state instead of
+      // surfacing an ENOENT handler error on stderr.
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw err
+    }
+  })
 
   // IPC: Overlay mode (scroll-region vs region)
   // Do NOT reset here — React StrictMode double-mounts the overlay,
@@ -335,25 +961,132 @@ app.whenReady().then(async () => {
   // Mode is reset in scroll-region:confirm / scroll-region:cancel / region:confirm / region:cancel.
   ipcMain.handle('overlay:get-mode', () => {
     const mode = getOverlayMode()
-    console.log('[overlay] get-mode →', mode)
     return mode
   })
 
   // IPC: Settings
   ipcMain.handle('hotkeys:get', () => getHotkeys())
+  ipcMain.handle('hotkeys:getDefaults', () => ({ ...defaultHotkeys }))
+  ipcMain.handle('hotkeys:set', (_e, hotkeys: HotkeyConfig) => {
+    saveHotkeys(hotkeys)
+    return getHotkeys()
+  })
+  ipcMain.handle('hotkeys:reset', () => resetHotkeys())
+  // Renderer toggles this while the Settings UI is recording a new binding,
+  // so existing global shortcuts don't fire (and double-bind) on the keys
+  // the user is pressing to set the new combo.
+  ipcMain.handle('hotkeys:setRecording', (_e, recording: boolean) => {
+    if (recording) teardownHotkeys()
+    else setupHotkeys()
+  })
   ipcMain.handle('settings:get', () => getSettings())
-  ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => setSetting(key, value as AppSettings[typeof key]))
+  ipcMain.handle('settings:set', (_e, key: keyof AppSettings, value: unknown) => {
+    // 'screen' on a single-display system is equivalent to an all-monitors
+    // grab, so don't pin it — same one-shot policy as 'all-screen'. Lets
+    // the user's prior multi-monitor preference survive.
+    if (
+      key === 'lastImageMode' &&
+      value === 'screen' &&
+      screen.getAllDisplays().length <= 1
+    ) return
+    setSetting(key, value as AppSettings[typeof key])
+    if (key === 'launchAtStartup') applyLaunchAtStartup(value as boolean)
+    if (key === 'historyRetentionDays') runHistoryPrune()
+  })
+
+  // IPC: OCR & Auto-Blur
+  // Pixel-level blur application is gone — auto-blur regions are injected as
+  // re-editable Konva annotations on the renderer side, not flattened here.
+  ipcMain.handle('ocr:scan', async (_e, dataUrl: string) => {
+    const { scanForSensitiveData } = await import('./auto-blur')
+    return scanForSensitiveData(dataUrl)
+  })
+
+  // Favicon served by the local OAuth + picker servers so the browser tab the
+  // user lands on during the Google Drive connect flow is recognizably Lumia
+  // (alongside the page <title>). Read once, then reused across both servers.
+  let cachedFavicon: Buffer | null = null
+  const loadFavicon = async (): Promise<Buffer | null> => {
+    if (cachedFavicon) return cachedFavicon
+    const iconPath = app.isPackaged
+      ? join(process.resourcesPath, 'icon.png')
+      : join(__dirname, '../../resources/icon.png')
+    try {
+      cachedFavicon = await fs.readFile(iconPath)
+      return cachedFavicon
+    } catch {
+      return null
+    }
+  }
 
   // IPC: Google Drive OAuth — uses localhost redirect (OOB flow deprecated by Google)
+  // Tracks an in-progress OAuth flow so the renderer can cancel it (user clicked
+  // Connect by mistake, opened the wrong browser, etc.). Calling startAuth again
+  // while one is active first cancels the previous flow.
+  let activeAuthServer: import('http').Server | null = null
+  let activeAuthResolve: ((value: { success: boolean; error?: string; cancelled?: boolean }) => void) | null = null
+
   ipcMain.handle('gdrive:startAuth', async () => {
     const { createServer } = await import('http')
-    const { exchangeGoogleAuthCode } = await import('./uploaders/googledrive')
     const clientId = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID
     const clientSecret = import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET
 
-    return new Promise<{ success: boolean; error?: string }>((resolve) => {
+    if (activeAuthServer) {
+      activeAuthServer.close()
+      activeAuthServer = null
+    }
+    if (activeAuthResolve) {
+      activeAuthResolve({ success: false, cancelled: true })
+      activeAuthResolve = null
+    }
+
+    return new Promise<{ success: boolean; error?: string; cancelled?: boolean }>((resolve) => {
+      // The OAuth server lifecycle is intentionally decoupled from `settle`:
+      // after a successful code exchange we settle the IPC promise immediately
+      // (so the renderer drops the connecting spinner), but keep the local
+      // server listening so the Connected page's "Browse Drive folder" button
+      // can hit /pick-folder. The server is finally torn down on Browse click,
+      // on a new startAuth, on cancelAuth, or after the auto-close grace.
+      let authAutoCloseTimer: ReturnType<typeof setTimeout> | null = null
+      const settle = (value: { success: boolean; error?: string; cancelled?: boolean }) => {
+        if (activeAuthResolve !== settle) return
+        activeAuthResolve = null
+        resolve(value)
+      }
+      activeAuthResolve = settle
+
       const server = createServer(async (req, res) => {
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        if (url.pathname === '/favicon.png' || url.pathname === '/favicon.ico') {
+          const buf = await loadFavicon()
+          if (buf) {
+            res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
+            res.end(buf)
+          } else {
+            res.writeHead(404)
+            res.end()
+          }
+          return
+        }
+
+        // Browse button on the Connected page hits this route. Boot the
+        // picker server (port 42814) and 302 the user's browser there.
+        if (url.pathname === '/pick-folder') {
+          const result = await startGdriveFolderPicker()
+          if (!result.ok) {
+            res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end(`<!DOCTYPE html><html><head><meta charset="utf-8"><link rel="icon" type="image/png" href="/favicon.png"><title>Lumia — Couldn't open picker</title></head><body style="font-family:'Inter',-apple-system,sans-serif;background:#0d0d0f;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="max-width:420px;text-align:center;padding:40px"><h1 style="font-size:20px;margin:0 0 12px">Couldn't open the folder picker</h1><p style="color:rgba(255,255,255,0.5);font-size:14px;line-height:1.6">${result.error}</p><p style="color:rgba(255,255,255,0.35);font-size:12px;margin-top:20px">Close this tab and try again from Lumia → Settings.</p></div></body></html>`)
+            return
+          }
+          res.writeHead(302, { Location: result.url })
+          res.end()
+          // The browser is now redirected to the picker; tear down the OAuth
+          // server shortly after so it doesn't linger on port 42813.
+          if (authAutoCloseTimer) { clearTimeout(authAutoCloseTimer); authAutoCloseTimer = null }
+          setTimeout(() => server.close(), 500)
+          return
+        }
 
         if (url.pathname !== '/') {
           res.writeHead(404)
@@ -364,13 +1097,14 @@ app.whenReady().then(async () => {
         const code = url.searchParams.get('code')
         const error = url.searchParams.get('error')
 
-        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         if (error || !code) {
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
           res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="/favicon.png">
 <title>Lumia — Authorization Failed</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -415,15 +1149,37 @@ app.whenReady().then(async () => {
 </body>
 </html>`)
           server.close()
-          resolve({ success: false, error: error ?? 'No code returned' })
+          settle({ success: false, error: error ?? 'No code returned' })
           return
         }
 
+        // Exchange the code BEFORE rendering the Connected page so that, by
+        // the time the user sees the Browse button, the refresh token is
+        // already on disk and /pick-folder is guaranteed to find it. On
+        // failure we fall through to the same failure HTML.
+        try {
+          const result = await exchangeGoogleAuthCode(code, clientId, clientSecret, 'http://localhost:42813')
+          setSetting('googleDriveAccessToken', result.accessToken)
+          setSetting('googleDriveRefreshToken', result.refreshToken)
+          setSetting('googleDriveTokenExpiresAt', result.expiresAt)
+          mainWindow?.webContents.send('gdrive:connected')
+          settle({ success: true })
+        } catch (err: unknown) {
+          const msg = err instanceof Error ? err.message : String(err)
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+          res.end(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><link rel="icon" type="image/png" href="/favicon.png"><title>Lumia — Authorization Failed</title></head><body style="font-family:'Inter',-apple-system,sans-serif;background:#0d0d0f;color:#fff;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0"><div style="max-width:420px;text-align:center;padding:40px"><h1 style="font-size:20px;margin:0 0 12px">Authorization failed</h1><p style="color:rgba(255,255,255,0.5);font-size:14px;line-height:1.6">${msg}</p></div></body></html>`)
+          server.close()
+          settle({ success: false, error: msg })
+          return
+        }
+
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
         res.end(`<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="/favicon.png">
 <title>Lumia — Connected</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -443,7 +1199,7 @@ app.whenReady().then(async () => {
     border: 1px solid rgba(255,255,255,0.08);
     border-radius: 24px;
     backdrop-filter: blur(24px);
-    max-width: 420px;
+    max-width: 460px;
     width: 90vw;
     animation: fadeUp 0.4s cubic-bezier(0.16,1,0.3,1) both;
   }
@@ -467,56 +1223,77 @@ app.whenReady().then(async () => {
   }
   h1 {
     font-size: 22px; font-weight: 700;
-    margin-bottom: 10px;
+    margin-bottom: 12px;
     letter-spacing: -0.3px;
   }
-  p { font-size: 14px; color: rgba(255,255,255,0.45); line-height: 1.6; }
-  .badge {
-    display: inline-flex; align-items: center; gap: 6px;
+  p { font-size: 14px; color: rgba(255,255,255,0.55); line-height: 1.6; }
+  .step {
+    margin-top: 24px;
+    padding: 14px 18px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 12px;
+    font-size: 13px;
+    color: rgba(255,255,255,0.7);
+    line-height: 1.5;
+    text-align: left;
+  }
+  .step strong { color: #fff; font-weight: 600; }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     margin-top: 20px;
-    padding: 6px 14px;
-    background: rgba(74,222,128,0.08);
-    border: 1px solid rgba(74,222,128,0.2);
-    border-radius: 999px;
-    font-size: 12px;
-    color: rgba(74,222,128,0.9);
+    padding: 12px 22px;
+    background: #fff;
+    color: #0d0d0f;
+    border-radius: 12px;
     font-weight: 600;
-    letter-spacing: 0.2px;
+    font-size: 14px;
+    text-decoration: none;
+    letter-spacing: -0.1px;
+    transition: transform 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
   }
-  .dot {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: #4ade80;
-    animation: pulse 1.5s ease-in-out infinite;
-  }
-  @keyframes pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
-  }
+  .btn:hover { background: #f1f1f1; transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,0.25); }
+  .btn svg { width: 16px; height: 16px; }
+  .hint { margin-top: 16px; font-size: 12px; color: rgba(255,255,255,0.32); }
 </style>
 </head>
 <body>
   <div class="card">
     <div class="icon">✓</div>
     <h1>Connected!</h1>
-    <p>Google Drive has been linked to your Lumia account.<br>You may close this tab.</p>
-    <div class="badge"><span class="dot"></span> Lumia is ready</div>
+    <p>Google Drive is linked to Lumia. One last step:</p>
+    <div class="step"><strong>Choose a Drive folder</strong> where Lumia will upload your screenshots and recordings.</div>
+    <a class="btn" href="/pick-folder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/></svg>
+      Browse Drive folders
+    </a>
+    <div class="hint">Or close this tab and pick a folder later from Lumia → Settings.</div>
   </div>
 </body>
 </html>`)
-        server.close()
+        // Keep the server alive so the Browse button can hit /pick-folder.
+        // Auto-close after 10 minutes if the user closes the tab without
+        // clicking Browse — the IPC has already settled, so this is purely
+        // socket cleanup.
+        if (authAutoCloseTimer) clearTimeout(authAutoCloseTimer)
+        authAutoCloseTimer = setTimeout(() => server.close(), 10 * 60 * 1000)
+      })
 
-        try {
-          const result = await exchangeGoogleAuthCode(code, clientId, clientSecret, 'http://localhost:42813')
-          setSetting('googleDriveAccessToken', result.accessToken)
-          setSetting('googleDriveRefreshToken', result.refreshToken)
-          setSetting('googleDriveTokenExpiresAt', result.expiresAt)
-          mainWindow?.webContents.send('gdrive:connected')
-          resolve({ success: true })
-        } catch (err: unknown) {
-          const msg = err instanceof Error ? err.message : String(err)
-          resolve({ success: false, error: msg })
-        }
+      activeAuthServer = server
+
+      // Cleanup hook — covers all close paths (cancelAuth, /pick-folder
+      // redirect, auto-close timer, new startAuth pre-empting us, listen
+      // error). Without this the activeAuthServer reference would leak past
+      // its actual lifetime.
+      server.on('close', () => {
+        if (authAutoCloseTimer) { clearTimeout(authAutoCloseTimer); authAutoCloseTimer = null }
+        if (activeAuthServer === server) activeAuthServer = null
+        // If the server died before the OAuth flow logically completed, treat
+        // it as a cancellation so the IPC promise can't hang forever.
+        settle({ success: false, cancelled: true })
       })
 
       server.listen(42813, '127.0.0.1', () => {
@@ -532,15 +1309,221 @@ app.whenReady().then(async () => {
       })
 
       server.on('error', (err) => {
-        resolve({ success: false, error: `Local server error: ${err.message}` })
+        settle({ success: false, error: `Local server error: ${err.message}` })
       })
     })
   })
 
-  ipcMain.handle('gdrive:disconnect', () => {
+  ipcMain.handle('gdrive:cancelAuth', () => {
+    if (activeAuthServer) {
+      activeAuthServer.close()
+      activeAuthServer = null
+    }
+    if (activeAuthResolve) {
+      activeAuthResolve({ success: false, cancelled: true })
+      activeAuthResolve = null
+    }
+    return { ok: true }
+  })
+
+  // IPC: Google Drive folder picker — serves Google's Picker JS via a local
+  // HTTP server and opens it in the user's default browser. This way the
+  // browser's existing Google session cookies render the picker UI without
+  // re-login. Token is fetched via a one-time nonce so it never appears in the
+  // URL bar / browser history.
+  type PickerResult = { success: boolean; folder?: { id: string; name: string } | null; error?: string; cancelled?: boolean }
+  let activePickerServer: import('http').Server | null = null
+  let activePickerFinish: ((value: PickerResult) => void) | null = null
+
+  // Spins up the picker HTTP server and returns its URL plus a promise that
+  // settles when the user picks a folder, cancels, or the 5-minute timeout
+  // fires. Used both by the `gdrive:pickFolder` IPC (Settings UI → opens picker
+  // in a new browser tab) and by the OAuth `/pick-folder` route on port 42813
+  // (Connected page's Browse button → 302 redirect to the picker URL).
+  const startGdriveFolderPicker = async (): Promise<{ ok: false; error: string } | { ok: true; url: string; finished: Promise<PickerResult> }> => {
+    const settings = getSettings()
+    let { googleDriveAccessToken } = settings
+    const { googleDriveRefreshToken, googleDriveTokenExpiresAt } = settings
+
+    if (!googleDriveRefreshToken) {
+      return { ok: false, error: 'Not connected to Google Drive' }
+    }
+
+    if (Date.now() >= googleDriveTokenExpiresAt - 60_000) {
+      try {
+        const refreshed = await refreshGoogleToken(
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_ID,
+          import.meta.env.MAIN_VITE_GDRIVE_CLIENT_SECRET,
+          googleDriveRefreshToken
+        )
+        googleDriveAccessToken = refreshed.accessToken
+        setSetting('googleDriveAccessToken', refreshed.accessToken)
+        setSetting('googleDriveTokenExpiresAt', refreshed.expiresAt)
+      } catch (err) {
+        return { ok: false, error: `Token refresh failed: ${err instanceof Error ? err.message : String(err)}` }
+      }
+    }
+
+    // Cancel any in-flight picker so we don't leak the previous server / EADDRINUSE on port 42814.
+    if (activePickerServer) {
+      activePickerServer.close()
+      activePickerServer = null
+    }
+    if (activePickerFinish) {
+      activePickerFinish({ success: false, cancelled: true })
+      activePickerFinish = null
+    }
+
+    const { createServer } = await import('http')
+    const { readFile } = await import('fs/promises')
+    const { randomBytes } = await import('crypto')
+    const nonce = randomBytes(16).toString('hex')
+    const config = {
+      token: googleDriveAccessToken,
+      apiKey: import.meta.env.MAIN_VITE_GDRIVE_API_KEY,
+      appId: import.meta.env.MAIN_VITE_GDRIVE_PROJECT_NUMBER
+    }
+
+    const pickerHtmlPath = app.isPackaged
+      ? join(process.resourcesPath, 'picker.html')
+      : join(__dirname, '../../resources/picker.html')
+    let pickerHtml: string
+    try {
+      pickerHtml = await readFile(pickerHtmlPath, 'utf-8')
+    } catch (err) {
+      return { ok: false, error: `Failed to load picker.html: ${err instanceof Error ? err.message : String(err)}` }
+    }
+
+    let resolveFinished: (value: PickerResult) => void = () => {}
+    const finished = new Promise<PickerResult>((resolve) => { resolveFinished = resolve })
+    let resolved = false
+
+    const server = createServer(async (req, res) => {
+      const url = new URL(req.url ?? '/', 'http://localhost')
+
+      // Favicon is fetched automatically by the browser without our nonce
+      // query string, so it has to be served before the nonce gate. The icon
+      // is non-sensitive and does not expose any token.
+      if (url.pathname === '/favicon.png' || url.pathname === '/favicon.ico') {
+        const buf = await loadFavicon()
+        if (buf) {
+          res.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'public, max-age=86400' })
+          res.end(buf)
+        } else {
+          res.writeHead(404)
+          res.end()
+        }
+        return
+      }
+
+      if (url.searchParams.get('nonce') !== nonce) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' })
+        res.end('Forbidden')
+        return
+      }
+
+      if (url.pathname === '/' && (req.method === 'GET' || req.method === 'HEAD')) {
+        res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+        res.end(pickerHtml)
+        return
+      }
+      if (url.pathname === '/config' && req.method === 'GET') {
+        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify(config))
+        return
+      }
+      if (url.pathname === '/result' && req.method === 'POST') {
+        let body = ''
+        req.on('data', (chunk) => { body += chunk })
+        req.on('end', () => {
+          res.writeHead(200, { 'Content-Type': 'application/json' })
+          res.end('{"ok":true}')
+          try {
+            const parsed = JSON.parse(body) as { id: string; name: string } | null
+            finish({ success: true, folder: parsed })
+          } catch {
+            finish({ success: true, folder: null })
+          }
+        })
+        return
+      }
+      res.writeHead(404)
+      res.end()
+    })
+
+    const finish = (value: PickerResult) => {
+      if (resolved) return
+      resolved = true
+      clearTimeout(timeoutHandle)
+      server.close()
+      if (activePickerServer === server) activePickerServer = null
+      if (activePickerFinish === finish) activePickerFinish = null
+      if (value.folder?.id) setSetting('googleDriveFolderId', value.folder.id)
+      // Notify the renderer so the Settings UI refreshes its folder display when
+      // the picker was launched outside the IPC path (e.g. the Browse button on
+      // the OAuth Connected page).
+      if (value.success && value.folder) mainWindow?.webContents.send('gdrive:folderSelected')
+      resolveFinished(value)
+    }
+
+    const timeoutHandle = setTimeout(() => {
+      finish({ success: true, folder: null })
+    }, 5 * 60 * 1000)
+
+    server.on('error', (err) => {
+      finish({ success: false, error: `Local server error: ${err.message}` })
+    })
+
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const onListening = () => { server.off('error', onError); resolve() }
+        const onError = (err: Error) => { server.off('listening', onListening); reject(err) }
+        server.once('listening', onListening)
+        server.once('error', onError)
+        server.listen(42814, '127.0.0.1')
+      })
+    } catch (err) {
+      return { ok: false, error: `Local server error: ${err instanceof Error ? err.message : String(err)}` }
+    }
+
+    activePickerServer = server
+    activePickerFinish = finish
+
+    return {
+      ok: true,
+      url: `http://localhost:42814/?nonce=${nonce}`,
+      finished
+    }
+  }
+
+  ipcMain.handle('gdrive:pickFolder', async (): Promise<PickerResult> => {
+    const result = await startGdriveFolderPicker()
+    if (!result.ok) return { success: false, error: result.error }
+    shell.openExternal(result.url)
+    return result.finished
+  })
+
+  ipcMain.handle('gdrive:cancelPickFolder', () => {
+    if (activePickerFinish) {
+      activePickerFinish({ success: false, cancelled: true })
+    }
+    return { ok: true }
+  })
+
+  ipcMain.handle('gdrive:disconnect', async () => {
+    const { googleDriveRefreshToken, googleDriveAccessToken } = getSettings()
+    const tokenToRevoke = googleDriveRefreshToken || googleDriveAccessToken
+    if (tokenToRevoke) {
+      try {
+        await revokeGoogleToken(tokenToRevoke)
+      } catch {
+        // Best-effort: still clear local tokens even if revoke fails (offline, already revoked, etc.)
+      }
+    }
     setSetting('googleDriveAccessToken', '')
     setSetting('googleDriveRefreshToken', '')
     setSetting('googleDriveTokenExpiresAt', 0)
+    setSetting('googleDriveFolderId', '')
     return { success: true }
   })
 
@@ -571,7 +1554,7 @@ app.whenReady().then(async () => {
   })
 
   // IPC: App quit (for renderer menu)
-  ipcMain.handle('app:quit', () => app.quit())
+  ipcMain.handle('app:quit', () => { isQuitting = true; app.quit() })
 
   // IPC: Dev tools (for renderer menu)
   ipcMain.handle('devtools:toggle', () => mainWindow?.webContents.toggleDevTools())
@@ -579,8 +1562,20 @@ app.whenReady().then(async () => {
   ipcMain.handle('window:force-reload', () => mainWindow?.webContents.reloadIgnoringCache())
 
   // IPC: Dialog
-  ipcMain.handle('dialog:save', async (_e, opts) => {
-    const result = await dialog.showSaveDialog(mainWindow!, opts)
+  ipcMain.handle('dialog:save', async (_e, opts: Electron.SaveDialogOptions = {}) => {
+    const { isAbsolute, join, dirname } = await import('path')
+    const startDir = await resolveSaveStartDir()
+
+    // If caller gave just a filename, prepend the resolved dir.
+    const incoming = opts.defaultPath
+    const defaultPath = !incoming
+      ? startDir
+      : isAbsolute(incoming) ? incoming : join(startDir, incoming)
+
+    const result = await dialog.showSaveDialog(mainWindow!, { ...opts, defaultPath })
+    if (!result.canceled && result.filePath) {
+      rememberSaveDir(dirname(result.filePath))
+    }
     return result
   })
 
@@ -593,6 +1588,12 @@ app.whenReady().then(async () => {
   ipcMain.handle('clipboard:writeImage', (_e, dataUrl: string) => {
     const img = nativeImage.createFromDataURL(dataUrl)
     clipboard.writeImage(img)
+  })
+
+  // IPC: Clipboard write text — renderer's navigator.clipboard.writeText fails
+  // under file:// (non-secure context), so we round-trip through Electron's API.
+  ipcMain.handle('clipboard:writeText', (_e, text: string) => {
+    clipboard.writeText(text)
   })
 
   // IPC: Recording — renderer requests the desktop source ID, then records itself
@@ -613,7 +1614,7 @@ app.whenReady().then(async () => {
     const { writeFile, mkdir } = await import('fs/promises')
     const { homedir } = await import('os')
     const { join } = await import('path')
-    const dir = join(homedir(), 'Videos', 'ShareAnywhere')
+    const dir = join(homedir(), 'Videos', 'Lumia')
     await mkdir(dir, { recursive: true })
     const filePath = join(dir, filename)
     await writeFile(filePath, Buffer.from(buffer))
@@ -663,13 +1664,34 @@ app.whenReady().then(async () => {
   })
 })
 
+app.on('before-quit', (e) => {
+  // If we initiated the quit ourselves (tray Quit / ExitLumia hotkey
+  // / app:quit IPC), `isQuitting` is already true and we let it through.
+  if (isQuitting) return
+  // Otherwise this is Cmd+Q / dock right-click → Quit on macOS, or the
+  // taskbar Close on Windows. Treat it as "hide to tray" — the user can
+  // fully exit via the tray menu's Quit item. Mirrors how WhatsApp and
+  // similar tray-resident apps behave.
+  e.preventDefault()
+  mainWindow?.hide()
+})
+
 app.on('window-all-closed', () => {
+  // Keep app running in the tray instead of quitting when windows close.
+  // The user can still quit via tray menu, Cmd/Ctrl+Q, or app:quit IPC.
+  if (!isQuitting) return
   if (process.platform !== 'darwin') app.quit()
 })
 
 app.on('will-quit', () => {
   teardownHotkeys()
   destroyTray()
+  // Tear down the pre-warmed overlay pool so Electron can exit cleanly.
+  // closeAllOverlays only hides; on quit we actually destroy.
+  for (const [, win] of overlayPool) {
+    if (!win.isDestroyed()) win.destroy()
+  }
+  overlayPool.clear()
 })
 
 app.on('second-instance', () => {

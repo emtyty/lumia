@@ -10,7 +10,7 @@ on:
 # Allow the workflow to create a GitHub Release and upload assets
 permissions:
   contents: write
-
+  id-token: write
 jobs:
 
   # ── macOS ────────────────────────────────────────────────────────────────────
@@ -24,17 +24,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build (electron-vite)
-        run: npm run build
+        run: pnpm run build
         env:
           MAIN_VITE_R2_ACCOUNT_ID: ${{ secrets.MAIN_VITE_R2_ACCOUNT_ID }}
           MAIN_VITE_R2_ACCESS_KEY_ID: ${{ secrets.MAIN_VITE_R2_ACCESS_KEY_ID }}
@@ -44,8 +47,14 @@ jobs:
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
+      # Rebuild Swift helpers as universal binaries so the same DMG works on
+      # both arm64 and x86_64 Macs. Committed binaries (if any) are only used
+      # for local dev — CI always produces fresh universal ones here.
+      - name: Compile macOS Swift helpers (universal)
+        run: bash build/compile-mac-helpers.sh
+
       - name: Package & publish to GitHub Releases
-        run: npx electron-builder --mac --publish always
+        run: pnpm exec electron-builder --mac --publish always
         env:
           # ── Publishing ──────────────────────────────────────────────────────
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -64,7 +73,6 @@ jobs:
   # ── Windows ──────────────────────────────────────────────────────────────────
   release-win:
     environment: Production
-
     name: Release · Windows
     runs-on: windows-latest
 
@@ -72,17 +80,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
+          cache: pnpm
 
       - name: Install dependencies
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Build (electron-vite)
-        run: npm run build
+        run: pnpm run build
         env:
           MAIN_VITE_R2_ACCOUNT_ID: ${{ secrets.MAIN_VITE_R2_ACCOUNT_ID }}
           MAIN_VITE_R2_ACCESS_KEY_ID: ${{ secrets.MAIN_VITE_R2_ACCESS_KEY_ID }}
@@ -92,17 +103,31 @@ jobs:
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
 
-      - name: Package & publish to GitHub Releases
-        run: npx electron-builder --win --publish always
+      - name: Package, sign with Azure, and publish
+        shell: pwsh
+        run: |
+          pnpm exec electron-builder --win --publish always `
+            "--config.win.azureSignOptions.publisherName=$env:AZURE_PUBLISHER_NAME" `
+            "--config.win.azureSignOptions.endpoint=$env:AZURE_TRUSTED_SIGNING_ENDPOINT" `
+            "--config.win.azureSignOptions.codeSigningAccountName=$env:AZURE_CODE_SIGNING_ACCOUNT_NAME" `
+            "--config.win.azureSignOptions.certificateProfileName=$env:AZURE_CERT_PROFILE_NAME"
         env:
-          # ── Publishing ──────────────────────────────────────────────────────
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-          # ── Code signing — Windows certificate (.pfx) ───────────────────────
-          # Export cert as .pfx → base64-encode → store as WIN_CSC_LINK secret.
-          # If secrets are absent electron-builder produces an unsigned binary.
-          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          # Azure auth for Trusted Signing
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+
+          # Azure Trusted Signing config
+          AZURE_PUBLISHER_NAME: ${{ secrets.AZURE_PUBLISHER_NAME }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_CODE_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_CODE_SIGNING_ACCOUNT_NAME }}
+          AZURE_CERT_PROFILE_NAME: ${{ secrets.AZURE_CERT_PROFILE_NAME }}
+
+          # Optional: reduce Azure CLI output in logs
+          AZURE_CORE_OUTPUT: none
+
 
   # ── Mark as latest ───────────────────────────────────────────────────────────
   mark-latest:

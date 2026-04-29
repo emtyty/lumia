@@ -1,23 +1,27 @@
-import { globalShortcut, app } from 'electron'
+import { globalShortcut, app, screen } from 'electron'
 import Store from 'electron-store'
-import { sendCaptureToEditor } from './capture'
-import { createOverlayWindows, getMainWindow, getOverlayWindow } from './index'
+import { dispatchCapture } from './capture'
+import { createOverlayWindows, getMainWindow, getOverlayWindow, markQuitting } from './index'
+import { startVideoCapture, requestStop as requestVideoStop, isRecordingActive } from './video'
+import { setSetting } from './settings'
+import type { LastImageMode, LastVideoMode } from './settings'
+import { setOverlayMode } from './scroll-capture'
 
-interface HotkeyConfig {
+export interface HotkeyConfig {
   [action: string]: string
 }
 
-const defaultHotkeys: HotkeyConfig = {
-  RectangleRegion:   'Ctrl+Shift+4',
-  PrintScreen:       'Ctrl+Shift+3',
-  ActiveWindow:      'Ctrl+Shift+2',
-  ActiveMonitor:     'Ctrl+Shift+1',
-  ScrollingCapture:  'Ctrl+Shift+5',
-  ScreenRecorder:    'Ctrl+Shift+R',
-  ScreenRecorderGIF: 'Ctrl+Shift+G',
-  StopScreenRecording: 'Ctrl+Shift+S',
-  OpenMainWindow:    'Ctrl+Shift+X',
-  WorkflowPicker:    'Ctrl+Shift+Q'
+export const defaultHotkeys: HotkeyConfig = {
+  RectangleRegion:      'Ctrl+Shift+1',
+  ActiveWindow:         'Ctrl+Shift+2',
+  ActiveMonitor:        'Ctrl+Shift+3',
+  PrintScreen:          'Ctrl+Shift+4',
+  ScrollingCapture:     'Ctrl+Shift+5',
+  // `ScreenRecorder` kept as the "Region" video entry for backwards compat
+  // with saved configs from older releases.
+  ScreenRecorder:       'Ctrl+Shift+6',
+  ScreenRecorderWindow: 'Ctrl+Shift+7',
+  ScreenRecorderScreen: 'Ctrl+Shift+8'
 }
 
 // All 75 action types from ShareX, user can assign any
@@ -46,18 +50,46 @@ export const ALL_ACTIONS = [
   'ClipboardViewer', 'BorderlessWindow', 'ActiveWindowBorderless',
   'ActiveWindowTopMost', 'InspectWindow', 'MonitorTest',
   // App
-  'DisableHotkeys', 'OpenMainWindow', 'OpenScreenshotsFolder',
+  'DisableHotkeys', 'OpenScreenshotsFolder',
   'OpenHistory', 'OpenImageHistory', 'ToggleActionsToolbar',
-  'ToggleTrayMenu', 'ExitShareAnywhere', 'WorkflowPicker'
+  'ToggleTrayMenu', 'ExitLumia'
 ]
 
-const store = new Store<{ hotkeys: HotkeyConfig }>({
+// Bump this whenever the default capture-mode bindings change in a way that
+// should retake control from users who never hand-customized. On load, if the
+// stored version is stale we rewrite the capture/recorder bindings to the new
+// defaults while leaving app-level hotkeys alone (those have stable defaults).
+const HOTKEY_SCHEMA_VERSION = 6
+const CAPTURE_ACTIONS = [
+  'RectangleRegion', 'ActiveWindow', 'ActiveMonitor', 'PrintScreen', 'ScrollingCapture',
+  'ScreenRecorder', 'ScreenRecorderWindow', 'ScreenRecorderScreen',
+] as const
+// Actions that were removed (or renamed) in a migration — stripped from the
+// saved config so stale bindings don't linger and accidentally block new keys
+// (e.g. S was `StopScreenRecording` and is now `ScreenRecorderScreen`).
+// `ExitShareAnywhere` was renamed to `ExitLumia` after the rebrand.
+const REMOVED_ACTIONS = ['StopScreenRecording', 'OpenMainWindow', 'WorkflowPicker', 'ExitShareAnywhere'] as const
+
+const store = new Store<{ hotkeys: HotkeyConfig; schemaVersion?: number }>({
   name: 'hotkeys',
   defaults: { hotkeys: defaultHotkeys }
 })
 
 export function getHotkeys(): HotkeyConfig {
+  // `has` reads the on-disk file directly, bypassing the `defaults` merge — so
+  // a missing key genuinely means "this install predates the schema bump".
+  const storedVersion = store.has('schemaVersion') ? store.get('schemaVersion') ?? 1 : 1
   const saved = store.get('hotkeys')
+  if (storedVersion < HOTKEY_SCHEMA_VERSION) {
+    // Migrate: overwrite the capture/recorder bindings with the new defaults,
+    // drop actions that no longer exist, keep any app-level customizations.
+    const migrated: HotkeyConfig = { ...saved }
+    for (const action of REMOVED_ACTIONS) delete migrated[action]
+    for (const action of CAPTURE_ACTIONS) migrated[action] = defaultHotkeys[action]
+    store.set('hotkeys', migrated)
+    store.set('schemaVersion', HOTKEY_SCHEMA_VERSION)
+    return { ...defaultHotkeys, ...migrated }
+  }
   // Merge defaults for any new actions not yet in the user's saved config
   return { ...defaultHotkeys, ...saved }
 }
@@ -68,18 +100,24 @@ export function saveHotkeys(hotkeys: HotkeyConfig) {
   setupHotkeys()
 }
 
+export function resetHotkeys(): HotkeyConfig {
+  store.set('hotkeys', { ...defaultHotkeys })
+  store.set('schemaVersion', HOTKEY_SCHEMA_VERSION)
+  teardownHotkeys()
+  setupHotkeys()
+  return { ...defaultHotkeys }
+}
+
 export function setupHotkeys() {
   const hotkeys = getHotkeys()
 
-  const hideMain = (): Promise<void> => new Promise(resolve => {
-    const win = getMainWindow()
-    if (!win || win.isDestroyed()) { resolve(); return }
-    win.hide()
-    setTimeout(resolve, 200)
-  })
-
   let isCapturing = false
 
+  // Route capture hotkeys through the same `dispatchCapture` the Dashboard
+  // buttons invoke, so the behavior (overlay pickers, multi-display
+  // compositing, etc.) stays consistent across entry points. The lock guards
+  // against re-entrancy when the user mashes the hotkey or clicks during a
+  // running capture.
   const withLock = (fn: () => Promise<void>) => async () => {
     if (isCapturing) return
     if (getOverlayWindow()) return
@@ -87,94 +125,47 @@ export function setupHotkeys() {
     try { await fn() } finally { isCapturing = false }
   }
 
+  // Persist the mode the user just triggered so subsequent "New Capture"
+  // entry points (tray, sidebar, AppMenu) replay the same mode. Without
+  // this, hotkey-driven captures don't update lastImage/VideoMode and
+  // dispatchLastCapture replays whatever the dashboard last saved.
+  // 'screen' on a single-display system captures the same pixels as
+  // 'all-screen', so we treat it the same way: kind flips to 'image',
+  // but lastImageMode isn't pinned — let the user's prior multi-monitor
+  // preference (or the default) survive.
+  const rememberImage = (mode: LastImageMode) => {
+    setSetting('lastCaptureKind', 'image')
+    if (mode === 'screen' && screen.getAllDisplays().length <= 1) return
+    setSetting('lastImageMode', mode)
+  }
+  const rememberVideo = (mode: LastVideoMode) => {
+    setSetting('lastCaptureKind', 'video')
+    setSetting('lastVideoMode', mode)
+  }
+
   const handlers: Record<string, () => void> = {
-    RectangleRegion: withLock(async () => {
-      await hideMain()
-      createOverlayWindows()
-    }),
-    PrintScreen: withLock(async () => {
-      const { desktopCapturer, screen } = await import('electron')
-      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
-      const cursorPoint = screen.getCursorScreenPoint()
-      const allDisplays = screen.getAllDisplays()
-      const d = screen.getDisplayNearestPoint(cursorPoint)
-      const sf = d.scaleFactor
-
-      await hideMain()
-
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: d.size.width * sf, height: d.size.height * sf }
-      })
-      let source = sources.find(s => s.display_id === String(d.id))
-      if (!source) {
-        const idx = allDisplays.findIndex(disp => disp.id === d.id)
-        source = (idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
-      }
-      sendCaptureToEditor(source.thumbnail.toDataURL(), 'fullscreen')
-    }),
-    ActiveWindow: withLock(async () => {
-      await hideMain()
-      const { desktopCapturer } = await import('electron')
-      const sources = await desktopCapturer.getSources({
-        types: ['window'],
-        thumbnailSize: { width: 1920, height: 1080 }
-      })
-      const filtered = sources.filter(s =>
-        !s.name.includes('ShareAnywhere') && !s.thumbnail.isEmpty()
-      )
-      if (filtered[0]) sendCaptureToEditor(filtered[0].thumbnail.toDataURL(), 'window')
-    }),
-    ActiveMonitor: withLock(async () => {
-      const { desktopCapturer, screen } = await import('electron')
-      // Sample cursor position BEFORE hiding — after the 200ms hide delay the cursor may have moved
-      const cursorPoint = screen.getCursorScreenPoint()
-      const allDisplays = screen.getAllDisplays()
-      const activeDisplay = screen.getDisplayNearestPoint(cursorPoint)
-      const { width, height } = activeDisplay.size
-      const sf = activeDisplay.scaleFactor
-
-      await hideMain()
-
-      const sources = await desktopCapturer.getSources({
-        types: ['screen'],
-        thumbnailSize: { width: width * sf, height: height * sf }
-      })
-
-      let source = sources.find(s => s.display_id === String(activeDisplay.id))
-      if (!source) {
-        const idx = allDisplays.findIndex(d => d.id === activeDisplay.id)
-        source = (sources.length > 1 && idx >= 0 && idx < sources.length) ? sources[idx] : sources[0]
-      }
-      if (source) sendCaptureToEditor(source.thumbnail.toDataURL(), 'active-monitor')
-    }),
+    RectangleRegion: withLock(async () => { rememberImage('region'); await dispatchCapture('region') }),
+    // All Screens is treated as a one-shot — we update kind so the user's
+    // image/video context flips correctly, but don't pin lastImageMode to
+    // 'all-screen' since users typically don't want every subsequent New
+    // Capture to replay the all-monitors composite.
+    PrintScreen:     withLock(async () => { setSetting('lastCaptureKind', 'image'); await dispatchCapture('all-screen') }),
+    ActiveWindow:    withLock(async () => { rememberImage('window'); await dispatchCapture('window') }),
+    ActiveMonitor:   withLock(async () => { rememberImage('screen'); await dispatchCapture('screen') }),
     ScrollingCapture: withLock(async () => {
-      await hideMain()
-      const { setOverlayMode } = await import('./scroll-capture')
+      rememberImage('scrolling')
+      const main = getMainWindow()
+      if (main && !main.isDestroyed()) main.hide()
+      await new Promise(r => setTimeout(r, 200))
       setOverlayMode('scroll-region')
       createOverlayWindows()
     }),
-    ScreenRecorder: () => {
-      const win = getMainWindow()
-      win?.show()
-      win?.focus()
-      win?.webContents.send('recorder:open')
-    },
-    ScreenRecorderGIF: () => {
-      const win = getMainWindow()
-      win?.show()
-      win?.focus()
-      win?.webContents.send('recorder:open-gif')
-    },
-    StopScreenRecording: () => {
-      getMainWindow()?.webContents.send('recorder:stop')
-    },
-    OpenMainWindow: () => {
-      const win = getMainWindow()
-      win?.show()
-      win?.focus()
-    },
-    ExitShareAnywhere: () => app.quit()
+    // All three video hotkeys toggle: pressing any of them while recording
+    // stops (matches Snipping Tool's UX), otherwise starts in that mode.
+    ScreenRecorder:       () => { if (isRecordingActive()) requestVideoStop(); else { rememberVideo('region'); startVideoCapture('region') } },
+    ScreenRecorderWindow: () => { if (isRecordingActive()) requestVideoStop(); else { rememberVideo('window'); startVideoCapture('window') } },
+    ScreenRecorderScreen: () => { if (isRecordingActive()) requestVideoStop(); else { rememberVideo('screen'); startVideoCapture('screen') } },
+    ExitLumia: () => { markQuitting(); app.quit() }
   }
 
   for (const [action, shortcut] of Object.entries(hotkeys)) {

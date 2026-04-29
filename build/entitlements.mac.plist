@@ -6,5 +6,9 @@
     <true/>
     <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
+    <!-- Microphone access during screen+audio recording. Without this entitlement,
+         hardened-runtime apps have getUserMedia({ audio: true }) silently denied. -->
+    <key>com.apple.security.device.audio-input</key>
+    <true/>
 </dict>
 </plist>

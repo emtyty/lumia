@@ -1,4 +1,5 @@
 import type { UploadResult } from '../types'
+import { localTimestamp } from '../utils'
 
 const GOOGLE_DRIVE_UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart'
 
@@ -39,7 +40,8 @@ async function createFolder(name: string, accessToken: string): Promise<string> 
 export async function uploadToGoogleDrive(
   imageData: string,
   accessToken: string,
-  folderId?: string
+  folderId?: string,
+  options?: { filename?: string; mimeType?: string }
 ): Promise<UploadResult> {
   if (!accessToken) {
     return { destination: 'google-drive', success: false, error: 'No access token — please connect Google Drive in Settings' }
@@ -56,14 +58,19 @@ export async function uploadToGoogleDrive(
     }
   }
 
-  const base64 = imageData.replace(/^data:image\/\w+;base64,/, '')
-  const ts = new Date().toISOString().replace(/[:.]/g, '-')
-  const filename = `capture-${ts}.png`
+  const mimeType = options?.mimeType ?? 'image/png'
+  const ts = localTimestamp()
+  const ext = mimeType.startsWith('video/webm') ? 'webm'
+            : mimeType.startsWith('video/mp4') ? 'mp4'
+            : mimeType === 'image/jpeg' ? 'jpg'
+            : 'png'
+  const filename = options?.filename ?? `capture-${ts}.${ext}`
+  const base64 = imageData.replace(/^data:[^;]+;base64,/, '')
 
   // Build multipart/related body per Google Drive API v3
   const metadata: Record<string, unknown> = {
     name: filename,
-    mimeType: 'image/png'
+    mimeType
   }
   if (resolvedFolderId) {
     metadata.parents = [resolvedFolderId]
@@ -75,7 +82,7 @@ export async function uploadToGoogleDrive(
     `Content-Type: application/json; charset=UTF-8\r\n\r\n` +
     `${JSON.stringify(metadata)}\r\n` +
     `--${boundary}\r\n` +
-    `Content-Type: image/png\r\n` +
+    `Content-Type: ${mimeType}\r\n` +
     `Content-Transfer-Encoding: base64\r\n\r\n` +
     `${base64}\r\n` +
     `--${boundary}--`
@@ -137,6 +144,19 @@ export async function exchangeGoogleAuthCode(
     refreshToken: json.refresh_token ?? '',
     expiresAt: Date.now() + json.expires_in * 1000
   }
+}
+
+/**
+ * Revoke a Google OAuth token (access or refresh). Revoking a refresh token also
+ * invalidates all access tokens derived from it. Best-effort: returns without
+ * throwing on network failure.
+ */
+export async function revokeGoogleToken(token: string): Promise<void> {
+  if (!token) return
+  await fetch(`https://oauth2.googleapis.com/revoke?token=${encodeURIComponent(token)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+  })
 }
 
 /**
