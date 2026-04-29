@@ -219,13 +219,26 @@ export default function Overlay() {
     setHoveredWindow(rect ?? null)
   }, [base, isActive])
 
+  // Wipe transient drawing state. Called on confirm AND cancel so that the
+  // pre-warmed overlay window comes up clean on the next session — without
+  // this, the prior session's rect lingers in React state and flashes on
+  // reopen until the async overlay:mode-changed event resets it.
+  const resetDrawState = useCallback(() => {
+    setStartPos(null)
+    setCurrentPos(null)
+    setIsDrawing(false)
+    setHoveredWindow(null)
+    hoveredWindowRef.current = null
+  }, [])
+
   const cancel = useCallback(() => {
+    resetDrawState()
     if (mode === 'scroll-region') window.electronAPI?.cancelScrollRegion()
     else if (mode === 'window-pick') window.electronAPI?.cancelWindowPick()
     else if (mode === 'monitor-pick') window.electronAPI?.cancelMonitorPick()
     else if (mode === 'region') window.electronAPI?.cancelRegion()
     else window.electronAPI?.cancelVideo?.()
-  }, [mode])
+  }, [mode, resetDrawState])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'Escape') cancel()
@@ -255,6 +268,7 @@ export default function Overlay() {
       if (pollRef.current) clearTimeout(pollRef.current)
       window.electronAPI?.getWindowAt(x, y).then(rect => {
         if (!rect) return
+        resetDrawState()
         if (intent === 'record') window.electronAPI?.confirmVideoWindow?.(rect)
         else window.electronAPI?.confirmWindowPick(rect)
       })
@@ -284,7 +298,13 @@ export default function Overlay() {
     setIsDrawing(false)
     window.electronAPI?.overlayDrawing(false)
     const rect = getRect()
-    if (!rect || rect.width < 10 || rect.height < 10) return
+    if (!rect || rect.width < 10 || rect.height < 10) {
+      // Tiny / no drag — treat as a non-confirmation but still wipe so the
+      // next session doesn't inherit the stub rect.
+      resetDrawState()
+      return
+    }
+    resetDrawState()
     if (mode === 'scroll-region') {
       await window.electronAPI?.confirmScrollRegion(rect)
     } else if (mode === 'video-region') {
