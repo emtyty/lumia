@@ -12,14 +12,15 @@ interface RecordingTarget {
 }
 
 const TARGET_FPS = 60
-// Bits-per-pixel-per-frame quality factor. ~0.15 puts a 1920×1080@60 stream at
-// ≈18 Mbps (visually lossless for screen content) and a 1280×720@60 stream at
-// ≈8 Mbps. The MediaRecorder default is roughly 2.5 Mbps regardless of
-// resolution, which crushes UI text on high-DPI displays.
-const VIDEO_QUALITY_FACTOR = 0.15
-// Hard ceiling so 4K@60 doesn't ask for ~75 Mbps and exhaust the encoder. WebM
-// playback above ~30 Mbps gives diminishing returns for screen content.
-const VIDEO_BITRATE_CAP = 30_000_000
+// Bits-per-pixel-per-frame quality factor. VP9 real-time mode is conservative
+// for screen content with motion (scroll, animation), so we run hot: 0.25
+// puts 1920×1080@60 at ≈30 Mbps and 1922×1200@60 at ≈34 Mbps. The
+// MediaRecorder default is roughly 2.5 Mbps regardless of resolution, which
+// crushes UI text on high-DPI displays.
+const VIDEO_QUALITY_FACTOR = 0.25
+// Hard ceiling so 4K@60 doesn't ask for the encoder to fill ~120 Mbps. WebM
+// playback above ~50 Mbps gives diminishing returns for screen content.
+const VIDEO_BITRATE_CAP = 50_000_000
 const VIDEO_BITRATE_FLOOR = 4_000_000
 const AUDIO_BITRATE = 192_000
 
