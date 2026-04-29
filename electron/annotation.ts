@@ -255,7 +255,8 @@ export function openAnnotation(
   // color and stroke width carry over from the previous session.
   state.tool = 'none'
 
-  if (!hasLiveAnnotations()) {
+  const reusingOverlay = hasLiveAnnotations()
+  if (!reusingOverlay) {
     overlayWin = createOverlayWindow(display)
   }
 
@@ -275,6 +276,14 @@ export function openAnnotation(
   // when the user picks an actual drawing tool.
   overlayWin!.setIgnoreMouseEvents(true, { forward: true })
 
+  // Reused overlays keep whatever tool the user had before — its renderer
+  // doesn't re-fetch state on its own, so the cursor would stay stuck as
+  // the previous "+" crosshair until the user picked a new tool from the
+  // palette. Push the reset state down so the cursor flips to default.
+  if (reusingOverlay) {
+    sendToOverlay('annotation:state', state)
+  }
+
   // Keep the recording toolbar and palette in lockstep — drag either one,
   // both move with the same delta. Captures their relative offset now and
   // preserves it across both windows' move events.
@@ -289,9 +298,17 @@ export function openAnnotation(
   // the toolbars/border use relativeLevel:1 above the overlay's plain
   // 'screen-saver' level, so the OS already enforces the stacking.
   //
-  // Defer until the next tick so the overlay's window handle is fully
-  // realised in the topmost group before we re-raise the others on top.
+  // Critically: SetWindowPos on a still-hidden window has no effect on
+  // visible Z order, so we have to wait until the toolbar's HWND is
+  // realised + visible before raising. The +50ms timer alone races with
+  // the toolbar's ready-to-show — when first paint takes longer, the
+  // raise fires first and the toolbar pops up below the overlay. Result:
+  // first click on a tool button is eaten by Windows' click-to-activate
+  // (shows the "+" overlay cursor) instead of selecting the tool.
   const wins = [toolbarWin, ...topmostAfter]
+  toolbarWin.once('ready-to-show', () => raiseAboveOverlay(wins))
+  // Belt-and-braces: re-raise on a short timer too in case ready-to-show
+  // fired before we attached the handler (cached renderer paint).
   setTimeout(() => raiseAboveOverlay(wins), 50)
 }
 
