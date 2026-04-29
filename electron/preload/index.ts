@@ -72,6 +72,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Update native titlebar overlay colors on theme change (Windows)
   setTitleBarTheme: (theme: 'dark' | 'light') => ipcRenderer.invoke('titlebar:setTheme', theme),
 
+  // Tell main the renderer has finished its critical initial work (data
+  // fetches, fonts) so it can show() the BrowserWindow. Without this main
+  // shows on ready-to-show with content still loading. fire-and-forget — main
+  // listens with ipcMain.once and a fallback timer in case this never arrives.
+  windowReady: () => ipcRenderer.send('window:ready'),
+
   // Navigation (tell main which view to show in the same window)
   navigate: (route: string) => ipcRenderer.invoke('navigate', route),
 

@@ -42,6 +42,30 @@ export default function App() {
     return () => { window.electronAPI?.removeAllListeners('navigate') }
   }, [navigate])
 
+  // Tell main to show() the BrowserWindow once the renderer has finished its
+  // critical initial work — fonts loaded + Dashboard's IPC fetches resolved.
+  // Until then main keeps the window hidden so the user doesn't see a half-
+  // rendered Dashboard pop in. Standalone windows (overlay/recording-toolbar/
+  // etc.) don't gate — main shows them on demand via its own logic. Renderer-
+  // side fallback ensures the signal fires even if a fetch hangs.
+  useEffect(() => {
+    if (standalone) return
+    let cancelled = false
+    const fallback = setTimeout(() => {
+      if (!cancelled) window.electronAPI?.windowReady?.()
+    }, 1500)
+    Promise.all([
+      document.fonts.ready,
+      window.electronAPI?.getSettings?.(),
+      window.electronAPI?.getHotkeys?.(),
+    ]).then(() => {
+      if (cancelled) return
+      clearTimeout(fallback)
+      window.electronAPI?.windowReady?.()
+    }).catch(() => { /* fallback timer covers failure paths */ })
+    return () => { cancelled = true; clearTimeout(fallback) }
+  }, [standalone])
+
   useEffect(() => {
     if (standalone) return
     window.electronAPI?.notifyRoute?.(location.pathname)

@@ -200,8 +200,21 @@ function createMainWindow(startHidden = false): BrowserWindow {
     win.loadFile(join(__dirname, '../renderer/index.html'), { hash: '/dashboard' })
   }
 
+  // Two-stage show: ready-to-show only means the renderer has painted its
+  // initial HTML/CSS, but at that moment Dashboard's IPC fetches and font
+  // downloads are still in-flight, so the window pops up half-loaded. Wait
+  // for the renderer to send 'window:ready' (App.tsx fires it once those
+  // settle) before showing. Fallback timer guarantees the window appears
+  // within 1s even if the signal is dropped (renderer crash, IPC failure).
+  let shown = false
+  const showOnce = () => {
+    if (shown || startHidden || win.isDestroyed() || win.isVisible()) return
+    shown = true
+    win.show()
+  }
+  ipcMain.once('window:ready', () => showOnce())
   win.once('ready-to-show', () => {
-    if (!startHidden && !win.isDestroyed()) win.show()
+    setTimeout(showOnce, 1000)
   })
 
   // Intercept close: keep the app alive in the tray instead of exiting. Only
