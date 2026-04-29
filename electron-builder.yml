@@ -9,7 +9,10 @@ publish:
   provider: github
   owner: emtyty
   repo: lumia
-  releaseType: release
+  # Publish as a draft so GitHub's /releases/latest API doesn't surface
+  # the new version while the mac/win jobs are still uploading. The
+  # mark-latest workflow job un-drafts after both finish.
+  releaseType: draft
 
 files:
   - out/**/*
@@ -76,6 +79,11 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
+  # Force per-arch installers. Without ${arch} in the artifactName,
+  # electron-builder bundles x64 + arm64 into a single multi-arch
+  # installer, which makes the docs page's two Win buttons point at
+  # the same file.
+  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 # Code-signing — Developer ID Application certificate
