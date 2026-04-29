@@ -9,7 +9,7 @@ import { join } from 'path'
  * Config:
  *   - Logo sized to 2.5% of the shorter capture dimension.
  *   - Positioned tight against the corner (small fixed margin).
- *   - Drawn at ~10% opacity, multiplied by the logo's own per-pixel
+ *   - Drawn at ~20% opacity, multiplied by the logo's own per-pixel
  *     alpha so antialiased edges stay soft.
  *
  * Implementation: compose directly on the BGRA bitmap buffer returned
@@ -24,7 +24,7 @@ const LOGO_PATH = app.isPackaged
   ? join(process.resourcesPath, 'icons/png/icon.png')
   : join(__dirname, '../../resources/icons/png/icon.png')
 const LOGO_SIZE_PCT = 0.025
-const LOGO_OPACITY = 0.1
+const LOGO_OPACITY = 0.2
 const LOGO_MARGIN_PCT = 0.15 // fraction of logo width, hugs the corner
 
 let cachedLogo: Electron.NativeImage | null = null
