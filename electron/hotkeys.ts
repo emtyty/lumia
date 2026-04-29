@@ -186,10 +186,19 @@ export function setupHotkeys() {
   // disabled via registry — that side of the toggle lives in
   // printscreen-key.ts and is invoked from the IPC handler / boot path.
   if (getSettings().printScreenAsCapture) {
-    try {
-      globalShortcut.register('PrintScreen', withLock(async () => { await dispatchLastCapture() }))
-    } catch {
-      console.warn('Failed to register PrintScreen as New Capture')
+    const handler = withLock(async () => { await dispatchLastCapture() })
+    try { globalShortcut.register('PrintScreen', handler) }
+    catch { console.warn('Failed to register PrintScreen as New Capture') }
+    // macOS keyboard driver maps HID PrintScreen (usage 0x46) on external PC
+    // keyboards to virtual keycode F13, not PrintScreen, so the accelerator
+    // above never fires on Mac — globalShortcut sits on top of Carbon's
+    // RegisterEventHotKey which keys off the Mac virtual code. Register F13
+    // as an alias here. Safe collision: Lumia doesn't bind F13 elsewhere,
+    // and the Apple Extended Keyboard's real F13 key is rarely used by app
+    // shortcuts, so users with one will just have F13 also trigger capture
+    // (which is exactly what they probably want anyway).
+    if (process.platform === 'darwin') {
+      try { globalShortcut.register('F13', handler) } catch { /* ignore */ }
     }
   }
 }
