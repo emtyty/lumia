@@ -191,10 +191,19 @@ export default function AnnotationOverlay() {
     if (!s) return
     // Drop zero-area shapes — happens when the user clicks without dragging
     // for non-pen tools, leaving a degenerate shape that's just visual noise.
+    // Stay in the drawing tool in that case so the user can immediately
+    // try again instead of being kicked back to the cursor.
     if (s.kind === 'rect' && s.w === 0 && s.h === 0) return
     if (s.kind === 'ellipse' && s.rx === 0 && s.ry === 0) return
     if (s.kind === 'arrow' && s.x1 === s.x2 && s.y1 === s.y2) return
     setShapes(prev => [...prev, s])
+    // Auto-switch back to the cursor after a successful draw so the user
+    // can interact with the recorded app or pick another tool without an
+    // extra click. Mirrors the "one-shot" feel of single-stroke drawing.
+    // Pushes through main so the recording toolbar's active-tool indicator
+    // and the overlay's click-through state both update via the
+    // annotation:state broadcast.
+    window.electronAPI?.annotationSetTool?.('none')
   }
 
   // In tool='none' mode the overlay starts in click-through (so the user
