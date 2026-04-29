@@ -56,7 +56,10 @@ export default function RecorderHost() {
 
   const videoElRef       = useRef<HTMLVideoElement | null>(null)
   const canvasElRef      = useRef<HTMLCanvasElement | null>(null)
-  const drawLoopRef      = useRef<number | null>(null)
+  // Stop callback for the canvas draw loop. Stores a closure rather than a
+  // bare handle so the same cleanup path works whether the loop runs on
+  // requestVideoFrameCallback (preferred) or requestAnimationFrame (fallback).
+  const drawLoopRef      = useRef<(() => void) | null>(null)
 
   // Timing
   const runStartRef      = useRef<number>(0)
@@ -263,8 +266,8 @@ export default function RecorderHost() {
   }, [])
 
   function teardownStreams() {
-    if (drawLoopRef.current != null) {
-      cancelAnimationFrame(drawLoopRef.current)
+    if (drawLoopRef.current) {
+      drawLoopRef.current()
       drawLoopRef.current = null
     }
     try { desktopStreamRef.current?.getTracks().forEach(t => t.stop()) } catch { /* ignore */ }
@@ -328,7 +331,7 @@ function buildCroppedStream(
   outputSize: { width: number; height: number },
   videoRef: React.MutableRefObject<HTMLVideoElement | null>,
   canvasRef: React.MutableRefObject<HTMLCanvasElement | null>,
-  loopRef: React.MutableRefObject<number | null>,
+  loopRef: React.MutableRefObject<(() => void) | null>,
 ): MediaStream {
   const video = videoRef.current!
   const canvas = canvasRef.current!
@@ -341,21 +344,49 @@ function buildCroppedStream(
   video.play().catch(() => { /* autoplay policy — muted is allowed */ })
 
   const ctx = canvas.getContext('2d', { alpha: false })!
-  const draw = () => {
+  const drawFrame = () => {
     const vw = video.videoWidth
     const vh = video.videoHeight
-    if (vw > 0 && vh > 0) {
-      const sx = vw / displayDipSize.width
-      const sy = vh / displayDipSize.height
-      const srcX = Math.max(0, Math.min(vw - 1, Math.round(rectDip.x * sx)))
-      const srcY = Math.max(0, Math.min(vh - 1, Math.round(rectDip.y * sy)))
-      const srcW = Math.max(1, Math.min(vw - srcX, Math.round(rectDip.width  * sx)))
-      const srcH = Math.max(1, Math.min(vh - srcY, Math.round(rectDip.height * sy)))
-      ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
-    }
-    loopRef.current = requestAnimationFrame(draw)
+    if (vw <= 0 || vh <= 0) return
+    const sx = vw / displayDipSize.width
+    const sy = vh / displayDipSize.height
+    const srcX = Math.max(0, Math.min(vw - 1, Math.round(rectDip.x * sx)))
+    const srcY = Math.max(0, Math.min(vh - 1, Math.round(rectDip.y * sy)))
+    const srcW = Math.max(1, Math.min(vw - srcX, Math.round(rectDip.width  * sx)))
+    const srcH = Math.max(1, Math.min(vh - srcY, Math.round(rectDip.height * sy)))
+    ctx.drawImage(video, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height)
   }
-  loopRef.current = requestAnimationFrame(draw)
+
+  // Prefer requestVideoFrameCallback so we redraw exactly once per source
+  // frame — no duplicates when the display refreshes faster than the stream,
+  // no missed frames when motion is heavy. rAF, by contrast, is tied to
+  // display vsync, so the source's frame cadence and the draw cadence drift
+  // and the encoder ends up either re-encoding identical frames (wasting
+  // bits) or skipping fresh ones (visible judder).
+  let cancelled = false
+  type RvfcVideo = HTMLVideoElement & {
+    requestVideoFrameCallback?: (cb: () => void) => number
+  }
+  const v = video as RvfcVideo
+  if (typeof v.requestVideoFrameCallback === 'function') {
+    const tick = () => {
+      if (cancelled) return
+      drawFrame()
+      v.requestVideoFrameCallback!(tick)
+    }
+    v.requestVideoFrameCallback(tick)
+  } else {
+    let raf = 0
+    const tick = () => {
+      if (cancelled) return
+      drawFrame()
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    loopRef.current = () => { cancelled = true; cancelAnimationFrame(raf) }
+    return canvas.captureStream(TARGET_FPS)
+  }
+  loopRef.current = () => { cancelled = true }
 
   return canvas.captureStream(TARGET_FPS)
 }
