@@ -36,7 +36,7 @@ export default function AnnotationToolBar({
   // Render order matches the live annotation palette: Select first, the
   // common drawing tools next, then editor-only extras (blur / text).
   const groups: { key: string; tools: ToolDef[] }[] = [
-    { key: 'select', tools: filter(SELECT_TOOLS) },
+    { key: 'cursor', tools: filter(SELECT_TOOLS) },
     { key: 'draw',   tools: filter(DRAW_TOOLS) },
     { key: 'extra',  tools: filter(EXTRA_TOOLS) },
   ].filter(g => g.tools.length > 0)

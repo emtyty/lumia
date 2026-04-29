@@ -571,8 +571,9 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       else tr.nodes([])
     }, [selectedId, objects])
 
-    // Deselect when switching away from the Select tool.
-    useEffect(() => { if (tool !== 'select') setSelectedId(null) }, [tool])
+    // Deselect when switching to a drawing tool. The cursor tool ('none')
+    // is the only mode where selection is valid.
+    useEffect(() => { if (tool !== 'none') setSelectedId(null) }, [tool])
 
     // Track the top-right corner of the selected shape so the delete handle
     // (small red X next to the Transformer) follows the shape during drag /
@@ -614,7 +615,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     const handleMouseDown = useCallback(
       (e: Konva.KonvaEventObject<MouseEvent>) => {
         if (readOnly || e.evt.button === 2) return
-        if (tool === 'select') {
+        if (tool === 'none') {
           if (e.target === e.target.getStage()) setSelectedId(null)
           return
         }
@@ -721,7 +722,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
     }, [isDrawing, handleMouseUp])
 
     // ── Per-object shape renderer ─────────────────────────────────────────────
-    const selectable = tool === 'select'
+    const selectable = tool === 'none'
     const renderObj = (obj: DrawObject, isPreview = false) => {
       if (isPreview && isTrivialShape(obj)) return null
       const key = isPreview ? 'preview' : obj.id
@@ -765,6 +766,13 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             width={obj.width}
             height={obj.height}
             fill="transparent"
+            // fill="transparent" still leaves the interior in Konva's hit
+            // canvas, so clicking the empty middle of the rectangle would
+            // grab it. fillEnabled:false drops the interior off the hit
+            // canvas — what the user sees on screen (just the outline) is
+            // what they can click. hitStrokeWidth makes the outline
+            // forgiving without bringing the interior back.
+            fillEnabled={false}
             stroke={obj.color}
             strokeWidth={obj.strokeWidth}
             strokeScaleEnabled={false}
@@ -826,6 +834,9 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
             strokeScaleEnabled={false}
             hitStrokeWidth={Math.max(obj.strokeWidth + 8, 14) / scale}
             fill="transparent"
+            // See the rect above — outline-only hit testing matches the
+            // visible outline-only fill.
+            fillEnabled={false}
             draggable={selectable}
             {...commonInteractive}
           />
@@ -899,7 +910,7 @@ const AnnotationCanvas = forwardRef<CanvasHandle, Props>(
       : readOnly ? 'default'
       : tool === 'pen' ? 'crosshair'
       : tool === 'text' ? 'text'
-      : tool === 'select' ? 'default'
+      : tool === 'none' ? 'default'
       : 'crosshair'
 
     // ── Background Konva node (image or video) ───────────────────────────────

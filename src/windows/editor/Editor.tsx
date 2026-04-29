@@ -77,7 +77,7 @@ export default function Editor() {
   const triggerNewCapture = useCallback(() => {
     window.electronAPI?.newCapture()
   }, [])
-  const [tool, setTool] = useState<Tool>('pen')
+  const [tool, setTool] = useState<Tool>('none')
   const [color, setColor] = useState('#f87171')
   const [strokeWidth, setStrokeWidth] = useState(3)
   const [exportTrigger, setExportTrigger] = useState(0)

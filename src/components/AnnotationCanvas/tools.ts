@@ -2,7 +2,7 @@
  *  annotator. Keep this file free of React imports so it can be consumed by
  *  pure render helpers too. */
 
-export type Tool = 'select' | 'pen' | 'rect' | 'ellipse' | 'arrow' | 'text' | 'blur'
+export type Tool = 'none' | 'pen' | 'rect' | 'ellipse' | 'arrow' | 'text' | 'blur'
 
 export interface ToolDef {
   id: Tool
@@ -12,12 +12,16 @@ export interface ToolDef {
 }
 
 // Tool order is kept in lockstep with the live recording-time annotation
-// palette so the two surfaces feel like the same UI: Select first, then the
+// palette so the two surfaces feel like the same UI: cursor first, then the
 // shared drawing tools (pen, arrow, rect, ellipse). Editor-only specialty
 // tools (blur, text) trail the shared set instead of being mixed in.
 
 export const SELECT_TOOLS: ToolDef[] = [
-  { id: 'select',  icon: 'highlight_alt',     label: 'Select',    shortcut: 'V' },
+  // 'none' = cursor mode: doesn't draw, click an outline to select for
+  // delete/drag. Same id and visual as the live recording overlay's
+  // unified select-and-interact mode, so users don't have to learn two
+  // different idioms.
+  { id: 'none',  icon: 'arrow_selector_tool', label: 'Cursor', shortcut: 'V' },
 ]
 
 export const DRAW_TOOLS: ToolDef[] = [
