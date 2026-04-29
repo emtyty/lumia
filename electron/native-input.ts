@@ -38,6 +38,11 @@ let _IsWindowVisible: (hwnd: any) => boolean
 let _GetWindowLongW: (hwnd: any, index: number) => number
 let _EnumWindows: (callback: any, lParam: any) => boolean
 let _DwmGetWindowAttribute: (hwnd: any, attr: number, pvAttribute: any, cbAttribute: number) => number
+// Same DWM API but with the output typed as a DWORD pointer — used for
+// scalar attributes like DWMWA_CLOAKED where the RECT-shaped binding above
+// would over-allocate and read garbage past the first 4 bytes.
+let _DwmGetWindowAttributeDword: (hwnd: any, attr: number, pvAttribute: any, cbAttribute: number) => number
+let _IsIconic: (hwnd: any) => boolean
 let _SetThreadDpiAwarenessContext: (ctx: any) => any
 let _SetWindowDisplayAffinity: (hwnd: any, affinity: number) => boolean
 const DPI_AWARENESS_CONTEXT_SYSTEM_AWARE = -2       // passed as negative intptr_t handle
@@ -80,6 +85,8 @@ function ensureLoaded(): boolean {
 
     const dwmapi = koffi.load('dwmapi.dll')
     _DwmGetWindowAttribute = dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ RECT *pvAttribute, uint32_t cbAttribute)')
+    _DwmGetWindowAttributeDword = dwmapi.func('int32_t __stdcall DwmGetWindowAttribute(intptr_t hwnd, uint32_t dwAttribute, _Out_ uint32_t *pvAttribute, uint32_t cbAttribute)')
+    _IsIconic = user32.func('bool __stdcall IsIconic(intptr_t hWnd)')
     void RECT // suppress unused warning
 
     _loaded = true
@@ -171,6 +178,26 @@ const _overlayHwnds = new Set<number>()
 export function registerOverlayHwnd(hwnd: number) { _overlayHwnds.add(hwnd) }
 export function unregisterOverlayHwnd(hwnd: number) { _overlayHwnds.delete(hwnd) }
 
+/** IsWindowVisible reports WS_VISIBLE — it does NOT catch cloaked windows
+ *  (UWP apps when minimised, apps on a different virtual desktop, suspended
+ *  apps, off-screen browser-tab clones) or iconic (minimised) windows. The
+ *  Z-order walk in getWindowAtPoint would otherwise hand back a cloaked
+ *  window's rect when the cursor happens to fall over its stale screen
+ *  position, picking a window the user can't actually see. */
+function isWindowReallyVisible(hwnd: any): boolean {
+  if (!_IsWindowVisible(hwnd)) return false
+  if (_IsIconic && _IsIconic(hwnd)) return false
+  if (_DwmGetWindowAttributeDword) {
+    const DWMWA_CLOAKED = 14
+    const out = [0]
+    try {
+      const hr = _DwmGetWindowAttributeDword(hwnd, DWMWA_CLOAKED, out, 4)
+      if (hr === 0 && out[0] !== 0) return false
+    } catch { /* DWM unavailable — fall through */ }
+  }
+  return true
+}
+
 /** Find the topmost non-overlay visible window containing the given point (in
  *  virtual-screen physical pixels), then return its visible-frame rect in the
  *  same physical coord space. Caller is responsible for converting physical →
@@ -202,7 +229,7 @@ export function getWindowAtPointPhysical(
     let attempts = 0
     while (candidate && attempts < 200) {
       attempts++
-      if (!_overlayHwnds.has(candidate) && _IsWindowVisible(candidate)) {
+      if (!_overlayHwnds.has(candidate) && isWindowReallyVisible(candidate)) {
         const exStyle = _GetWindowLongW(candidate, -20)
         if (!(exStyle & WS_EX_TOOLWINDOW)) {
           const r = { left: 0, top: 0, right: 0, bottom: 0 }
@@ -273,7 +300,7 @@ export function getWindowAtPoint(
     let attempts = 0
     while (candidate && attempts < 200) {
       attempts++
-      if (!_overlayHwnds.has(candidate) && _IsWindowVisible(candidate)) {
+      if (!_overlayHwnds.has(candidate) && isWindowReallyVisible(candidate)) {
         const exStyle = _GetWindowLongW(candidate, -20)
         if (!(exStyle & WS_EX_TOOLWINDOW)) {
           const r = { left: 0, top: 0, right: 0, bottom: 0 }
