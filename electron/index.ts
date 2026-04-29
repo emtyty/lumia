@@ -66,6 +66,17 @@ let overlayPollTimer: ReturnType<typeof setInterval> | null = null
 let overlayDrawingInProgress = false
 let currentRoute = '/dashboard'
 let isQuitting = false
+// Tracks whether the user has explicitly dismissed the main window (red X
+// close, Cmd+Q, dock right-click → Quit, or login-item startup). Set to false
+// once the window is surfaced again. Used by overlay cancel handlers to
+// decide whether to bring the main window back (not dismissed → restore) or
+// stay in tray-only state (dismissed → keep hidden, drop dock icon).
+//
+// Why a tracked flag instead of `mainWindow.isVisible()`: capture flow hides
+// the main window before opening the overlay, so by the time the overlay
+// runs `isVisible()` always reads false. The flag captures user *intent*,
+// which survives transient hides for capture / Cmd+H.
+let mainDismissedByUser = false
 // Set by the autoUpdater 'update-downloaded' handler. Allows the install to
 // happen the moment the user drops the app to the tray instead of waiting
 // for an explicit Quit / next launch.
@@ -138,6 +149,43 @@ export function getOverlayDisplayId() { return activeOverlayDisplayId }
 export function broadcastToOverlays(channel: string, ...args: unknown[]) {
   for (const [, win] of overlayWindows) {
     if (!win.isDestroyed()) win.webContents.send(channel, ...args)
+  }
+}
+
+/** Wait for the renderer to confirm a given route has mounted, with a
+ *  fallback timeout so a renderer crash / dropped IPC can't deadlock the
+ *  main process. Used to gate win.show() on capture-success flows so the
+ *  window doesn't flash the previous route before /editor renders. */
+export function waitForViewMounted(route: string, timeoutMs = 800): Promise<void> {
+  return new Promise(resolve => {
+    let done = false
+    const finish = () => {
+      if (done) return
+      done = true
+      ipcMain.removeListener('view:mounted', listener)
+      clearTimeout(timer)
+      resolve()
+    }
+    const listener = (_e: Electron.IpcMainEvent, mountedRoute: string) => {
+      if (mountedRoute === route) finish()
+    }
+    ipcMain.on('view:mounted', listener)
+    const timer = setTimeout(finish, timeoutMs)
+  })
+}
+
+/** Restore window/dock state after the user cancels an overlay session
+ *  (ESC, click outside, etc.). If the user hadn't dismissed the main
+ *  window (it was open when they triggered capture), bring it back to
+ *  the front. If they had (capture invoked from tray-only state via
+ *  hotkey or tray menu), keep the main window hidden and drop the dock
+ *  icon to return to the prior tray-only state. */
+export function restoreFromOverlayCancel() {
+  if (mainDismissedByUser) {
+    hideDock()
+  } else if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
   }
 }
 
@@ -241,6 +289,7 @@ function createMainWindow(startHidden = false): BrowserWindow {
     // This is the only path that should put the app into Accessory mode;
     // transient hides (capture flow, Cmd+H) intentionally leave the dock
     // alone so app activation keeps working for the overlay.
+    mainDismissedByUser = true
     hideDock()
     win.hide()
   })
@@ -248,7 +297,7 @@ function createMainWindow(startHidden = false): BrowserWindow {
   // After the window goes to the tray, schedule install of any pending update.
   // Cancelled if the user surfaces the window again within the grace window.
   win.on('hide', () => { scheduleAutoInstall() })
-  win.on('show', () => { cancelAutoInstall(); showDock() })
+  win.on('show', () => { mainDismissedByUser = false; cancelAutoInstall(); showDock() })
 
   win.on('closed', () => { mainWindow = null })
   return win
@@ -504,8 +553,13 @@ app.whenReady().then(async () => {
 
   // macOS: normal launches leave the dock visible (default). Login-item
   // startups boot straight to the tray, so drop the dock icon explicitly —
-  // user only sees Lumia in the menubar as expected.
-  if (startHidden) hideDock()
+  // user only sees Lumia in the menubar as expected. The startHidden state
+  // is the same end state as a user-dismissed window, so seed the dismiss
+  // flag accordingly — first capture-then-cancel returns to tray.
+  if (startHidden) {
+    mainDismissedByUser = true
+    hideDock()
+  }
 
   // Keep the OS login-item entry in sync with the stored preference on every
   // launch (covers app moves, reinstalls, and settings changed while offline).
@@ -521,7 +575,7 @@ app.whenReady().then(async () => {
   setupVideo()
   setupHotkeys()
   setupTray()
-  setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId)
+  setupScrollCapture(mainWindow, createOverlayWindows, closeAllOverlays, getOverlayDisplayId, restoreFromOverlayCancel)
 
   // Pre-warm the overlay pool: one hidden BrowserWindow per display, with
   // the renderer already loaded. The first capture after boot drops from
@@ -1717,6 +1771,7 @@ app.on('before-quit', (e) => {
   // can still fully exit via the tray menu's Quit item. Mirrors WhatsApp /
   // similar tray-resident apps.
   e.preventDefault()
+  mainDismissedByUser = true
   hideDock()
   mainWindow?.hide()
 })

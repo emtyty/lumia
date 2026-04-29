@@ -7,6 +7,8 @@ import {
   closeAllOverlays,
   createOverlayWindows,
   getOverlayDisplayId,
+  restoreFromOverlayCancel,
+  waitForViewMounted,
 } from './index'
 import { ORIGINALS_DIR } from './capture'
 import { uploadToR2 } from './uploaders/r2'
@@ -514,7 +516,7 @@ export function setupVideo() {
   ipcMain.handle('video:cancel', () => {
     resetOverlayMode()
     closeAllOverlays()
-    showMain()
+    restoreFromOverlayCancel()
   })
 
   // ── RecorderHost ↔ Toolbar forwarding ───────────────────────────────────
@@ -621,18 +623,21 @@ export function setupVideo() {
       // Open the freshly-saved recording in the video annotator (same pattern
       // as screenshots → /editor). Briefly delay so the toolbar shows "Saved"
       // before the main window steals focus.
-      setTimeout(() => {
+      setTimeout(async () => {
         const main = getMainWindow()
         if (main && !main.isDestroyed()) {
           const { basename } = require('path') as typeof import('path')
-          main.show()
-          main.focus()
+          // Send navigate then wait for the renderer to ack /editor mounted
+          // before showing — same reasoning as the screenshot path.
           main.webContents.send('navigate', '/editor', {
             kind: 'video',
             filePath,
             name: basename(filePath),
             historyId,
           })
+          await waitForViewMounted('/editor')
+          main.show()
+          main.focus()
         }
         closeRecordingSession()
       }, 600)

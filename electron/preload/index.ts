@@ -83,6 +83,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Navigation (tell main which view to show in the same window)
   navigate: (route: string) => ipcRenderer.invoke('navigate', route),
 
+  // Renderer signals that a route has just mounted. Main uses this to wait
+  // out the IPC + React-render delay before win.show(), otherwise the user
+  // sees a flash of the previous route while the window comes up.
+  notifyViewMounted: (route: string) => ipcRenderer.send('view:mounted', route),
+
   // Events from main → renderer
   onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => {
     ipcRenderer.on('capture:ready', (_e, data) => cb(data))

@@ -1,7 +1,7 @@
 import { desktopCapturer, ipcMain, screen, nativeImage, clipboard } from 'electron'
 import { homedir } from 'os'
 import { join } from 'path'
-import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays } from './index'
+import { getMainWindow, createOverlayWindows, closeAllOverlays, getHistoryStore, getOverlayDisplayId, broadcastToOverlays, restoreFromOverlayCancel, waitForViewMounted } from './index'
 import { getWindowAtPointPhysical } from './native-input'
 import { getMacWindowAtPoint } from './mac-window-pick'
 import { setOverlayMode, resetOverlayMode } from './scroll-capture'
@@ -256,13 +256,13 @@ export function setupCapture() {
   ipcMain.handle('window-pick:cancel', () => {
     resetOverlayMode()
     closeAllOverlays()
-    showMainWindow()
+    restoreFromOverlayCancel()
   })
 
   ipcMain.handle('region:cancel', () => {
     resetOverlayMode()
     closeAllOverlays()
-    showMainWindow()
+    restoreFromOverlayCancel()
   })
 
   // Switch between overlay modes without closing the overlay. Works for both
@@ -292,7 +292,7 @@ export function setupCapture() {
   ipcMain.handle('monitor-pick:cancel', () => {
     resetOverlayMode()
     closeAllOverlays()
-    showMainWindow()
+    restoreFromOverlayCancel()
   })
 }
 
@@ -525,7 +525,13 @@ export async function sendCaptureToEditor(dataUrlIn: string, source: string) {
     }
   } catch { /* silent */ }
 
+  // Send navigate first, then wait for the renderer to ack that /editor has
+  // actually mounted before showing the window — otherwise the user sees a
+  // brief flash of the previous route (dashboard) while React processes the
+  // navigation. The renderer was alive throughout the capture so we expect
+  // the ack within a frame; the helper has a generous timeout fallback.
   mainWin.webContents.send('navigate', '/editor', { dataUrl, source, historyId })
+  await waitForViewMounted('/editor')
   showMainWindow()
 
   // 'active-monitor' / 'fullscreen' are legacy source tags from older

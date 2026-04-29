@@ -72,6 +72,7 @@ declare global {
       setTitleBarTheme: (theme: 'dark' | 'light' | 'system') => Promise<void>
       windowReady: () => void
       navigate: (route: string) => void
+      notifyViewMounted: (route: string) => void
       onCaptureReady: (cb: (data: { dataUrl: string; source: string }) => void) => void
       onNavigate: (cb: (route: string, state?: Record<string, unknown>) => void) => void
       onRegionSelected: (cb: (rect: { x: number; y: number; width: number; height: number }) => void) => void

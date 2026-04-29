@@ -43,6 +43,16 @@ export default function App() {
     return () => { window.electronAPI?.removeAllListeners('navigate') }
   }, [navigate])
 
+  // Notify main once the new route has actually committed to the DOM. Main
+  // uses this ack to gate win.show() on capture-success flows so the window
+  // doesn't pop up still painting the previous route.
+  useEffect(() => {
+    if (standalone) return
+    requestAnimationFrame(() => {
+      window.electronAPI?.notifyViewMounted?.(location.pathname)
+    })
+  }, [location.pathname, standalone])
+
   // Tell main to show() the BrowserWindow once the renderer has finished its
   // critical initial work — fonts loaded + Dashboard's IPC fetches resolved.
   // Until then main keeps the window hidden so the user doesn't see a half-
