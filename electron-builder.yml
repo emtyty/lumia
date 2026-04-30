@@ -118,9 +118,9 @@ mac:
   # found" even though the DMG uploads fine.
   target:
     - target: dmg
-      arch: universal
+      arch: [x64, arm64]
     - target: zip
-      arch: universal
+      arch: [x64, arm64]
 
 
 
