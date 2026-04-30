@@ -102,6 +102,8 @@ jobs:
           MAIN_VITE_R2_PUBLIC_URL: ${{ secrets.MAIN_VITE_R2_PUBLIC_URL }}
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
+          MAIN_VITE_GDRIVE_API_KEY: ${{ secrets.MAIN_VITE_GDRIVE_API_KEY }}
+          MAIN_VITE_GDRIVE_PROJECT_NUMBER: ${{ secrets.MAIN_VITE_GDRIVE_PROJECT_NUMBER }}
 
       - name: Package, sign with Azure, and publish
         shell: pwsh
