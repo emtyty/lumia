@@ -102,6 +102,8 @@ jobs:
           MAIN_VITE_R2_PUBLIC_URL: ${{ secrets.MAIN_VITE_R2_PUBLIC_URL }}
           MAIN_VITE_GDRIVE_CLIENT_ID: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_ID }}
           MAIN_VITE_GDRIVE_CLIENT_SECRET: ${{ secrets.MAIN_VITE_GDRIVE_CLIENT_SECRET }}
+          MAIN_VITE_GDRIVE_API_KEY: ${{ secrets.MAIN_VITE_GDRIVE_API_KEY }}
+          MAIN_VITE_GDRIVE_PROJECT_NUMBER: ${{ secrets.MAIN_VITE_GDRIVE_PROJECT_NUMBER }}
 
       - name: Package, sign with Azure, and publish
         shell: pwsh
@@ -136,7 +138,23 @@ jobs:
     needs: [release-mac, release-win]
 
     steps:
-      - name: Set release as latest
-        run: gh release edit "${{ github.ref_name }}" --latest --repo ${{ github.repository }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # electron-builder creates the release as a draft (releaseType: draft
+      # in electron-builder.yml) so it doesn't surface as `latest` while
+      # mac/win are still uploading. Now that both jobs are done, set the
+      # release notes from the tagged commit body, un-draft the release,
+      # and mark it latest — all in one edit.
+      - name: Publish release with notes
+        run: |
+          NOTES=$(git log -1 --format=%b "${{ github.ref_name }}")
+          gh release edit "${{ github.ref_name }}" \
+            --draft=false \
+            --latest \
+            --notes "$NOTES" \
+            --repo ${{ github.repository }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

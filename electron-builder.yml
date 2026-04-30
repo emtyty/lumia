@@ -9,7 +9,10 @@ publish:
   provider: github
   owner: emtyty
   repo: lumia
-  releaseType: release
+  # Publish as a draft so GitHub's /releases/latest API doesn't surface
+  # the new version while the mac/win jobs are still uploading. The
+  # mark-latest workflow job un-drafts after both finish.
+  releaseType: draft
 
 files:
   - out/**/*
@@ -115,9 +118,9 @@ mac:
   # found" even though the DMG uploads fine.
   target:
     - target: dmg
-      arch: [x64, arm64]
+      arch: universal
     - target: zip
-      arch: [x64, arm64]
+      arch: universal
 
 
 
