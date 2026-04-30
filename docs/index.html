@@ -497,9 +497,13 @@ footer a { color: var(--primary); text-decoration: none; }
       A blazing-fast screen capture tool with built-in annotation editor, video recorder, and workflow engine. One app for screenshots, recordings, and instant sharing.
     </p>
     <div class="hero-actions" id="hero-actions">
-      <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-primary" data-platform="mac">
+      <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-primary" data-platform="mac" data-arch="arm64">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z"/><path d="M12 7c-1.4 0-2.5.9-3 2-.5-1.1-1.6-2-3-2"/><path d="M9 22c1.1-3 1.5-5.5 1.5-9"/></svg>
-        Download for macOS
+        Apple Silicon (.dmg)
+      </a>
+      <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-secondary" data-platform="mac" data-arch="x64">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2z"/><path d="M12 7c-1.4 0-2.5.9-3 2-.5-1.1-1.6-2-3-2"/><path d="M9 22c1.1-3 1.5-5.5 1.5-9"/></svg>
+        Intel (.dmg)
       </a>
       <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-primary" data-platform="win">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 3 0 18"/><path d="m3 9 18 0"/></svg>
@@ -832,9 +836,13 @@ footer a { color: var(--primary); text-decoration: none; }
       <h2>Ready to capture<br><span class="gradient">everything?</span></h2>
       <p>Free, open-source, and built for speed. Download Lumia and take control of your screen.</p>
       <div class="cta-buttons" id="cta-buttons">
-        <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-primary" data-platform="mac">
+        <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-primary" data-platform="mac" data-arch="arm64">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-          Download for macOS
+          Apple Silicon (.dmg)
+        </a>
+        <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-secondary" data-platform="mac" data-arch="x64">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Intel (.dmg)
         </a>
         <a href="https://github.com/emtyty/lumia/releases/latest" target="_blank" rel="noopener" class="btn-primary" data-platform="win">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -855,9 +863,9 @@ footer a { color: var(--primary); text-decoration: none; }
 </div>
 
 <script>
-// Detect OS, then wire up the latest-release URLs. macOS ships a universal
-// build and Windows ships a single multi-arch installer, so there's exactly
-// one asset per platform.
+// Detect OS, then wire up the latest-release URLs. macOS ships per-arch DMGs
+// (arm64 + x64) so the page exposes both buttons and lets the user pick.
+// Windows ships a single multi-arch installer, so one button is enough.
 (function() {
   const REPO = 'emtyty/lumia';
   const API_URL = 'https://api.github.com/repos/' + REPO + '/releases/latest';
@@ -872,15 +880,28 @@ footer a { color: var(--primary); text-decoration: none; }
     el.style.display = 'none';
   });
 
-  function urlFor(assets, ext) {
-    var asset = assets.find(function(a) { return a.name.endsWith(ext); });
+  function pickDmg(assets, arch) {
+    if (arch === 'arm64') {
+      var hit = assets.find(function(a) {
+        return a.name.toLowerCase().indexOf('arm64') !== -1 && a.name.endsWith('.dmg');
+      });
+      if (hit) return hit;
+    }
+    return assets.find(function(a) {
+      return a.name.toLowerCase().indexOf('arm64') === -1 && a.name.endsWith('.dmg');
+    });
+  }
+
+  function pickExe(assets) {
+    return assets.find(function(a) { return a.name.endsWith('.exe'); });
+  }
+
+  function urlOr(asset) {
     return asset ? asset.browser_download_url : RELEASES_URL;
   }
 
-  function setHref(platform, url) {
-    document.querySelectorAll('[data-platform="' + platform + '"]').forEach(function(el) {
-      el.href = url;
-    });
+  function setHref(selector, url) {
+    document.querySelectorAll(selector).forEach(function(el) { el.href = url; });
   }
 
   fetch(API_URL)
@@ -889,8 +910,9 @@ footer a { color: var(--primary); text-decoration: none; }
       var assets  = release.assets || [];
       var version = (release.tag_name || '').replace(/^v/, '');
 
-      setHref('mac', urlFor(assets, '.dmg'));
-      setHref('win', urlFor(assets, '.exe'));
+      setHref('[data-platform="mac"][data-arch="arm64"]', urlOr(pickDmg(assets, 'arm64')));
+      setHref('[data-platform="mac"][data-arch="x64"]',   urlOr(pickDmg(assets, 'x64')));
+      setHref('[data-platform="win"]',                    urlOr(pickExe(assets)));
 
       var badge = document.getElementById('version-badge');
       if (badge && version) badge.textContent = 'Version ' + version + ' — Now Available';
