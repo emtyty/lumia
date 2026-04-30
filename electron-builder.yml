@@ -79,11 +79,6 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  # Force per-arch installers. Without ${arch} in the artifactName,
-  # electron-builder bundles x64 + arm64 into a single multi-arch
-  # installer, which makes the docs page's two Win buttons point at
-  # the same file.
-  artifactName: ${productName}-Setup-${version}-${arch}.${ext}
 
 # ── macOS ─────────────────────────────────────────────────────────────────────
 # Code-signing — Developer ID Application certificate
@@ -123,9 +118,9 @@ mac:
   # found" even though the DMG uploads fine.
   target:
     - target: dmg
-      arch: [x64, arm64]
+      arch: universal
     - target: zip
-      arch: [x64, arm64]
+      arch: universal
 
 
 
